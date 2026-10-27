@@ -2,8 +2,10 @@
 
 **Status:** PR #4 merged and the protected synthetic pilot deployed on
 27 October 2026 after separate owner approval. Hosted TLS/OAuth and actual
-Codex CLI login passed. Actual ChatGPT capture and a fresh Codex tool invocation
-remain unverified; Sprint 2 acceptance is incomplete. Further merges or live
+Codex CLI login passed. The owner confirmed an actual ChatGPT capture-to-Codex
+roundtrip, and a connected Codex tool independently recalled the same synthetic
+record. Its separately approved live redeploy/recovery verification is in
+progress; Sprint 2 is not closed by a local test result. Further merges or live
 changes still require their applicable owner approval under AGENTS.md.
 
 ## Provider and addresses
@@ -315,6 +317,58 @@ the entire host have **not** been demonstrated.
   `recall`s its exact stable ID and checksum. Tool discovery alone is not proof.
 - Repeat the persistence/recovery check with the record created by ChatGPT.
 - Record the deployed commit and evidence separately from PR/CI/merge state.
+
+## Sprint 3 activation — separate from the Sprint 2 live check
+
+The source-material, structured-memory, local-processing and project-access
+changes are separate reviewable PRs. They have not been deployed by the
+Sprint 2 verification. The base Compose configuration retains the original
+pilot's read/write scope and denies processing by default.
+
+To activate synthetic project access after approving and deploying those PRs:
+
+1. Configure an explicit `CONTEXT_CLIENT_GRANTS` JSON map in the Context
+   application's private environment. Each configured client requires `read`,
+   `write` and `process` arrays; omit a client to deny it completely. See
+   `.env.example`. The map is server policy, independent of token claims.
+2. In the dedicated Context Keycloak realm, create the chosen synthetic project
+   client scopes and `context:process`, with `include.in.token.scope=true`, and
+   attach only the intended optional scopes to the relevant existing clients.
+   The bootstrap export includes `synthetic:project-a`/`synthetic:project-b`
+   examples. Importing that export does **not** update an existing realm.
+   Do not enable anonymous registration, widen callbacks or grant other realms.
+3. Add the explicit project environment override before the final Dokploy
+   network override:
+
+   ```sh
+   compose -p <context-app-name> --env-file deploy/.env \
+     -f deploy/compose.yaml -f deploy/projects.yaml -f deploy/dokploy.yaml \
+     up -d --build --remove-orphans
+   ```
+
+4. Reauthorize actual clients for their intended operation and data scopes.
+   Queueing requires read, write and process authorization independently.
+   Confirm allowed project access and denied foreign-project access through
+   actual tools; discovery alone does not prove those operations.
+
+The operator-launched `memory:process` command requires the authoritative local
+SQLite file and the separately installed, probed Codex CLI with a ChatGPT login.
+It is not a remote worker transport. Do not process an old snapshot and replace
+the live database with it: that could discard concurrent writes. The runtime
+image contains neither Codex nor subscription credentials; unattended hosted
+processing and its credential lifecycle are unverified. No API-key fallback or
+subscription credential transfer is introduced by this change.
+
+Owner review uses signed receipts and an independently trusted public key via
+`knowledge:review`; no approval tool is exposed through MCP. Actual owner key
+provisioning remains separate from synthetic signature tests.
+
+The extended disposable Keycloak smoke verifies real signed project scopes,
+the source-material → knowledge → context → queue path, client-specific foreign
+project denial even with a signed foreign scope, and missing project/process
+scope rejection. The container smoke verifies original file bytes, metadata,
+knowledge, queued jobs, FTS and retry identity after restart and isolated restore.
+These are test-instance results, not claims about a deployed Sprint 3 service.
 
 No claim in this document authorizes real private-memory ingestion or access
 to other Dokploy applications.

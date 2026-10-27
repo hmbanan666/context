@@ -1,0 +1,5 @@
+# Explicit opt-in; keep the Dokploy network override last in the file list.
+services:
+  context:
+    environment:
+      CONTEXT_CLIENT_GRANTS: ${CONTEXT_CLIENT_GRANTS:?Configure explicit synthetic project grants}

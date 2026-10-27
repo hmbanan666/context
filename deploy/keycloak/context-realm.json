@@ -41,6 +41,21 @@
       "name": "synthetic:hosted-pilot",
       "protocol": "openid-connect",
       "attributes": { "include.in.token.scope": "true" }
+    },
+    {
+      "name": "context:process",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" }
+    },
+    {
+      "name": "synthetic:project-a",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" }
+    },
+    {
+      "name": "synthetic:project-b",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" }
     }
   ],
   "clients": [
@@ -66,7 +81,10 @@
       "optionalClientScopes": [
         "context:read",
         "context:write",
-        "synthetic:hosted-pilot"
+        "synthetic:hosted-pilot",
+        "context:process",
+        "synthetic:project-a",
+        "synthetic:project-b"
       ],
       "protocolMappers": [
         {
@@ -96,7 +114,10 @@
       "optionalClientScopes": [
         "context:read",
         "context:write",
-        "synthetic:hosted-pilot"
+        "synthetic:hosted-pilot",
+        "context:process",
+        "synthetic:project-a",
+        "synthetic:project-b"
       ],
       "protocolMappers": [
         {

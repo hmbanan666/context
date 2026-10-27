@@ -1,11 +1,21 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { ZodError } from "zod";
+import type { OperationScope } from "./access.js";
 import { IdempotencyConflict } from "./store.js";
 
 export type AuthorizeTool = (
   scope: string,
-  operation: "context:read" | "context:write",
+  operation: OperationScope,
 ) => CallToolResult | undefined;
+
+export function oauthMetadata(
+  protectedMode: boolean,
+  scopes: readonly OperationScope[],
+) {
+  return protectedMode
+    ? { _meta: { securitySchemes: [{ type: "oauth2", scopes: [...scopes] }] } }
+    : {};
+}
 
 export function toolResult(
   data: Record<string, unknown>,

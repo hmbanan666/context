@@ -3,9 +3,12 @@
 **Planning snapshot:** 27 October 2026  
 **Status:** Sprints 0 and 1 merged in PRs #2 and #3. Sprint 2 implementation
 merged in PR #4 and deployed with separate owner approval. Hosted TLS/OAuth,
-actual Codex CLI login, SDK persistence and recovery checks passed. Actual
-ChatGPT-to-Codex tool acceptance remains incomplete.
-Sprints 3–4 remain proposed; no milestone is automatically authorized.
+actual Codex CLI login, SDK persistence and recovery checks passed. The owner
+confirmed the actual ChatGPT-to-Codex roundtrip; connected Codex recall was
+independently observed. Its live redeploy/recovery verification is separate.
+The owner explicitly authorized Sprint 3 implementation on 27 October 2026.
+Its reviewable slices are implemented/tested but not yet merged or deployed.
+Sprint 4 remains proposed; merge and deployment require separate approval.
 
 ## North-star acceptance
 
@@ -70,20 +73,39 @@ No merge or live deploy without separate owner permission.
 
 **Outcome:** Ingest files and derive reviewable knowledge with provenance.
 
-- Preserve original text/media files; ingest safely using a retryable queue.
-- Add observations, relations and supersession/review states.
-- Evaluate RAG/vectors and/or Mastra only after retrieval benchmarks show
-  an advantage over full-text search and ordinary structured queries.
-- Test scope isolation (website context cannot reveal manuscript context).
+- **Sources:** immutable metadata and original UTF-8 `.txt`/`.md` bytes, atomic
+  capture/retries, backward-compatible migration, complete backup/restore.
+- **Knowledge:** suggested ideas, observations and decision proposals, grounded
+  relations, signed owner review and append-only evidence/history.
+- **Subscription feasibility:** actual local ChatGPT-authenticated extraction
+  passed with the probed Codex CLI; a real queued source produced two grounded
+  suggestions without changing the original. Hosted execution, refresh and
+  sustained quota behavior remain unverified.
+- **Processing:** persistent scoped queue, exclusive leases, bounded attempts,
+  saved validated output and idempotent recovery after partial derived writes.
+- **Project context:** independent read/write/process grants for existing
+  clients, complete scoped provenance and bounded UTF-8 context packages.
+  This limited projection capability moves here from Sprint 4 by owner request.
+
+Files are deliberately bounded to one text family and 16 KiB. Audio, images,
+PDF parsing, URL fetching, hosted unattended model execution and real private
+ingestion are not demonstrated by this slice. Evaluate RAG/vectors or Mastra
+only after retrieval benchmarks justify them.
 
 **Acceptance:** no data loss on failed processing; inferred facts and human
 decisions are distinct; all derived links cite original sources.
+
+**Observed local evidence:** full regression tests, actual subscription job,
+independent storage/access review, non-root container restart/restore, and
+real disposable Keycloak project-token tests. PR review, merge, deployment and
+hosted acceptance remain distinct states. Do not label the sprint shipped solely
+because its local tests pass.
 
 ## Sprint 4 — Idea to verified work
 
 **Outcome:** Link an approved intent to GitHub scope and an actual result.
 
-- Build project-context projections and propose a scoped sprint.
+- Use the scoped Sprint 3 context to propose an explicitly approved sprint.
 - Require human approval for task dispatch and disclosure decisions.
 - Fetch GitHub state independently; record PR, check results, merge and
   deployed evidence as distinct facts.

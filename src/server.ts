@@ -8,6 +8,7 @@ import {
   originValidation,
   toNodeHandler,
 } from "@modelcontextprotocol/node";
+import { configuredDataScopes, operationScopes } from "./access.js";
 import { oauthScopes, protectMcp } from "./auth.js";
 import type { Config } from "./config.js";
 import { JobStore } from "./jobs.js";
@@ -36,6 +37,9 @@ export async function startService(config: Config) {
       ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth, {
           knowledge,
           jobs,
+          ...(config.oauth?.clientGrants === undefined
+            ? {}
+            : { clientGrants: config.oauth.clientGrants }),
         })
       : undefined;
   const authenticated =
@@ -68,7 +72,13 @@ export async function startService(config: Config) {
         JSON.stringify({
           resource: config.oauth.resource,
           authorization_servers: [config.oauth.issuer],
-          scopes_supported: oauthScopes,
+          scopes_supported:
+            config.oauth.clientGrants === undefined
+              ? oauthScopes
+              : [
+                  ...operationScopes,
+                  ...configuredDataScopes(config.oauth.clientGrants),
+                ],
           bearer_methods_supported: ["header"],
           resource_name: "Context synthetic pilot",
         }),

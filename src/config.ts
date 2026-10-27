@@ -1,3 +1,4 @@
+import { type ClientGrants, clientGrantsSchema } from "./access.js";
 import type { OAuthConfig } from "./auth.js";
 import { scopeSchema } from "./contracts.js";
 
@@ -31,6 +32,14 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     ) {
       throw new Error("OAuth and local no-auth modes cannot be combined");
     }
+    let clientGrants: ClientGrants | undefined;
+    if (env.CONTEXT_CLIENT_GRANTS !== undefined) {
+      if (Buffer.byteLength(env.CONTEXT_CLIENT_GRANTS, "utf8") > 16384)
+        throw new Error("Client grant configuration is too large");
+      clientGrants = clientGrantsSchema.parse(
+        JSON.parse(env.CONTEXT_CLIENT_GRANTS),
+      );
+    }
     if (
       env.CONTEXT_PUBLIC_URL !== "https://context.kosarev.space/mcp" ||
       env.CONTEXT_OAUTH_ISSUER !==
@@ -48,6 +57,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
         resource: env.CONTEXT_PUBLIC_URL,
         issuer: env.CONTEXT_OAUTH_ISSUER,
         ownerSubject: env.CONTEXT_OWNER_SUBJECT,
+        ...(clientGrants === undefined ? {} : { clientGrants }),
       },
     };
   }
@@ -56,7 +66,8 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     env.CONTEXT_AUTH !== undefined ||
     env.CONTEXT_PUBLIC_URL !== undefined ||
     env.CONTEXT_OAUTH_ISSUER !== undefined ||
-    env.CONTEXT_OWNER_SUBJECT !== undefined
+    env.CONTEXT_OWNER_SUBJECT !== undefined ||
+    env.CONTEXT_CLIENT_GRANTS !== undefined
   ) {
     throw new Error("Protected configuration requires CONTEXT_AUTH=oauth");
   }
