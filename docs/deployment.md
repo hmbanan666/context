@@ -49,12 +49,17 @@ scopes. Real private-memory ingestion remains unapproved.
 npm ci
 npm run check
 npm run test:oauth-provider
-docker build -t context-sprint2:local .
+docker build -t context:ci .
+npm run test:container
 ```
 
 The ordinary suite checks signed JWT rejection/acceptance, protected MCP,
 scope boundaries, rate limits, strict configuration, persistence and SQLite
-backup/restore. The optional provider smoke requires Python 3 and Docker:
+backup/restore. The container smoke uses disposable volumes to check health,
+metadata/401, an internal synthetic seed, persistence across a container restart
+and an offline restore under a non-root, read-only runtime. It does not claim
+authenticated public HTTP interoperability. Both Docker smoke scripts require
+Python 3 and Docker. The provider smoke
 it starts a disposable Keycloak dev-mode container on a random loopback port,
 imports a synthetic user into a temporary realm, performs actual browser-form
 login/code exchange with PKCE, rejects a wrong verifier, checks the resource
@@ -94,7 +99,7 @@ Configure private environment values through Dokploy:
 | --- | --- |
 | `CONTEXT_OWNER_SUBJECT` | Actual dedicated owner's Keycloak user UUID |
 | `CONTEXT_IDENTITY_DB_PASSWORD` | New private password for this identity DB |
-| `CONTEXT_IDENTITY_ADMIN_PASSWORD` | New private bootstrap admin password |
+| `CONTEXT_IDENTITY_ADMIN_PASSWORD` | One-time private bootstrap password; required only by `deploy/bootstrap.yaml` |
 | `CONTEXT_PROXY_NETWORK` | Verified isolated Context proxy network name |
 | `CONTEXT_PROXY_CIDRS` | Verified proxy peer addresses/CIDRs |
 
@@ -106,15 +111,24 @@ to 60 per client per minute; proxy limiting also protects unauthenticated paths.
 
 ## Identity bootstrap and client linking
 
-1. Start only `identity-db` and `identity` to provision the realm. For Compose
+1. For the first startup, add the bootstrap override and start only
+   `identity-db` and `identity` to provision the realm. The base Compose file
+   never requires or injects a bootstrap administrator credential. For Compose
    parsing during this identity-only bootstrap, the non-secret owner field may
-   temporarily be `bootstrap-unused`; do not start Context with that value.
+   temporarily be `bootstrap-unused`; do not start Context with that value:
+
+   ```sh
+   CONTEXT_OWNER_SUBJECT=bootstrap-unused docker compose \
+     -f deploy/compose.yaml -f deploy/bootstrap.yaml up -d identity-db identity
+   ```
 2. Sign into the new Keycloak admin console using its bootstrap credential,
    create one real owner account, require a strong password and configure MFA.
    Copy its user UUID into `CONTEXT_OWNER_SUBJECT`; keep personal profile fields
    and credentials out of Git. Use a permanent administrator, then remove the
-   bootstrap administrator and its environment credential.
-3. The imported public clients are deliberately **disabled**. For ChatGPT,
+   bootstrap administrator and its environment credential. Remove the bootstrap
+   override from subsequent deployments and use `deploy/compose.yaml` alone;
+   that configuration continues to validate without the temporary password.
+3. The imported clients are deliberately **disabled**. For ChatGPT,
    copy the exact callback from its MCP management screen into `context-chatgpt`.
    The shipped stable URI is a candidate to verify, not permission to add
    wildcard callbacks. Enable the client only after checking that URI.
@@ -123,7 +137,9 @@ to 60 per client per minute; proxy limiting also protects unauthenticated paths.
    Confirm the actual callback used by the installed client and adjust the
    single exact URI if necessary before enabling. No wildcard is shipped.
 5. Start Context with its real owner subject. In ChatGPT choose OAuth and the
-   predefined public client ID `context-chatgpt` (no client secret); request
+   predefined confidential client ID `context-chatgpt`, using
+   `client_secret_basic`. Retrieve its generated secret privately from Keycloak
+   and enter it only in ChatGPT's protected OAuth configuration; request
    `context:read context:write synthetic:hosted-pilot`. Configure Codex with
    the resource URL, its predefined client ID and the same scopes. Both clients
    must authenticate as the configured owner.
@@ -134,6 +150,12 @@ The configuration uses pre-registration rather than CIMD/DCR. OpenAI supports
 predefined clients and requires PKCE, resource metadata and token verification;
 its guide also explains how to copy the active callback:
 [OpenAI authentication](https://developers.openai.com/plugins/build/auth).
+Keycloak 26.8.1 does not advertise `none` in its discovery authentication-method
+list. Therefore the ChatGPT client uses the advertised `client_secret_basic`
+method. The predefined public Codex client successfully exchanges codes without
+a secret in the local provider test; compatibility with the actual Codex OAuth
+login must still be demonstrated. Do not claim metadata parity or live-client
+compatibility from the provider test alone.
 Provider discovery, `resource` binding and refresh behavior must still be
 checked through the deployed proxy. If linking is incompatible, keep the pilot
 synthetic and record the exact failure.
@@ -154,8 +176,9 @@ Inside the Context container the equivalent is:
 node dist/scripts/database.js backup /app/data/context.db /app/backups/context-snapshot.db
 ```
 
-The command uses SQLite's online backup API, checks integrity, refuses to
-overwrite a snapshot and preserves sources, request keys and FTS. Use a new
+Both commands use SQLite's online backup API (including committed source WAL
+pages), check integrity, refuse to
+overwrite a snapshot and preserve sources, request keys and FTS. Use a new
 backup filename for each run. To restore, **stop Context first**, restore into
 a fresh destination without `-wal`/`-shm` sidecars, then set the database path
 to that destination and restart:

@@ -38,8 +38,11 @@ def main():
                        "firstName": "Synthetic", "lastName": "Owner", "email": "synthetic@example.invalid", "emailVerified": True,
                        "credentials": [{"type": "password", "value": "synthetic-local-only", "temporary": False}]}]
     for client in realm["clients"]:
-        if client["clientId"] == "context-codex":
+        if client["clientId"] in ["context-codex", "context-chatgpt"]:
             client["enabled"] = True
+        if client["clientId"] == "context-chatgpt":
+            client["secret"] = "synthetic-local-only-client-secret"
+            client["redirectUris"] = ["http://127.0.0.1:8765/callback"]
     with tempfile.TemporaryDirectory(prefix="context-keycloak-") as directory:
         fixture = Path(directory) / "context-realm.json"
         fixture.write_text(json.dumps(realm))
@@ -64,12 +67,13 @@ def main():
                 raise RuntimeError("Keycloak startup timed out")
             assert metadata["issuer"] == issuer
             assert "S256" in metadata["code_challenge_methods_supported"]
+            assert "client_secret_basic" in metadata["token_endpoint_auth_methods_supported"]
             assert metadata["authorization_response_iss_parameter_supported"] is True
             print("Keycloak discovery and PKCE S256: passed", flush=True)
 
-            def authorize(verifier):
+            def authorize(verifier, client_id="context-codex"):
                 challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-                params = {"client_id": "context-codex", "response_type": "code",
+                params = {"client_id": client_id, "response_type": "code",
                           "redirect_uri": "http://127.0.0.1:8765/callback", "resource": resource,
                           "scope": "context:read context:write synthetic:hosted-pilot", "state": "synthetic-state",
                           "code_challenge": challenge, "code_challenge_method": "S256"}
@@ -94,8 +98,11 @@ def main():
                 assert query["iss"] == [issuer]
                 return query["code"][0]
 
-            def exchange(params):
+            def exchange(params, secret=None):
                 request = urllib.request.Request(metadata["token_endpoint"], data=urllib.parse.urlencode(params).encode())
+                if secret:
+                    credential = base64.b64encode(f"{params['client_id']}:{secret}".encode()).decode()
+                    request.add_header("Authorization", "Basic " + credential)
                 with urllib.request.urlopen(request) as response:
                     return json.load(response)
 
@@ -125,8 +132,15 @@ def main():
             except urllib.error.HTTPError as error:
                 assert error.code == 400
             print("Keycloak refresh rotation and replay rejection: passed", flush=True)
-            subprocess.run(["node", "dist/scripts/provider-smoke-client.js"], check=True,
-                           input=json.dumps({"issuer": issuer, "accessToken": tokens["access_token"]}), text=True)
+            chatgpt_code = authorize(verifier, "context-chatgpt")
+            confidential = exchange({"grant_type": "authorization_code", "client_id": "context-chatgpt", "code": chatgpt_code,
+                                     "redirect_uri": "http://127.0.0.1:8765/callback", "resource": resource, "code_verifier": verifier},
+                                    "synthetic-local-only-client-secret")
+            assert confidential["access_token"]
+            print("Keycloak confidential client_secret_basic code exchange: passed", flush=True)
+            for access_token in [tokens["access_token"], confidential["access_token"]]:
+                subprocess.run(["node", "dist/scripts/provider-smoke-client.js"], check=True,
+                               input=json.dumps({"issuer": issuer, "accessToken": access_token}), text=True)
         except Exception:
             logs = subprocess.run(["docker", "logs", "--tail", "15", container], capture_output=True, text=True)
             print(logs.stdout[-2500:] + logs.stderr[-2500:])

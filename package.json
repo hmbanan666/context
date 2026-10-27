@@ -20,6 +20,7 @@
     "inspect:smoke": "npm run build && node dist/scripts/inspect-local.js",
     "database": "node dist/scripts/database.js",
     "test:oauth-provider": "npm run build && python3 scripts/keycloak-smoke.py",
+    "test:container": "python3 scripts/container-smoke.py",
     "check": "npm run lint && npm run typecheck && npm test"
   },
   "devDependencies": {

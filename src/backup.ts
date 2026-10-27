@@ -1,5 +1,4 @@
-import { constants } from "node:fs";
-import { chmod, copyFile, mkdir, open, rm } from "node:fs/promises";
+import { mkdir, open, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 
@@ -38,12 +37,6 @@ export async function restoreDatabase(
   source: string,
   destination: string,
 ): Promise<void> {
-  const database = new DatabaseSync(source, { readOnly: true });
-  try {
-    check(database);
-  } finally {
-    database.close();
-  }
   for (const path of [
     destination,
     `${destination}-wal`,
@@ -58,7 +51,6 @@ export async function restoreDatabase(
     }
     throw new Error("Restore destination must be absent, including sidecars");
   }
-  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-  await copyFile(source, destination, constants.COPYFILE_EXCL);
-  await chmod(destination, 0o600);
+  // SQLite reads committed WAL pages too; copying only the main file loses them.
+  await backupDatabase(source, destination);
 }

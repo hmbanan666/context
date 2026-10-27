@@ -11,7 +11,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,3 +23,6 @@ jobs:
       - run: npm install --global npm@11.19.1
       - run: npm ci
       - run: npm run check
+      - run: docker build -t context:ci .
+      - run: npm run test:container
+      - run: npm run test:oauth-provider

@@ -21,6 +21,17 @@ test("online backup and offline restore retain source, FTS and persistent retry 
   };
   try {
     const saved = store.capture(input);
+    const liveDestination = join(directory, "live-source-restored.db");
+    await restoreDatabase(source, liveDestination);
+    const liveClone = new SourceStore(liveDestination);
+    try {
+      assert.deepEqual(
+        liveClone.find(saved.source.id, input.scope),
+        saved.source,
+      );
+    } finally {
+      liveClone.close();
+    }
     await backupDatabase(source, snapshot);
     await assert.rejects(() => backupDatabase(source, snapshot));
     await assert.rejects(() => restoreDatabase(snapshot, source));

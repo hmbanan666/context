@@ -79,7 +79,8 @@ curl --fail http://127.0.0.1:3000/health
 
 Expected response: `{"status":"ok"}`. Stop with Ctrl-C. `npm run check` runs
 lint/format checks, type checking, compilation and all tests; GitHub CI runs
-the same command on PRs and pushes to `main`. After changing source, run
+the same command, builds the image and runs the Keycloak smoke on PRs and pushes
+to `main`. After changing source, run
 `npm run build` before `npm start` or `npm run seed:synthetic`.
 
 No cloud account, API key or LLM is required. MCP uses the official TypeScript
