@@ -17,11 +17,18 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:smoke": "npm run build && node --test dist/test/restart.test.js",
+    "inspect:smoke": "npm run build && node dist/scripts/inspect-local.js",
     "check": "npm run lint && npm run typecheck && npm test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
+    "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "24.19.2",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "zod": "4.6.7"
   }
 }

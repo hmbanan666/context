@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { syntheticSource } from "../fixtures/synthetic-source.js";
 import { SourceStore } from "../src/store.js";
@@ -19,6 +23,55 @@ test("preserves exact source, provenance and conservative status", () => {
     assert.equal(store.find(record.id, "' OR 1=1 --"), undefined);
   } finally {
     store.close();
+  }
+});
+
+test("upgrades a Sprint 0 database and indexes existing sources without changing them", () => {
+  const directory = mkdtempSync(join(tmpdir(), "context-migration-"));
+  const path = join(directory, "context.db");
+  try {
+    const legacy = new DatabaseSync(path);
+    try {
+      legacy.exec(`CREATE TABLE sources (
+        id TEXT PRIMARY KEY NOT NULL, text TEXT NOT NULL, origin TEXT NOT NULL,
+        scope TEXT NOT NULL, captured_at TEXT NOT NULL, checksum TEXT NOT NULL,
+        status TEXT NOT NULL
+      ) STRICT;`);
+      legacy
+        .prepare("INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(
+          syntheticSource.id,
+          syntheticSource.text,
+          syntheticSource.origin,
+          syntheticSource.scope,
+          syntheticSource.capturedAt,
+          "764a377a0b97c616c0d85f32c933f1be9c400b422a2581687778222efa45ae31",
+          "unreviewed",
+        );
+    } finally {
+      legacy.close();
+    }
+    for (let restart = 0; restart < 2; restart++) {
+      const store = new SourceStore(path);
+      try {
+        const results = store.search(
+          "imaginary blue marbles",
+          syntheticSource.scope,
+          10,
+        );
+        assert.equal(results.length, 1);
+        assert.deepEqual(results[0], {
+          ...syntheticSource,
+          checksum:
+            "764a377a0b97c616c0d85f32c933f1be9c400b422a2581687778222efa45ae31",
+          status: "unreviewed",
+        });
+      } finally {
+        store.close();
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
