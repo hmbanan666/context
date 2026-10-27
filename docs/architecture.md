@@ -12,8 +12,13 @@ project context were reviewed, tested and merged in PRs #6–#9. Hosted syntheti
 acceptance for `ff9fd9a`, including project isolation, queued-job restore and
 actual Codex OAuth refresh after expiry, passed. The Codex-only provider fix
 was separately approved in PR #10. Exact evidence is in deployment.md.
-Sprint 4 implementation is authorized on a separate branch. Its first slice
-records work permission and evidence; it does not execute tasks autonomously.
+Sprint 4 implementation is merged in PR #12 (`d2c570a`); its release record
+reports deployed Context 0.4.0. Its work-permission/evidence slice does not
+execute tasks autonomously. Human-confirmation end-to-end acceptance remains
+unverified. The owner stopped manual signing and further technical development
+to evaluate the existing core; see deployment.md. A simpler confirmation through
+a trusted authenticated environment is a product requirement, not an implemented
+replacement for the current protection.
 
 ## Purpose
 
@@ -165,8 +170,9 @@ because it has memory or orchestration features.
 
 ## Open questions
 
-- How should the owner provision and operate a signing key outside agent
-  access for real review receipts?
+- How can consequential actions receive simple user confirmation in an existing
+  trusted authenticated environment, without manual keys or JSON? Investigation
+  and implementation are not currently authorized.
 - Can a hosted subscription worker be supported with independently verified
   credential refresh, quota handling and outbound source permissions?
 - What off-host backup/recovery arrangement should be separately authorized?

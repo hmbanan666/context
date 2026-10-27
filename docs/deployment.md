@@ -524,12 +524,24 @@ above; neither substitutes for the other.
 No claim in this document authorizes real private-memory ingestion or access
 to other Dokploy applications.
 
-## Sprint 4 branch boundary
+## Sprint 4 release and final acceptance
 
-Sprint 4 is authorized for implementation, not live activation. The branch adds
-an additive work-authorization/observation schema and read-only `work_context`
-tool (service discovery version `0.4.0`, 15 tools). Existing deployed `0.3.0`
-evidence above remains unchanged; no branch test implies it is running remotely.
+[PR #12](https://github.com/hmbanan666/context/pull/12) is merged as
+[`d2c570a60cf562bd87309cb190f1b1bb0192f941`](https://github.com/hmbanan666/context/commit/d2c570a60cf562bd87309cb190f1b1bb0192f941).
+It adds the work-authorization/observation schema and read-only `work_context`
+tool (service discovery version `0.4.0`, 15 tools). This supersedes the earlier
+branch-only status, while preserving the historical 0.3.0 evidence above.
+
+The separately approved release record in PR #12 reports main
+[CI run 40535400813](https://github.com/hmbanan666/context/actions/runs/40535400813)
+passed on that exact merge commit and Context-only deployment completed at
+15:57:44 UTC on 27 October 2026. The recorded running image is
+`sha256:b6a668518ce3554da27ef1fb23ada80d5565a2cf0b440490fe399627a702d294`.
+It records actual owner OAuth discovery of 0.4.0 / 15 tools, unknown authorized
+work returning `not_found`, signed foreign-project denial, unchanged original
+synthetic material, health/metadata 200, anonymous MCP 401 and complete isolated
+post-migration backup/restore. These are prior operational observations, not a
+new independent live-container inspection by this final acceptance run.
 
 Local work commands operate on the authoritative synthetic database. Do not
 refresh a snapshot and replace a concurrently written live database. The hosted
@@ -538,9 +550,45 @@ owner signing key or dispatch tasks. Public GitHub observations, merge/CI
 verification and live revision evidence remain distinct; deployment is always
 reported unverified by this slice.
 
-The real owner signing-key boundary is still unprovisioned. Ephemeral fixture
-signatures and historical public PR probes test the protocol only. Merging the
-reviewed PR, deploying that exact revision, provisioning/using the owner's key
-outside agent access and validating hosted work-context access each retain their
-applicable separate owner approval and verification. No other Dokploy app or
-production database is involved in the branch checks.
+### Final acceptance report — 27 October 2026
+
+**Disposition:** Sprint 4 is technically implemented and deployed. The owner
+stopped the manual Ed25519 signing experiment and further technical development.
+The full human-confirmation-to-result scenario remains **unverified**; no claim
+of complete end-to-end acceptance is made.
+
+- `npm run check` passed all 79 tests with Node 24.22.1 / npm 11.19.1,
+  including lint, type checking and compilation. The initial socket-restricted
+  sandbox run was repeated successfully with local test listeners permitted.
+- After normal owner OAuth authorization for the existing project A scope, a
+  fresh Codex CLI MCP RPC connection discovered Context 0.4.0 / all 15 tools.
+  No token was extracted, model turn run or server-policy change made.
+- One synthetic original was persisted before its grounded decision proposal.
+  Fresh connections reread both exactly. Actual retries returned the same IDs,
+  timestamps, content and provenance with `duplicate: true`; the independently
+  computed source checksum matched. The proposal remained `suggested`, with
+  empty owner-review history.
+- The first unsigned review input was prepared, but no real owner key,
+  signature, approved review or dispatch/disclosure authorization was created.
+  No new acceptance PR, merge or deployment followed. The complete signed
+  `work_context` chain and fresh-planner acceptance remain unverified.
+
+Fixture signatures and historical PRs test the protocol; they do not substitute
+for real human confirmation or prove new work. The existing implementation's
+signature checks remain in place. The work model's deployment state remains
+`unverified` without independent evidence of the relevant running revision;
+the prior 0.4.0 operational release evidence above is a separate fact.
+
+**Product conclusion:** ordinary memory should work autonomously within its
+existing authorized scope, without requiring the user to manage signing keys,
+sign JSON or pass files to agents. Consequential actions need a simple explicit
+user confirmation through a trusted authenticated environment. This requirement
+has not been implemented or validated; it does not authorize bypassing the
+current signature boundary. Unattended hosted model processing also remains
+unverified, as recorded for Sprint 3.
+
+Technical development stops here. No replacement UI, new sprint, fabricated
+acceptance PR or additional implementation is authorized. The next activity is
+owner evaluation of the existing memory core's usefulness. Synthetic originals
+and the suggested proposal remain preserved; local unsigned signing artifacts
+are historical only and must not be executed as an active procedure.

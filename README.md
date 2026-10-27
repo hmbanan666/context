@@ -76,12 +76,19 @@ linked ChatGPT connection reported an expired credential and needs normal
 reconnection and refreshed tool discovery. New hosted tools were verified
 through Codex OAuth; a fresh ChatGPT invocation after this release is unverified.
 
-**Sprint 4: implementation authorized on 27 October 2026; branch acceptance
-in progress.** The work-evidence slice adds signed dispatch/disclosure,
-independent public GitHub observations and a scoped planner package. A tested
-branch or open PR is not a merged release, completed intention or deployed
-result. Real owner signing-key provisioning and hosted Sprint 4 activation
-remain unverified.
+**Sprint 4: technically implemented and deployed; human-confirmation end-to-end
+acceptance unverified.**
+[PR #12](https://github.com/hmbanan666/context/pull/12) merged as
+`d2c570a60cf562bd87309cb190f1b1bb0192f941` on 27 October 2026. The release
+record reports Context `0.4.0` deployed, with 15 tools and protected hosted
+checks; see [deployment](docs/deployment.md#sprint-4-release-and-final-acceptance).
+The owner stopped the manual Ed25519/key/JSON acceptance experiment. No real
+signed work chain was completed, and no substitute signatures or acceptance PR
+will be created. Routine memory should operate within the existing authorized
+workflow without per-record signing; consequential actions need simple user
+confirmation in a trusted authenticated environment. That confirmation flow is
+not implemented or verified. Technical development stops here while the owner
+evaluates the core's usefulness; no new UI or sprint is authorized.
 
 ## Local development
 
