@@ -201,6 +201,38 @@ shared across capture tools; using a key for a different operation conflicts.
 Only synthetic materials are authorized. PDF, audio, images, URL fetching and
 automatic interpretation are outside this slice.
 
+### Structured knowledge and owner review
+
+`add_knowledge` records `idea`, `observation` or `decision_proposal` items with
+immutable creation metadata and 1–8 source references. Every source must exist
+in the same scope; supplied quotes must be exact source substrings. Creator
+fields describe an untrusted attribution claim. All new items are `suggested`,
+including those attributed to a user. `read_knowledge` accepts an optional `id`
+or returns a bounded recent list. `relate_knowledge` records suggested
+`supports`, `contradicts` or `supersedes` links with their own provenance.
+`read_relations` and `knowledge_history` retrieve scoped links and append-only
+review evidence. A suggested supersedes link cannot alter decision status.
+
+Approval is deliberately outside MCP. An owner-controlled Ed25519 key signs a
+receipt containing `review` (`version`, `scope`, `id`, `idempotencyKey`, `status`,
+`evidence`) and a canonical base64 `signature`. `ownerReviewPayload` in
+`src/owner-review.ts` defines the exact domain-separated bytes to sign. The
+trusted public key must be selected by the operator independently of the
+receipt; the private signing key must remain outside Context and agent access.
+
+```sh
+npm run build
+npm run knowledge:review -- ./data/context.db /private/path/owner-public.pem /private/path/signed-review.json
+```
+
+Valid receipts append `reviewed`, `rejected` or `approved` events, including the
+original signed receipt and public-key fingerprint. Only decision proposals can
+be approved. Invalid signatures and tampering create no event; identical replay
+is idempotent. Original knowledge and previous reviews remain retrievable.
+Signature verification proves possession of the trusted signing key; operating
+that key as a human approval boundary remains the owner's responsibility.
+No real owner key has been provisioned by this implementation.
+
 Run the independent MCP Inspector CLI smoke check:
 
 ```sh
