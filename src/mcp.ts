@@ -10,6 +10,7 @@ import type { KnowledgeStore } from "./knowledge.js";
 import { registerKnowledgeTools } from "./mcp-knowledge.js";
 import { registerMaterialTools } from "./mcp-materials.js";
 import { registerProcessingTools } from "./mcp-processing.js";
+import { registerWorkTools } from "./mcp-work.js";
 import { buildProjectContext, projectContextSchema } from "./projections.js";
 import { IdempotencyConflict, type SourceStore } from "./store.js";
 import {
@@ -17,10 +18,12 @@ import {
   oauthMetadata,
   toolResult as result,
 } from "./tool-results.js";
+import type { WorkStore } from "./work.js";
 
 export interface McpStores {
   readonly knowledge?: KnowledgeStore;
   readonly jobs?: JobStore;
+  readonly work?: WorkStore;
   readonly clientGrants?: ClientGrants;
 }
 
@@ -47,7 +50,7 @@ export function createContextMcp(
       });
       const server = new McpServer({
         name: "context-synthetic-pilot",
-        version: "0.3.0",
+        version: "0.4.0",
       });
       const authorize: AuthorizeTool = (scope, operation) => {
         if (protectedMode) {
@@ -73,6 +76,8 @@ export function createContextMcp(
         return undefined;
       };
       registerMaterialTools(server, store, authorize, protectedMode);
+      if (stores.work)
+        registerWorkTools(server, stores.work, authorize, protectedMode);
       if (stores.knowledge)
         registerKnowledgeTools(
           server,

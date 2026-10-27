@@ -15,15 +15,23 @@ import { JobStore } from "./jobs.js";
 import { KnowledgeStore } from "./knowledge.js";
 import { createContextMcp } from "./mcp.js";
 import { SourceStore } from "./store.js";
+import { WorkStore } from "./work.js";
 
 export async function startService(config: Config) {
   const store = new SourceStore(config.databasePath);
   let knowledge: KnowledgeStore;
   let jobs: JobStore;
+  let work: WorkStore;
   try {
     knowledge = new KnowledgeStore(config.databasePath);
     try {
       jobs = new JobStore(config.databasePath);
+      try {
+        work = new WorkStore(config.databasePath, store, knowledge);
+      } catch (error) {
+        jobs.close();
+        throw error;
+      }
     } catch (error) {
       knowledge.close();
       throw error;
@@ -37,6 +45,7 @@ export async function startService(config: Config) {
       ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth, {
           knowledge,
           jobs,
+          work,
           ...(config.oauth?.clientGrants === undefined
             ? {}
             : { clientGrants: config.oauth.clientGrants }),
@@ -134,6 +143,7 @@ export async function startService(config: Config) {
     });
   } catch (error) {
     await mcp?.close();
+    work.close();
     jobs.close();
     knowledge.close();
     store.close();
@@ -150,6 +160,7 @@ export async function startService(config: Config) {
         });
       } finally {
         await mcp?.close();
+        work.close();
         jobs.close();
         knowledge.close();
         store.close();

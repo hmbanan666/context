@@ -11,8 +11,11 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
+import { syntheticGitHubFetch } from "../fixtures/synthetic-github.js";
 import { syntheticSource } from "../fixtures/synthetic-source.js";
+import { workFixture } from "../fixtures/synthetic-work.js";
 import { SourceStore } from "../src/store.js";
+import { applyWorkAuthorization } from "../src/work.js";
 
 function childEnvironment(databasePath: string): NodeJS.ProcessEnv {
   return {
@@ -213,5 +216,82 @@ test("production startup fails before opening a listener or database", async () 
     assert.deepEqual(await readdir(directory), []);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a fresh MCP planner reads only the complete authorized work chain after process restart", {
+  timeout: 20000,
+}, async () => {
+  const f = await workFixture();
+  try {
+    const saved = applyWorkAuthorization(f.work, f.receipt(), f.publicKey).work;
+    await f.work.refresh(
+      saved.id,
+      saved.scope,
+      7,
+      "open",
+      syntheticGitHubFetch({ ...f.authorization, pullNumber: 7 }),
+    );
+    f.sources.capture({
+      version: 1,
+      scope: "synthetic:foreign",
+      text: "Synthetic foreign scope marker",
+      origin: "fixture:foreign",
+      idempotencyKey: "foreign",
+    });
+    const expected = f.work.context(saved.id, saved.scope);
+    for (let restart = 0; restart < 2; restart++) {
+      const child = run(new URL("../src/main.js", import.meta.url), {
+        ...childEnvironment(f.path),
+        CONTEXT_LOCAL_SCOPES: saved.scope,
+      });
+      let client: Client | undefined;
+      try {
+        const port = await waitForPort(child);
+        client = new Client({ name: "fresh-scoped-planner", version: "1" });
+        await client.connect(
+          new StreamableHTTPClientTransport(
+            new URL(`http://127.0.0.1:${port}/mcp`),
+          ),
+        );
+        const result = await client.callTool({
+          name: "work_context",
+          arguments: { version: 1, scope: saved.scope, id: saved.id },
+        });
+        assert.ok(!result.isError);
+        assert.deepEqual(result.structuredContent, expected);
+        assert.equal(expected.result, "unverified");
+        assert.equal(expected.latest?.evidence?.checks.state, "passed");
+        assert.equal(
+          JSON.stringify(result).includes("Synthetic foreign scope marker"),
+          false,
+        );
+        for (const args of [
+          { scope: "synthetic:foreign", id: saved.id },
+          { scope: saved.scope, id: saved.id, maxBytes: 1024 },
+          { scope: saved.scope, id: "missing" },
+        ]) {
+          const denied = await client.callTool({
+            name: "work_context",
+            arguments: { version: 1, ...args },
+          });
+          assert.equal(denied.isError, true);
+          assert.equal(JSON.stringify(denied).includes(f.source.text), false);
+          assert.equal(JSON.stringify(denied).includes(f.source.id), false);
+        }
+        const names = (await client.listTools()).tools.map((tool) => tool.name);
+        assert.equal(names.length, 15);
+        assert.ok(names.includes("work_context"));
+        assert.equal(
+          names.some((name) => /dispatch|authorize|sync_work/.test(name)),
+          false,
+        );
+      } finally {
+        await client?.close();
+        await stop(child);
+      }
+    }
+  } finally {
+    await f.close();
   }
 });

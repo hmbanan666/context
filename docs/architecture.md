@@ -12,7 +12,8 @@ project context were reviewed, tested and merged in PRs #6–#9. Hosted syntheti
 acceptance for `ff9fd9a`, including project isolation, queued-job restore and
 actual Codex OAuth refresh after expiry, passed. The Codex-only provider fix
 was separately approved in PR #10. Exact evidence is in deployment.md.
-Execution orchestration remains a proposal.
+Sprint 4 implementation is authorized on a separate branch. Its first slice
+records work permission and evidence; it does not execute tasks autonomously.
 
 ## Purpose
 
@@ -87,6 +88,31 @@ oversized grounding omits a whole entry with a truncation indicator. Every MCP
 operation intersects signed token operation/data scopes with operator-configured
 client grants; project arguments never grant access. This remains one owner with
 the two existing clients, rather than a multi-tenant permission model.
+
+## Sprint 4 work-evidence boundary
+
+An immutable work authorization binds an existing same-scope decision proposal
+to its exact current signed approval, public GitHub repository and source/base
+branches, required CI names and explicit dispatch/disclosure permission. It is
+independently signed with the same trusted owner key and a different protocol
+domain. The operator imports it locally; MCP can only read the resulting chain.
+Approval revocation or replacement disables the old authorization.
+
+Explicit operator refresh reads public GitHub REST with no credentials, fixed
+API origin, bounded time/bytes/counts, no redirects and no source-text disclosure.
+It verifies repository, branches, exact head SHA and stable PR facts across the
+read. Immutable observations separate PR state, check results, merge and unknown
+deployment. An open or failed PR cannot verify a result, nor can an old merged
+PR complete a newly authorized intent. Failed refresh is itself an observation,
+so stale success cannot silently stand in for current verification.
+
+`work_context` returns one exact authorized work chain with complete originals,
+signed review and authorization, latest observation and bounded older evidence.
+Its UTF-8 budget drops whole older observations only; missing room for the
+complete rationale/latest fact returns an error. It is sufficient for a fresh
+planner without other projects or personal history. Tables are additive and
+included in existing SQLite backup/restore. No hosted model, dispatch engine,
+GitHub write or live deployment verifier is introduced.
 
 ## Initial MCP contract
 
