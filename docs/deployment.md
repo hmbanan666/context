@@ -1,9 +1,10 @@
-# Protected deployment preparation
+# Protected synthetic deployment
 
-**Status:** Sprint 2 implementation prepared; no hosted deployment or real
-ChatGPT/Codex linking has been performed. The owner approved
-`context.kosarev.space` as the Context service domain. Merge and live deployment
-still require separate owner approval under AGENTS.md.
+**Status:** PR #4 merged and the protected synthetic pilot deployed on
+27 October 2026 after separate owner approval. Hosted TLS/OAuth and actual
+Codex CLI login passed. Actual ChatGPT capture and a fresh Codex tool invocation
+remain unverified; Sprint 2 acceptance is incomplete. Further merges or live
+changes still require their applicable owner approval under AGENTS.md.
 
 ## Provider and addresses
 
@@ -60,7 +61,7 @@ metadata/401, an internal synthetic seed, persistence across a container restart
 and an offline restore under a non-root, read-only runtime. It does not claim
 authenticated public HTTP interoperability. Both Docker smoke scripts require
 Python 3 and Docker. The provider smoke
-it starts a disposable Keycloak dev-mode container on a random loopback port,
+starts a disposable Keycloak dev-mode container on a random loopback port,
 imports a synthetic user into a temporary realm, performs actual browser-form
 login/code exchange with PKCE, rejects a wrong verifier, checks the resource
 audience, rotates refresh tokens and rejects replay, then verifies a real
@@ -85,8 +86,32 @@ Keycloak's `/auth` router takes priority over the Context router. TLS, HTTP
 redirect, HSTS and a proxy request-rate limit are configured with Traefik labels,
 following [Dokploy's Compose routing](https://docs.dokploy.com/docs/core/docker-compose/example).
 
-Enable Dokploy's isolated-deployment networking, or provision a dedicated
-Context proxy network attached only to Context, its Keycloak and Traefik.
+Enable Dokploy's isolated-deployment networking and apply `deploy/dokploy.yaml`
+**after** the converted base file. Dokploy 0.29.13 adds its proxy network to every
+service, including PostgreSQL; the override uses Compose `!override` to keep the
+database exclusively on its internal network and avoid duplicate references to
+the proxy network. This requires Docker Compose 2.24.4 or newer; the host used
+5.3.1. Before starting services, create the isolated network through a Context-only
+preflight deployment with custom command `compose version`; Dokploy creates the
+network and attaches Traefik even though no service starts. Inspect Traefik's
+address on that network, then configure the values below.
+
+The normal Dokploy custom command is a Docker subcommand (Dokploy prefixes
+`docker`):
+
+```sh
+compose -p <context-app-name> --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/dokploy.yaml up -d --build --remove-orphans
+```
+
+Dokploy must create `deploy/.env`. When supplying values, verify the resulting
+container values privately: Dokploy 0.29.13 parses the input environment before
+writing `.env`, and Compose performs another interpolation pass. Do not assume
+that quoting or dollar signs survive both passes unchanged. Never print the
+values during verification.
+
+Alternatively provision and maintain a dedicated Context proxy network attached
+only to Context, its Keycloak and Traefik, with isolated conversion disabled.
 `CONTEXT_PROXY_NETWORK` must name that dedicated network, **not** the shared
 `dokploy-network`. Set `CONTEXT_PROXY_CIDRS` to the actual trusted proxy
 addresses/CIDRs on that network; do not guess or use an unrestricted range.
@@ -121,13 +146,19 @@ to 60 per client per minute; proxy limiting also protects unauthenticated paths.
    CONTEXT_OWNER_SUBJECT=bootstrap-unused docker compose \
      -f deploy/compose.yaml -f deploy/bootstrap.yaml up -d identity-db identity
    ```
+
+   In Dokploy use the same `--env-file`, project name and final
+   `-f deploy/dokploy.yaml` override as the normal command above; include
+   `-f deploy/bootstrap.yaml` before that final override.
 2. Sign into the new Keycloak admin console using its bootstrap credential,
    create one real owner account, require a strong password and configure MFA.
    Copy its user UUID into `CONTEXT_OWNER_SUBJECT`; keep personal profile fields
    and credentials out of Git. Use a permanent administrator, then remove the
    bootstrap administrator and its environment credential. Remove the bootstrap
-   override from subsequent deployments and use `deploy/compose.yaml` alone;
-   that configuration continues to validate without the temporary password.
+   override from subsequent deployments; retain the Dokploy network override when
+   using isolated deployment. The base `deploy/compose.yaml` configuration
+   continues to validate without the temporary password.
+   An email is optional in the Context realm; no placeholder address was added.
 3. The imported clients are deliberately **disabled**. For ChatGPT,
    copy the exact callback from its MCP management screen into `context-chatgpt`.
    The shipped stable URI is a candidate to verify, not permission to add
@@ -152,13 +183,47 @@ its guide also explains how to copy the active callback:
 [OpenAI authentication](https://developers.openai.com/plugins/build/auth).
 Keycloak 26.8.1 does not advertise `none` in its discovery authentication-method
 list. Therefore the ChatGPT client uses the advertised `client_secret_basic`
-method. The predefined public Codex client successfully exchanges codes without
-a secret in the local provider test; compatibility with the actual Codex OAuth
-login must still be demonstrated. Do not claim metadata parity or live-client
-compatibility from the provider test alone.
-Provider discovery, `resource` binding and refresh behavior must still be
-checked through the deployed proxy. If linking is incompatible, keep the pilot
-synthetic and record the exact failure.
+method. The predefined public Codex client completed actual Codex CLI 0.164.0
+OAuth login through the deployed provider without a secret. Configure:
+
+```toml
+[mcp_servers.context]
+url = "https://context.kosarev.space/mcp"
+scopes = ["context:read", "context:write", "synthetic:hosted-pilot"]
+
+[mcp_servers.context.oauth]
+client_id = "context-codex"
+callback_url = "http://127.0.0.1:8765/callback"
+callback_port = 8765
+```
+
+Then run `codex mcp login context`. Do not add `oauth_resource` for this tested
+CLI version: it already derives the resource from discovery, and setting both
+produced duplicate `resource` parameters rejected by Keycloak. The exact
+callback above was verified from the actual CLI authorization request, and only
+then was `context-codex` enabled. The saved local configuration is available to
+new Codex sessions; OAuth login alone does not prove a model tool invocation.
+
+The ChatGPT client is enabled with the exact stable callback after verifying
+issuer-bound success/error responses and the callback shown in ChatGPT's form.
+In **Add custom MCP server → Advanced OAuth settings**, select **Custom OAuth
+client**, enter `context-chatgpt`, privately supply its provider-generated secret, and select
+`client_secret_basic`. Keep the three advertised scopes checked and turn off
+**OIDC enabled**: this pilot does not provide `profile` or `email` scopes.
+
+The UI initially chose DCR because Keycloak advertises a registration endpoint,
+but anonymous registration is deliberately blocked (observed HTTP 403,
+`insufficient_scope`). Do not enable open registration to resolve that form
+error. Both predefined clients are now enabled; this is configuration evidence,
+not proof of a completed ChatGPT link.
+
+Owner refresh sessions used for setup were revoked before first-login MFA.
+The owner then completed authenticator setup in their own browser. Provider
+inspection confirmed an OTP credential, no pending `CONFIGURE_TOTP` action and
+an active `context-chatgpt` session. The ChatGPT UI returned to the installed
+Context page. Actual ChatGPT tool execution still needs its own evidence.
+Run the Codex login again for a new authorized session; the setup credentials
+were removed locally. Do not infer tool compatibility from provider sessions.
 
 ## Backup and restore
 
@@ -198,15 +263,57 @@ Keycloak/PostgreSQL versions until that restore has been verified. A realm
 JSON import is bootstrap configuration, **not** an identity database backup.
 It skips existing realms and does not automatically apply later config edits.
 
+## Observed hosted evidence — 27 October 2026
+
+The deployed source is the PR #4 merge commit
+[`65ccd0b`](https://github.com/hmbanan666/context/commit/65ccd0bd5a0a017b16f84f1c0be980d307424688).
+The Context image observed after redeploy is
+`sha256:6ab5fc45dda8d3bc5f9a0255e08f3eb30cf3c96d85ace7437b960199e0391719`.
+The network override in this change was applied as a Context-only Dokploy file
+patch during the approved deployment. Merge of this follow-up is separate from
+that live configuration; remove the redundant file patch only after it is in
+the deployed branch. Automatic deployment is disabled.
+
+- [Health](https://context.kosarev.space/health): HTTPS 200;
+  [resource metadata](https://context.kosarev.space/.well-known/oauth-protected-resource/mcp):
+  200 with the exact resource and issuer. Provider discovery returned the same
+  issuer and S256 support through a valid public TLS certificate.
+- Missing, malformed, genuinely expired provider tokens and a valid provider
+  token with the wrong audience were rejected with 401. A read-only token's
+  capture call returned a scope challenge without writing. Wrong PKCE was
+  rejected; refresh tokens rotated and replay was rejected.
+- Owner-completed MFA and a ChatGPT provider session were independently
+  observed after the user returned to the installed plugin page.
+- Actual installed Codex CLI 0.164.0 completed pre-registered OAuth login.
+  Independent official SDK sessions discovered both tools, captured one
+  synthetic fixture, and recalled its exact source after a process stop/start
+  and full redeploy. The persistent idempotency key returned the original
+  record; ID, timestamp, checksum, provenance and status were unchanged.
+- A live SQLite snapshot was restored to an absent, separate file while
+  Context was stopped. Exact source equality, FTS and idempotency passed against
+  the restored file. The original database was retained and Context restarted;
+  the live database was not replaced by the restored copy.
+- With Keycloak stopped, `pg_dump -Fc` of its dedicated database was restored
+  using `pg_restore --exit-on-error` into a new temporary database. The Context
+  realm and owner existed in the restored database; that temporary database was
+  removed and Keycloak restarted.
+- Container inspection verified that PostgreSQL has only its internal network,
+  Context has only the dedicated proxy network, and Keycloak has both. No host
+  ports are published. The bootstrap administrator was deleted; the deployed
+  Keycloak environment no longer contains its bootstrap credential.
+
+The test scripts and raw deployment logs are private operational artifacts;
+credentials, user UUIDs and database dumps are not committed. Current backup
+copies are on the same host. Off-host backup delivery and recovery after loss of
+the entire host have **not** been demonstrated.
+
 ## Remaining hosted acceptance
 
-- Owner approval of the concrete implementation and the live deployment.
-- Dokploy connection, isolated network and TLS routing verified on the host.
-- Both actual clients complete OAuth; wrong/missing/expired tokens and wrong
-  scopes are rejected through the public endpoint.
+- Actual ChatGPT tool execution and a fresh Codex tool invocation still need
+  to be demonstrated.
 - An actual ChatGPT `capture` writes one synthetic record; a fresh Codex session
   `recall`s its exact stable ID and checksum. Tool discovery alone is not proof.
-- Redeploy/restart and an offline restore preserve that record.
+- Repeat the persistence/recovery check with the record created by ChatGPT.
 - Record the deployed commit and evidence separately from PR/CI/merge state.
 
 No claim in this document authorizes real private-memory ingestion or access

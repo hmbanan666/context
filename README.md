@@ -49,12 +49,13 @@ Agent instructions: [AGENTS.md](AGENTS.md)
 
 ## Status
 
-**Sprint 2 preparation: protected synthetic pilot, containers and recovery. Nothing is deployed.**
-Sprint 1 is merged. Local MCP capture/recall remains available; an OAuth resource
-server and dedicated Keycloak deployment configuration are prepared for
-`context.kosarev.space`. Hosted TLS/authentication and actual ChatGPT/Codex
-interoperability have not been demonstrated. See [deployment](docs/deployment.md)
-for tested behavior, setup, limitations and the remaining acceptance checks.
+**Sprint 2: protected synthetic pilot deployed; ChatGPT roundtrip remains incomplete.**
+PR #4 is merged and the service runs at `context.kosarev.space` with Keycloak,
+HTTPS and dedicated storage. Hosted OAuth, actual Codex CLI login, SDK
+capture/recall across redeploy and database recovery checks passed. Actual
+ChatGPT capture and a fresh Codex tool invocation have not been demonstrated.
+See [deployment](docs/deployment.md) for evidence, configuration and remaining
+acceptance checks. Real private-memory ingestion remains unapproved.
 
 ## Local development
 
