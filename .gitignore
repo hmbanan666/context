@@ -7,6 +7,8 @@ coverage/
 !.env.example
 *.db
 *.db-*
+*.dump
+backups/
 data/
 storage/
 uploads/

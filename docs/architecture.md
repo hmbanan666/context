@@ -1,8 +1,9 @@
 # Architecture hypothesis
 
 **Status:** Local source persistence and synthetic MCP capture/recall are
-implemented (see README for the tested contract). Hosted authentication and
-the later knowledge/execution layers below remain proposals.
+implemented (see README for the tested contract). An OAuth resource server and
+Keycloak configuration are prepared; hosted authentication and real client
+linking remain unverified. Later knowledge/execution layers remain proposals.
 
 ## Purpose
 

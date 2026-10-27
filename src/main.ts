@@ -18,7 +18,7 @@ try {
 } catch {
   // Do not print raw errors: SQLite errors can contain file paths or inputs.
   console.error(
-    "Context startup failed; check local mode, port and database path",
+    "Context startup failed; check authentication mode, port and database path",
   );
   process.exitCode = 1;
 }

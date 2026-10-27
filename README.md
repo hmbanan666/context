@@ -49,10 +49,12 @@ Agent instructions: [AGENTS.md](AGENTS.md)
 
 ## Status
 
-**Sprint 1: local MCP capture/recall and SQLite full-text search. Nothing is deployed.**
-The service exposes a loopback health endpoint and an explicitly enabled,
-synthetic-only MCP endpoint. Hosted authentication and ChatGPT/Codex plugin
-interoperability have not been implemented or demonstrated.
+**Sprint 2 preparation: protected synthetic pilot, containers and recovery. Nothing is deployed.**
+Sprint 1 is merged. Local MCP capture/recall remains available; an OAuth resource
+server and dedicated Keycloak deployment configuration are prepared for
+`context.kosarev.space`. Hosted TLS/authentication and actual ChatGPT/Codex
+interoperability have not been demonstrated. See [deployment](docs/deployment.md)
+for tested behavior, setup, limitations and the remaining acceptance checks.
 
 ## Local development
 
@@ -77,7 +79,8 @@ curl --fail http://127.0.0.1:3000/health
 
 Expected response: `{"status":"ok"}`. Stop with Ctrl-C. `npm run check` runs
 lint/format checks, type checking, compilation and all tests; GitHub CI runs
-the same command on PRs and pushes to `main`. After changing source, run
+the same command, builds the image and runs the Keycloak smoke on PRs and pushes
+to `main`. After changing source, run
 `npm run build` before `npm start` or `npm run seed:synthetic`.
 
 No cloud account, API key or LLM is required. MCP uses the official TypeScript
@@ -94,15 +97,16 @@ but the service does not load `.env` automatically.
 
 | Variable          | Default             | Meaning                                                                                                |
 | ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
-| `NODE_ENV`        | `development`       | Only `development` and `test` are supported. Other modes fail before opening the database or listener. |
+| `NODE_ENV`        | `development`       | `production` requires a complete protected OAuth configuration; unknown modes fail closed. |
 | `CONTEXT_PORT`    | `3000`              | Integer 0–65535; 0 requests a free local port, printed at startup.                                     |
 | `CONTEXT_DB_PATH` | `./data/context.db` | Persistent SQLite file, relative to the working directory or absolute. Parent directories are created. |
 | `CONTEXT_LOCAL_MCP` | unset | Set exactly `synthetic` to enable the local no-auth MCP experiment. Otherwise `/mcp` returns 404. |
 | `CONTEXT_LOCAL_SCOPES` | `synthetic:local-foundation` when MCP is enabled | Comma-separated list of 1–8 distinct permitted synthetic scopes. Requires explicit MCP opt-in. |
 
-The listener is fixed to `127.0.0.1`; there is no public bind option. Do not
-expose this milestone through a proxy or tunnel. Production authentication
-has not been implemented. Logs contain listener metadata or generic errors,
+The local no-auth listener is fixed to `127.0.0.1`; do not expose it through a
+proxy or tunnel. Protected OAuth mode binds the container interface and requires
+the exact approved HTTPS resource/issuer and owner subject. See the deployment
+guide before using that mode. Logs contain listener metadata or generic errors,
 never source records. Database files, WAL files and environment files are ignored
 by Git. Use synthetic data only, including in local databases.
 
@@ -116,7 +120,7 @@ This test creates a temporary database, seeds a deterministic synthetic source,
 starts and stops the actual compiled service, repeats seed/start/stop, then
 checks the original text, provenance, scope, timestamp, SHA-256 checksum and
 `unreviewed` status through the internal store after each shutdown. It also
-checks that production mode creates neither a listener nor a database.
+checks that incomplete production configuration creates neither a listener nor a database.
 The smoke test also uses a fresh official MCP client against each service
 process: it captures, recalls, searches and retries the same source after a real
 process restart, with unchanged ID, timestamp, text and checksum. Temporary files
@@ -194,8 +198,10 @@ npx --yes @modelcontextprotocol/inspector@2.12.0 --cli \
 
 The implementation follows the official
 [SDK HTTP serving guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/http.md).
-Remote access, hosted OAuth and actual ChatGPT/Codex interoperability remain
-Sprint 2 work; no private-memory ingestion is authorized by this local proof.
+Protected deployment configuration and local Keycloak protocol checks are
+documented separately in [deployment](docs/deployment.md). Actual hosted
+ChatGPT/Codex interoperability remains unverified; no private-memory ingestion
+is authorized by these synthetic tests.
 
 ## Hosting
 

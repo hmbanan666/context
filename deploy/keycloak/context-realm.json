@@ -1,0 +1,115 @@
+{
+  "realm": "context",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "clientScopes": [
+    {
+      "name": "basic",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "false" },
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "context:read",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" }
+    },
+    {
+      "name": "context:write",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" }
+    },
+    {
+      "name": "synthetic:hosted-pilot",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "context-resource",
+      "bearerOnly": true,
+      "protocol": "openid-connect",
+      "attributes": { "resource_url": "https://context.kosarev.space/mcp" }
+    },
+    {
+      "clientId": "context-chatgpt",
+      "fullScopeAllowed": false,
+      "defaultClientScopes": ["basic"],
+      "enabled": false,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "optionalClientScopes": [
+        "context:read",
+        "context:write",
+        "synthetic:hosted-pilot"
+      ],
+      "protocolMappers": [
+        {
+          "name": "context-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "context-resource",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "context-codex",
+      "fullScopeAllowed": false,
+      "defaultClientScopes": ["basic"],
+      "enabled": false,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": ["http://127.0.0.1:8765/callback"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "optionalClientScopes": [
+        "context:read",
+        "context:write",
+        "synthetic:hosted-pilot"
+      ],
+      "protocolMappers": [
+        {
+          "name": "context-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "context-resource",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

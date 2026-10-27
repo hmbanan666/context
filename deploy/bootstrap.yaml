@@ -1,0 +1,6 @@
+# Add only for the first identity startup, then use compose.yaml alone.
+services:
+  identity:
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: context-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${CONTEXT_IDENTITY_ADMIN_PASSWORD:?Set a private one-time bootstrap admin password}

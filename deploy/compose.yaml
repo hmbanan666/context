@@ -1,0 +1,122 @@
+name: context
+
+services:
+  context:
+    build:
+      context: ..
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      CONTEXT_AUTH: oauth
+      CONTEXT_PUBLIC_URL: https://context.kosarev.space/mcp
+      CONTEXT_OAUTH_ISSUER: https://context.kosarev.space/auth/realms/context
+      CONTEXT_OWNER_SUBJECT: ${CONTEXT_OWNER_SUBJECT:?Set the dedicated owner's Keycloak user ID}
+      CONTEXT_DB_PATH: /app/data/context.db
+    volumes:
+      - sources:/app/data
+      - backups:/app/backups
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    networks: [dokploy]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${CONTEXT_PROXY_NETWORK:?Set the isolated Context proxy network}
+      traefik.http.routers.context.rule: Host(`context.kosarev.space`)
+      traefik.http.routers.context.priority: "10"
+      traefik.http.routers.context.entrypoints: websecure
+      traefik.http.routers.context.middlewares: context-security,context-rate
+      traefik.http.routers.context.tls.certresolver: letsencrypt
+      traefik.http.routers.context-http.rule: Host(`context.kosarev.space`)
+      traefik.http.routers.context-http.entrypoints: web
+      traefik.http.routers.context-http.middlewares: context-https
+      traefik.http.middlewares.context-https.redirectscheme.scheme: https
+      traefik.http.middlewares.context-security.headers.stsseconds: "31536000"
+      traefik.http.middlewares.context-rate.ratelimit.average: "20"
+      traefik.http.middlewares.context-rate.ratelimit.burst: "40"
+      traefik.http.services.context.loadbalancer.server.port: "3000"
+
+  identity:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: [start, --import-realm, --features=resource-indicators]
+    restart: unless-stopped
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://identity-db:5432/context_identity
+      KC_DB_USERNAME: context_identity
+      KC_DB_PASSWORD: ${CONTEXT_IDENTITY_DB_PASSWORD:?Set the dedicated identity database password}
+      KC_HOSTNAME: https://context.kosarev.space/auth
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_PROXY_TRUSTED_ADDRESSES: ${CONTEXT_PROXY_CIDRS:?Set the actual trusted Dokploy proxy CIDRs}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_MANAGEMENT_RELATIVE_PATH: /
+    healthcheck:
+      test:
+        [
+          CMD,
+          /bin/bash,
+          -c,
+          'exec 3<>/dev/tcp/127.0.0.1/9000; printf "GET /health/ready HTTP/1.0\r\n\r\n" >&3; grep -q "200 OK" <&3',
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    stop_grace_period: 30s
+    volumes:
+      - ./keycloak/context-realm.json:/opt/keycloak/data/import/context-realm.json:ro
+    depends_on:
+      identity-db:
+        condition: service_healthy
+    mem_limit: 1g
+    networks: [dokploy, identity]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${CONTEXT_PROXY_NETWORK:?Set the isolated Context proxy network}
+      traefik.http.routers.context-identity.rule: Host(`context.kosarev.space`) && PathPrefix(`/auth`)
+      traefik.http.routers.context-identity.priority: "20"
+      traefik.http.routers.context-identity.entrypoints: websecure
+      traefik.http.routers.context-identity.middlewares: context-identity-security,context-identity-rate
+      traefik.http.routers.context-identity.tls.certresolver: letsencrypt
+      traefik.http.services.context-identity.loadbalancer.server.port: "8080"
+      traefik.http.middlewares.context-identity-security.headers.stsseconds: "31536000"
+      traefik.http.middlewares.context-identity-rate.ratelimit.average: "20"
+      traefik.http.middlewares.context-identity-rate.ratelimit.burst: "40"
+      traefik.http.routers.context-identity-http.rule: Host(`context.kosarev.space`) && PathPrefix(`/auth`)
+      traefik.http.routers.context-identity-http.entrypoints: web
+      traefik.http.routers.context-identity-http.priority: "20"
+      traefik.http.routers.context-identity-http.middlewares: context-identity-https
+      traefik.http.middlewares.context-identity-https.redirectscheme.scheme: https
+
+  identity-db:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: context_identity
+      POSTGRES_USER: context_identity
+      POSTGRES_PASSWORD: ${CONTEXT_IDENTITY_DB_PASSWORD:?Set the dedicated identity database password}
+    volumes:
+      - identity-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U context_identity -d context_identity]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    networks: [identity]
+
+networks:
+  dokploy:
+    external: true
+    name: ${CONTEXT_PROXY_NETWORK:?Set the isolated Context proxy network}
+  identity:
+    internal: true
+
+volumes:
+  sources:
+  backups:
+  identity-db:
