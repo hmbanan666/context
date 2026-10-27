@@ -112,6 +112,7 @@
       "redirectUris": ["http://127.0.0.1:8765/callback"],
       "attributes": { "pkce.code.challenge.method": "S256" },
       "optionalClientScopes": [
+        "offline_access",
         "context:read",
         "context:write",
         "synthetic:hosted-pilot",
