@@ -217,10 +217,13 @@ but anonymous registration is deliberately blocked (observed HTTP 403,
 error. Both predefined clients are now enabled; this is configuration evidence,
 not proof of a completed ChatGPT link.
 
-Owner refresh sessions used for setup were revoked and the owner's next login
-requires `CONFIGURE_TOTP`. The owner must complete authenticator setup in their
-own browser; it has not been automated or claimed complete. Run the Codex login
-again after that step. Do not infer ChatGPT compatibility from SDK or CLI tests.
+Owner refresh sessions used for setup were revoked before first-login MFA.
+The owner then completed authenticator setup in their own browser. Provider
+inspection confirmed an OTP credential, no pending `CONFIGURE_TOTP` action and
+an active `context-chatgpt` session. The ChatGPT UI returned to the installed
+Context page. Actual ChatGPT tool execution still needs its own evidence.
+Run the Codex login again for a new authorized session; the setup credentials
+were removed locally. Do not infer tool compatibility from provider sessions.
 
 ## Backup and restore
 
@@ -279,6 +282,8 @@ the deployed branch. Automatic deployment is disabled.
   token with the wrong audience were rejected with 401. A read-only token's
   capture call returned a scope challenge without writing. Wrong PKCE was
   rejected; refresh tokens rotated and replay was rejected.
+- Owner-completed MFA and a ChatGPT provider session were independently
+  observed after the user returned to the installed plugin page.
 - Actual installed Codex CLI 0.164.0 completed pre-registered OAuth login.
   Independent official SDK sessions discovered both tools, captured one
   synthetic fixture, and recalled its exact source after a process stop/start
@@ -304,8 +309,8 @@ the entire host have **not** been demonstrated.
 
 ## Remaining hosted acceptance
 
-- Owner completes first-login MFA setup; actual ChatGPT OAuth linking and a
-  fresh Codex tool invocation still need to be demonstrated.
+- Actual ChatGPT tool execution and a fresh Codex tool invocation still need
+  to be demonstrated.
 - An actual ChatGPT `capture` writes one synthetic record; a fresh Codex session
   `recall`s its exact stable ID and checksum. Tool discovery alone is not proof.
 - Repeat the persistence/recovery check with the record created by ChatGPT.
