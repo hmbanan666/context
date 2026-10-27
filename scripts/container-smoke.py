@@ -57,28 +57,45 @@ def main():
         assert get("/mcp", "POST") == 401
         print("Protected container health, metadata and anonymous denial: passed", flush=True)
         insert = """import {SourceStore} from './dist/src/store.js';
+import {KnowledgeStore} from './dist/src/knowledge.js';
+import {JobStore} from './dist/src/jobs.js';
 const store = new SourceStore('/app/data/context.db');
-console.log(JSON.stringify(store.capture({version:1, text:'Synthetic container orange kite',
-origin:'fixture:container',scope:'synthetic:hosted-pilot',idempotencyKey:'container-001'}).source));
-store.close();"""
+const knowledge = new KnowledgeStore('/app/data/context.db');
+const jobs = new JobStore('/app/data/context.db');
+const scope='synthetic:hosted-pilot';
+const captured=store.capture({version:1, text:'Synthetic container orange kite',
+origin:'fixture:container',scope,idempotencyKey:'container-001'});
+const file=store.captureFile({version:1,scope,origin:'fixture:container-file',
+idempotencyKey:'container-file',filename:'synthetic.txt',mediaType:'text/plain',
+contentBase64:'U3ludGhldGljIGNvbnRhaW5lciBmaWxlDQo='});
+const item=knowledge.add({version:1,scope,idempotencyKey:'container-knowledge',kind:'idea',
+text:'A synthetic container kite',sourceRefs:[{sourceId:captured.source.id,quote:'orange kite'}],
+creator:{kind:'model',name:'fixture:container'}});
+const job=jobs.enqueue({version:1,scope,sourceId:file.material.source.id,idempotencyKey:'container-job'});
+console.log(JSON.stringify({state:{source:captured.source,search:store.search('orange kite',scope,10),material:file.material,
+file:store.readMaterialFile(file.material.source.id,scope),item:item.item,job:job.job},
+duplicates:[captured.duplicate,file.duplicate,item.duplicate,job.duplicate]}));
+jobs.close();knowledge.close();store.close();"""
         saved = json.loads(run(["docker", "exec", container, "node", "--input-type=module", "-e", insert]).stdout)
+        assert saved["duplicates"] == [False, False, False, False]
         run(["docker", "exec", container, "node", "dist/scripts/database.js", "backup",
              "/app/data/context.db", "/app/backups/snapshot.db"])
         run(["docker", "restart", container])
         # Docker can allocate a new random host port when restarting a container.
         port = current_port()
         ready()
-        read = """import {SourceStore} from './dist/src/store.js';
-const store = new SourceStore('/app/data/context.db');
-console.log(JSON.stringify(store.search('orange kite','synthetic:hosted-pilot',10)[0]));
-store.close();"""
-        assert json.loads(run(["docker", "exec", container, "node", "--input-type=module", "-e", read]).stdout) == saved
+        read = insert
+        repeated = json.loads(run(["docker", "exec", container, "node", "--input-type=module", "-e", read]).stdout)
+        assert repeated["state"] == saved["state"]
+        assert repeated["duplicates"] == [True, True, True, True]
         run(["docker", "stop", container])
         run(["docker", "run", "--rm", "--read-only", *mounts, image, "node", "dist/scripts/database.js",
              "restore", "/app/backups/snapshot.db", "/app/data/restored.db"])
         read = read.replace("/app/data/context.db", "/app/data/restored.db")
-        assert json.loads(run(["docker", "run", "--rm", "--read-only", *mounts, image,
-                               "node", "--input-type=module", "-e", read]).stdout) == saved
+        restored = json.loads(run(["docker", "run", "--rm", "--read-only", *mounts, image,
+                                  "node", "--input-type=module", "-e", read]).stdout)
+        assert restored["state"] == saved["state"]
+        assert restored["duplicates"] == [True, True, True, True]
         assert subprocess.run(["docker", "run", "--rm", image], capture_output=True).returncode == 1
         print("Read-only non-root container restart, backup/restore and fail-closed default: passed", flush=True)
     finally:

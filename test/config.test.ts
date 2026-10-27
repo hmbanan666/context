@@ -65,3 +65,49 @@ test("local MCP is opt-in and can only grant explicit synthetic scopes", () => {
   ])
     assert.throws(() => readConfig(env));
 });
+
+test("client grants are strict operator configuration confined to authenticated mode", () => {
+  const env = {
+    NODE_ENV: "production",
+    CONTEXT_AUTH: "oauth",
+    CONTEXT_PUBLIC_URL: "https://context.kosarev.space/mcp",
+    CONTEXT_OAUTH_ISSUER: "https://context.kosarev.space/auth/realms/context",
+    CONTEXT_OWNER_SUBJECT: "synthetic-owner",
+  };
+  const grants = {
+    "context-codex": { read: ["synthetic:project:a"], write: [], process: [] },
+  };
+  assert.deepEqual(
+    readConfig({ ...env, CONTEXT_CLIENT_GRANTS: JSON.stringify(grants) }).oauth
+      ?.clientGrants,
+    grants,
+  );
+  for (const CONTEXT_CLIENT_GRANTS of [
+    "",
+    " ",
+    "null",
+    "[]",
+    "{}",
+    "{",
+    "x".repeat(16385),
+    JSON.stringify({ "context-codex": { read: [], write: [] } }),
+    JSON.stringify({ arbitrary: { read: [], write: [], process: [] } }),
+    JSON.stringify({
+      "context-codex": { read: ["private:notes"], write: [], process: [] },
+    }),
+  ]) {
+    assert.throws(() => readConfig({ ...env, CONTEXT_CLIENT_GRANTS }));
+  }
+  for (const local of [
+    {},
+    { CONTEXT_LOCAL_MCP: "synthetic" },
+    {
+      CONTEXT_LOCAL_MCP: "synthetic",
+      CONTEXT_LOCAL_SCOPES: "synthetic:project:a",
+    },
+  ]) {
+    assert.throws(() =>
+      readConfig({ ...local, CONTEXT_CLIENT_GRANTS: JSON.stringify(grants) }),
+    );
+  }
+});

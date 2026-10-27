@@ -3,8 +3,13 @@
 **Status:** Local source persistence and synthetic MCP capture/recall are
 implemented (see README for the tested contract). The protected synthetic pilot
 is deployed with Keycloak; hosted OAuth and actual Codex CLI login are verified.
-Actual ChatGPT write and a fresh Codex tool invocation remain unverified. Later
-knowledge/execution layers remain proposals.
+The owner reports a completed ChatGPT write-to-Codex roundtrip; a connected Codex
+tool independently retrieved that synthetic record on 27 October 2026. Its
+approved live redeploy and isolated offline restore passed, closing Sprint 2
+synthetic acceptance. Exact operational evidence is recorded in deployment.md.
+Sprint 3 source materials, grounded knowledge, local subscription processing and
+project context are implemented in reviewable changes, not yet merged/deployed.
+Execution orchestration remains a proposal.
 
 ## Purpose
 
@@ -52,6 +57,33 @@ Do not create all tables up front. Begin with source storage and essential
 metadata. An optional vector index is a *derived search index*, not a source
 of authority. Query filters and authorization must be applied before returning
 data to any model.
+
+## Implemented Sprint 3 boundaries
+
+Source metadata and bounded UTF-8 originals live in additive SQLite tables.
+Original file bytes, sources, FTS and retry keys commit together; online
+snapshots contain the complete material. The v1 source shape remains unchanged.
+
+Knowledge items and relations cite existing same-scope sources. Exact quotes
+are checked against immutable originals. Creation attribution is untrusted;
+items begin as suggested, and a suggested supersedes relation cannot change
+decision status. Owner review requires an Ed25519 receipt verified against an
+independently selected trusted key outside MCP. Append-only events retain the
+signed receipt, reviewer key fingerprint and server timestamp.
+
+Processing jobs use bounded retries and exclusive expiring leases. Validated
+model output is saved before knowledge writes; retries replay it with stable
+per-item keys. Sources remain available after failed processing. The actual
+subscription experiment uses an explicit local Codex CLI worker. HTTP requests
+only queue jobs, and the deployed runtime has no model credentials or automatic
+paid fallback. Hosted subscription processing remains unverified.
+
+Project context reads one authorized scope, includes full original evidence for
+each derived item/link, and has an explicit UTF-8 payload budget. Unavailable or
+oversized grounding omits a whole entry with a truncation indicator. Every MCP
+operation intersects signed token operation/data scopes with operator-configured
+client grants; project arguments never grant access. This remains one owner with
+the two existing clients, rather than a multi-tenant permission model.
 
 ## Initial MCP contract
 
@@ -104,10 +136,10 @@ because it has memory or orchestration features.
 
 ## Open questions
 
-- Does the owner's current ChatGPT plugin connection permit private
-  authenticated `capture` (actual write call)?
-- Can the deployed Keycloak provider complete the actual ChatGPT linking flow?
-- How do we prove an approval originated from a real user instead of a model?
-- Can Codex retrieve a scoped note from a new session with the same stable ID?
-- Which subscription-backed LLM features actually work under permitted
-  usage limits for future background enrichment?
+- How should the owner provision and operate a signing key outside agent
+  access for real review receipts?
+- Can a hosted subscription worker be supported with independently verified
+  credential refresh, quota handling and outbound source permissions?
+- What off-host backup/recovery arrangement should be separately authorized?
+- Which retrieval benchmark would justify vectors over the current FTS and
+  structured scoped context?

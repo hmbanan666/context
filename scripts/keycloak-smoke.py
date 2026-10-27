@@ -71,11 +71,13 @@ def main():
             assert metadata["authorization_response_iss_parameter_supported"] is True
             print("Keycloak discovery and PKCE S256: passed", flush=True)
 
-            def authorize(verifier, client_id="context-codex"):
+            full_scope = "context:read context:write context:process synthetic:hosted-pilot synthetic:project-a synthetic:project-b"
+
+            def authorize(verifier, client_id="context-codex", scope=full_scope):
                 challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
                 params = {"client_id": client_id, "response_type": "code",
                           "redirect_uri": "http://127.0.0.1:8765/callback", "resource": resource,
-                          "scope": "context:read context:write synthetic:hosted-pilot", "state": "synthetic-state",
+                          "scope": scope, "state": "synthetic-state",
                           "code_challenge": challenge, "code_challenge_method": "S256"}
                 cookies = http.cookiejar.CookieJar()
                 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies), NoRedirect())
@@ -121,6 +123,7 @@ def main():
             payload = json.loads(base64.urlsafe_b64decode(tokens["access_token"].split(".")[1] + "=="))
             assert resource in ([payload["aud"]] if isinstance(payload["aud"], str) else payload["aud"])
             assert payload["sub"] == "00000000-0000-4000-8000-000000000001"
+            assert set(full_scope.split()).issubset(set(payload["scope"].split()))
             print("Keycloak code exchange, verifier rejection and resource audience: passed", flush=True)
             refreshed = exchange({"grant_type": "refresh_token", "client_id": "context-codex",
                                   "refresh_token": tokens["refresh_token"], "resource": resource})
@@ -138,9 +141,22 @@ def main():
                                     "synthetic-local-only-client-secret")
             assert confidential["access_token"]
             print("Keycloak confidential client_secret_basic code exchange: passed", flush=True)
+            reduced_tokens = {}
+            for name, scope in [
+                ("missingProjectToken", "context:read context:write context:process synthetic:hosted-pilot"),
+                ("missingProcessToken", "context:read context:write synthetic:hosted-pilot synthetic:project-a synthetic:project-b"),
+            ]:
+                reduced_code = authorize(verifier, scope=scope)
+                reduced_tokens[name] = exchange({
+                    "grant_type": "authorization_code", "client_id": "context-codex", "code": reduced_code,
+                    "redirect_uri": "http://127.0.0.1:8765/callback", "resource": resource, "code_verifier": verifier,
+                })["access_token"]
             for access_token in [tokens["access_token"], confidential["access_token"]]:
+                proof = {"issuer": issuer, "accessToken": access_token}
+                if access_token == tokens["access_token"]:
+                    proof.update(reduced_tokens)
                 subprocess.run(["node", "dist/scripts/provider-smoke-client.js"], check=True,
-                               input=json.dumps({"issuer": issuer, "accessToken": access_token}), text=True)
+                               input=json.dumps(proof), text=True)
         except Exception:
             logs = subprocess.run(["docker", "logs", "--tail", "15", container], capture_output=True, text=True)
             print(logs.stdout[-2500:] + logs.stderr[-2500:])

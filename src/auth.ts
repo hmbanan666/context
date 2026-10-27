@@ -6,11 +6,18 @@ import {
   requireBearerAuth,
 } from "@modelcontextprotocol/server";
 import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from "jose";
+import {
+  type ClientGrants,
+  configuredDataScopes,
+  operationScopes,
+  pilotDataScope,
+} from "./access.js";
 
 export interface OAuthConfig {
   readonly issuer: string;
   readonly resource: string;
   readonly ownerSubject: string;
+  readonly clientGrants?: ClientGrants;
 }
 
 export function protectMcp(
@@ -44,13 +51,17 @@ export function protectMcp(
   };
 }
 
-export const pilotScope = "synthetic:hosted-pilot";
+export const pilotScope = pilotDataScope;
 export const oauthScopes = ["context:read", "context:write", pilotScope];
 
 export function createTokenVerifier(
   config: OAuthConfig,
   resolveKey?: JWTVerifyGetKey,
 ): OAuthTokenVerifier {
+  const recognizedScopes = new Set<string>([
+    ...operationScopes,
+    ...configuredDataScopes(config.clientGrants),
+  ]);
   const keys =
     resolveKey ??
     createRemoteJWKSet(
@@ -82,7 +93,7 @@ export function createTokenVerifier(
           clientId: payload.azp,
           scopes: payload.scope
             .split(" ")
-            .filter((scope) => oauthScopes.includes(scope)),
+            .filter((scope) => recognizedScopes.has(scope)),
           expiresAt: payload.exp,
           resource: new URL(config.resource),
         };

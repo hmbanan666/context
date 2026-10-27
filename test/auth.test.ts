@@ -15,6 +15,7 @@ import {
   SignJWT,
 } from "jose";
 import { z } from "zod";
+import { authorizeScope, type ClientGrants } from "../src/access.js";
 import {
   createTokenVerifier,
   type OAuthConfig,
@@ -75,6 +76,113 @@ test("verifies signature, issuer, audience, owner, authorized client, expiry and
     .setProtectedHeader({ alg: "RS256", kid: "synthetic-test-key" })
     .sign(otherKey.privateKey);
   await assert.rejects(() => verifier.verifyAccessToken(forged));
+});
+
+test("signed project scopes still require independent client and operation grants", async () => {
+  const grants: ClientGrants = {
+    "context-chatgpt": {
+      read: ["synthetic:project:a", "synthetic:project:b"],
+      write: ["synthetic:project:a", "synthetic:project:b"],
+      process: ["synthetic:project:b"],
+    },
+    "context-codex": { read: ["synthetic:project:a"], write: [], process: [] },
+  };
+  const verifier = createTokenVerifier(
+    { ...config, clientGrants: grants },
+    keys,
+  );
+  const scope =
+    "context:read context:write context:process synthetic:project:a synthetic:project:b synthetic:unconfigured unrelated:scope";
+  const codex = await verifier.verifyAccessToken(await token({ scope }));
+  assert.deepEqual(codex.scopes, [
+    "context:read",
+    "context:write",
+    "context:process",
+    "synthetic:project:a",
+    "synthetic:project:b",
+  ]);
+  assert.equal(
+    authorizeScope(
+      codex.clientId,
+      codex.scopes,
+      "synthetic:project:a",
+      "context:read",
+      grants,
+    ),
+    true,
+  );
+  assert.equal(
+    authorizeScope(
+      codex.clientId,
+      codex.scopes,
+      "synthetic:project:b",
+      "context:read",
+      grants,
+    ),
+    false,
+  );
+  assert.equal(
+    authorizeScope(
+      codex.clientId,
+      codex.scopes,
+      "synthetic:project:a",
+      "context:write",
+      grants,
+    ),
+    false,
+  );
+  assert.equal(
+    authorizeScope(
+      codex.clientId,
+      codex.scopes,
+      "synthetic:project:a",
+      "context:process",
+      grants,
+    ),
+    false,
+  );
+  const chatgpt = await verifier.verifyAccessToken(
+    await token({ scope, azp: "context-chatgpt" }),
+  );
+  assert.equal(
+    authorizeScope(
+      chatgpt.clientId,
+      chatgpt.scopes,
+      "synthetic:project:b",
+      "context:process",
+      grants,
+    ),
+    true,
+  );
+  const missing = await verifier.verifyAccessToken(
+    await token({ scope: "context:read" }),
+  );
+  assert.equal(
+    authorizeScope(
+      missing.clientId,
+      missing.scopes,
+      "synthetic:project:a",
+      "context:read",
+      grants,
+    ),
+    false,
+  );
+  const missingClient = { "context-chatgpt": grants["context-chatgpt"] };
+  assert.equal(
+    authorizeScope(
+      codex.clientId,
+      codex.scopes,
+      "synthetic:project:a",
+      "context:read",
+      missingClient,
+    ),
+    false,
+  );
+  await assert.rejects(() =>
+    token({ scope, azp: "context-project-a" }).then((value) =>
+      verifier.verifyAccessToken(value),
+    ),
+  );
 });
 
 test("protected MCP permits signed scoped requests and denies writes, cross-scope reads and missing tokens", async () => {

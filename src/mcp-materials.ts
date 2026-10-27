@@ -1,5 +1,4 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import { pilotScope } from "./auth.js";
 import {
   captureFileSchema,
   captureMaterialSchema,
@@ -31,7 +30,7 @@ export function registerMaterialTools(
             securitySchemes: [
               {
                 type: "oauth2",
-                scopes: [write ? "context:write" : "context:read", pilotScope],
+                scopes: [write ? "context:write" : "context:read"],
               },
             ],
           },

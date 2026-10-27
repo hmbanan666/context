@@ -49,13 +49,24 @@ Agent instructions: [AGENTS.md](AGENTS.md)
 
 ## Status
 
-**Sprint 2: protected synthetic pilot deployed; ChatGPT roundtrip remains incomplete.**
+**Sprint 2: synthetic hosted acceptance closed on 27 October 2026.**
 PR #4 is merged and the service runs at `context.kosarev.space` with Keycloak,
 HTTPS and dedicated storage. Hosted OAuth, actual Codex CLI login, SDK
-capture/recall across redeploy and database recovery checks passed. Actual
-ChatGPT capture and a fresh Codex tool invocation have not been demonstrated.
+capture/recall across redeploy and database recovery checks passed. The owner
+confirmed ChatGPT capture followed by Codex recall; a connected Codex tool also
+retrieved that original synthetic record on 27 October 2026. After separate
+approval, that exact record survived actual container recreation on `dfd0331`
+and an offline restore into a separate file. Source equality, checksum, FTS,
+retry identity and scope denial passed; the original live database was retained.
 See [deployment](docs/deployment.md) for evidence, configuration and remaining
-acceptance checks. Real private-memory ingestion remains unapproved.
+acceptance evidence and remaining operational limitations. Real private-memory
+ingestion remains unapproved.
+
+**Sprint 3: implemented and tested in separate reviewable changes.** Source
+materials, grounded knowledge, signed owner review, durable local subscription
+processing and project context/access are implemented. They are not yet merged
+or deployed. An actual local subscription job completed; hosted model execution
+and its credential lifecycle remain unverified.
 
 ## Local development
 
@@ -236,7 +247,8 @@ No real owner key has been provisioned by this implementation.
 ### Subscription-backed processing
 
 `queue_processing` queues an existing same-scope source using `version`, `scope`,
-`sourceId` and `idempotencyKey`; it requires source read and write permission.
+`sourceId` and `idempotencyKey`; it requires source read, write and explicit
+processing permission.
 `processing_status` reads one job by optional `id` or a bounded recent list.
 MCP never starts a model process and never returns lease credentials or raw
 model output. Jobs and retry keys are part of the same SQLite backup.
@@ -281,6 +293,36 @@ unverified. Current official guidance: [authentication](https://learn.chatgpt.co
 [noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
 and [configuration](https://learn.chatgpt.com/docs/config-file/config-reference).
 
+### Project context and access
+
+`project_context` accepts `version`, one synthetic `scope`, optional `limit`
+(1–20, default 10) and `maxBytes` (1024–65536, default 16384). The complete JSON
+context payload is bounded in UTF-8 bytes; MCP's duplicated transport framing
+is separate. Items include all cited original materials, even when those are
+older than the recent-source list. Relations require both endpoints and all
+cited sources. Oversized or unavailable evidence omits the entire derived
+entry and sets `truncated`; text and quotes are never silently shortened.
+Original file bytes are excluded; authorized callers can use `read_file`.
+
+In OAuth mode, `CONTEXT_CLIENT_GRANTS` is an explicit operator-controlled JSON
+map for the existing `context-chatgpt` and `context-codex` clients. Each entry
+requires `read`, `write` and `process` arrays of distinct synthetic data scopes.
+Every operation requires both a verified signed token's operation/data scopes
+and the corresponding server grant. Unknown/missing clients in an explicit map
+have no access; request fields cannot change grants. Invalid configuration
+fails before a listener or database opens. Without the map, the original pilot
+read/write policy remains and processing is denied.
+
+Queueing additionally requires `context:process` and an explicit process grant,
+alongside read/write. Local no-auth tests remain isolated synthetic experiments
+whose scopes come only from configuration. This is a single-owner pilot with
+client-specific access, not a multi-user permissions service.
+
+See `.env.example` for a synthetic grant map and
+[deployment](docs/deployment.md) for the explicit project override and Keycloak
+scope setup. Realm imports do not update an already deployed realm. Activating
+new hosted scopes and model processing requires their own verified setup.
+
 Run the independent MCP Inspector CLI smoke check:
 
 ```sh
@@ -305,10 +347,10 @@ npx --yes @modelcontextprotocol/inspector@2.12.0 --cli \
 
 The implementation follows the official
 [SDK HTTP serving guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/http.md).
-Protected deployment configuration and local Keycloak protocol checks are
-documented separately in [deployment](docs/deployment.md). Actual hosted
-ChatGPT/Codex interoperability remains unverified; no private-memory ingestion
-is authorized by these synthetic tests.
+Protected deployment configuration and Keycloak protocol checks are documented
+separately in [deployment](docs/deployment.md). Actual hosted synthetic
+ChatGPT/Codex roundtrip is confirmed; per-record live recovery has separate
+acceptance evidence. These synthetic tests do not authorize private ingestion.
 
 ## Hosting
 

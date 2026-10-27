@@ -9,6 +9,7 @@ import {
 import { materialLookupSchema } from "./materials.js";
 import {
   type AuthorizeTool,
+  oauthMetadata,
   storageError,
   toolResult,
 } from "./tool-results.js";
@@ -17,6 +18,7 @@ export function registerProcessingTools(
   server: McpServer,
   jobs: JobStore,
   authorize: AuthorizeTool,
+  protectedMode = false,
 ) {
   server.registerTool(
     "queue_processing",
@@ -24,6 +26,11 @@ export function registerProcessingTools(
       description:
         "Queue one persisted synthetic source for explicit operator-launched local model processing. Does not authorize decisions or run a model inside MCP.",
       inputSchema: enqueueProcessingSchema,
+      ...oauthMetadata(protectedMode, [
+        "context:read",
+        "context:write",
+        "context:process",
+      ]),
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -33,7 +40,8 @@ export function registerProcessingTools(
     async (input) => {
       const denied =
         authorize(input.scope, "context:read") ??
-        authorize(input.scope, "context:write");
+        authorize(input.scope, "context:write") ??
+        authorize(input.scope, "context:process");
       if (denied) return denied;
       try {
         return toolResult(jobs.enqueue(input));
@@ -49,6 +57,7 @@ export function registerProcessingTools(
     {
       description:
         "Read bounded processing job status in one authorized scope. Lease credentials and raw model output are never returned.",
+      ...oauthMetadata(protectedMode, ["context:read"]),
       inputSchema: z.strictObject({
         version: z.literal(1),
         scope: scopeSchema,
