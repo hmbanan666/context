@@ -179,6 +179,134 @@ retries, while reporting `pr_predates_authorization`, not completed work. This
 is local protocol evidence with ephemeral synthetic keys, not human approval or
 a deployed Sprint 4 result.
 
+## Post-core product validation — findings and candidate experiments
+
+**Assessment date:** 27 October 2026. **Status:** findings recorded;
+follow-up work is **proposed, not authorized**. This section does not open a
+Sprint 5, authorize implementation, or supersede the completed Sprint 0–4
+history. Keep actual code, reviewed PRs, merges and deployment evidence distinct.
+
+### What the six-month synthetic experiment established
+
+A local isolated database received 60 fictional notes dated over six months:
+50 in synthetic scope A and 10 in scope B. Source text, author-supplied dates,
+checksums and idempotent retries were preserved. No manual tags, knowledge or
+relations were supplied. The restricted local subscription worker completed all
+60 jobs, deriving **90 suggested knowledge items** (29 ideas, 40 observations,
+21 decision proposals) and **zero stored relations**. No item became an
+owner-approved decision.
+
+Two fresh read-only answering sessions received the same 12 questions, before
+and after extraction. A separate evaluator applied the withheld oracle only
+after both answers were frozen:
+
+| Metric | Before extraction | After extraction |
+| --- | --- | --- |
+| Complete grounded answers | 10/12 | 10/12 |
+| Partial grounded answers | 2/12 | 2/12 |
+| MCP calls | 53 | 53 |
+| Unique sources retrieved | 43 | 41 |
+
+The retrieval result passed the predeclared threshold of nine complete answers
+but **showed no improvement attributable to the worker** in this paired test.
+Q08 improved while Q07 regressed from complete to partial; Q04 remained partial.
+Exact whole-question phrase searches yielded 0/12 matches; the answering client
+used shorter literal queries and did the thematic synthesis itself. The worker
+read one source at a time without authored dates, and extracted knowledge was
+not indexed for recall. The existing project_context response can be
+truncated; this was not an exhaustive semantic retrieval benchmark.
+
+Integrity, exact source quotations, retry stability, local restart/restore and
+scope A/B isolation passed in the supplied report. No observed B disclosure,
+invented owner approval or unsupported claimed user count occurred. **Limits:**
+one synthetic dataset, one answering run per phase, local CLI/MCP execution;
+not a statistically established quality comparison, a real-data pilot, a
+ChatGPT authorization test or proof of unattended hosted processing. The
+evaluation artifacts and test database remain outside this public repository.
+
+### Owner-approved product direction (intent, not shipped capability)
+
+Context remains a **headless Personal Context Engine**, not a messenger,
+general agent orchestrator or task tracker. The goal is to capture originals
+from interchangeable inputs, preserve provenance, derive and revise useful
+knowledge, and supply least-privilege context to interchangeable AI clients.
+
+- Routine ingestion, topic discovery, grouping and interpretation should not
+  require the user to choose folders, manually tag notes or approve every
+  inferred item. A suggested interpretation is never owner authorization.
+- **Scope is a security boundary, not a topic or project classification.**
+  A note may relate to multiple projects without automatically broadening
+  access to its original bytes or derived content. Safe cross-project
+  summaries require explicit privacy and disclosure rules.
+- The engine should remain useful without any model running: capture,
+  durable storage and grounded retrieval must work independently.
+- Model providers, input adapters, storage and deployment environments should
+  be replaceable over time. Today's pinned Codex CLI, SQLite and
+  Dokploy/Keycloak pilot are implementations, not universal requirements.
+  Subscription use is optional; no silent paid-API fallback.
+- Ordinary memory requires low-friction operation. Consequential actions
+  require understandable owner confirmation through a trusted environment,
+  not manual keys/JSON for every note. Current signing protection remains
+  active until a separately reviewed replacement exists.
+
+### Next candidate experiments — no implementation approval
+
+**A. Capture usability and client authentication (first practical blocker).**
+The user encountered repeated Keycloak password/MFA prompts in ChatGPT.
+Keycloak logged inactive refresh tokens, but the precise ChatGPT refresh
+failure mechanism is not yet fully proved; token duration alone is not a
+diagnosis. During a parallel ten-call ChatGPT test, four synthetic writes
+succeeded and six were blocked by the ChatGPT platform, not confirmed as
+Context storage failures. Diagnose the actual client/provider flow and app
+permissions separately. Evaluate sequential and bounded batch capture with
+clear per-item acceptance, retry and conflict results; do not assume batching
+bypasses platform policy. The end-user workflow must not require installing
+Codex, manual key handling, or frequent reauthentication. Preserve OAuth/MFA,
+authorization boundaries and revocation properties; no unapproved broad
+offline grant or indiscriminate session-extension shortcut.
+
+**B. Retrieval quality before more extraction (first memory hypothesis).**
+Compare baseline literal source FTS with a narrow **derived-knowledge retrieval
+candidate** on the same frozen dataset and questions. Test grounded ranking,
+date filters, paraphrased queries, Q04/Q07 multi-source coverage, response
+completeness and number of MCP round-trips. Run multiple independent answer
+sessions, hold back the oracle, and measure both improvements and regressions.
+Prototype a simple lexical index or deterministic query plan before assuming
+embeddings, RAG, a graph database or another framework will help. Every result
+must retain retrievable source IDs and enforce scope checks.
+
+**C. Longitudinal memory consolidation (only if B exposes a real gap).**
+Evaluate incremental topic/project suggestions, recurrence, contradiction,
+supersession and changes over time across different originals. Keep authored
+dates separate from ingestion dates. Consolidation may group or supersede
+*derived interpretations* but must never silently overwrite originals or
+treat a conversation hypothesis as owner approval. Cross-project retrieval is
+a separate least-privilege design challenge, not something achieved by removing
+scope checks. Measure whether this stage beats query-time synthesis.
+
+**D. Portability and unattended processing (after core value is demonstrated).**
+Assess model-provider interfaces, a simple local/no-remote mode, optional hosted
+MCP auth, storage adapters and durable background processing. Keep a minimal
+working installation as the reference and test cost, reliability and recovery.
+Avoid rewriting currently working Keycloak or introducing a new UI/provider
+solely to claim agnosticism. External integrations such as Telegram, audio,
+files or browser input are candidates, not current requirements.
+
+### Decision gates
+
+1. Verify the actual user journey: one connection, dependable writes,
+   long-lived usable access, no compulsory coding tool or per-note approvals.
+2. Select **one** memory-retrieval hypothesis with a frozen baseline, a
+   repeatable evaluation and meaningful success criteria: improved grounded
+   coverage (especially Q04/Q07), no access/provenance regressions and fewer
+   model/tool interactions when possible.
+3. Only after the evidence is reviewed, explicitly approve a bounded
+   implementation sprint. Do not turn all candidates into a backlog, deploy
+   them automatically or create GitHub Issues just for internal tracking.
+
+The immediate deliverable is an evidence-based **product decision**, not a
+bigger architecture or a new sprint by default.
+
 ## Not in current scope
 
 General messenger, full personal OS, autonomous issue-watcher, UI-heavy graph,
