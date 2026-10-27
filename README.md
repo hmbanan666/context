@@ -49,15 +49,18 @@ Agent instructions: [AGENTS.md](AGENTS.md)
 
 ## Status
 
-**Sprint 2: protected synthetic pilot deployed; actual roundtrip confirmed.**
+**Sprint 2: synthetic hosted acceptance closed on 27 October 2026.**
 PR #4 is merged and the service runs at `context.kosarev.space` with Keycloak,
 HTTPS and dedicated storage. Hosted OAuth, actual Codex CLI login, SDK
 capture/recall across redeploy and database recovery checks passed. The owner
 confirmed ChatGPT capture followed by Codex recall; a connected Codex tool also
-retrieved that original synthetic record on 27 October 2026. The separately
-authorized live redeploy/recovery verification of that record is in progress.
+retrieved that original synthetic record on 27 October 2026. After separate
+approval, that exact record survived actual container recreation on `dfd0331`
+and an offline restore into a separate file. Source equality, checksum, FTS,
+retry identity and scope denial passed; the original live database was retained.
 See [deployment](docs/deployment.md) for evidence, configuration and remaining
-acceptance checks. Real private-memory ingestion remains unapproved.
+acceptance evidence and remaining operational limitations. Real private-memory
+ingestion remains unapproved.
 
 **Sprint 3: implemented and tested in separate reviewable changes.** Source
 materials, grounded knowledge, signed owner review, durable local subscription

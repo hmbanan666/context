@@ -4,8 +4,9 @@
 implemented (see README for the tested contract). The protected synthetic pilot
 is deployed with Keycloak; hosted OAuth and actual Codex CLI login are verified.
 The owner reports a completed ChatGPT write-to-Codex roundtrip; a connected Codex
-tool independently retrieved that synthetic record on 27 October 2026. Its live
-redeploy/recovery verification is recorded separately in deployment.md.
+tool independently retrieved that synthetic record on 27 October 2026. Its
+approved live redeploy and isolated offline restore passed, closing Sprint 2
+synthetic acceptance. Exact operational evidence is recorded in deployment.md.
 Sprint 3 source materials, grounded knowledge, local subscription processing and
 project context are implemented in reviewable changes, not yet merged/deployed.
 Execution orchestration remains a proposal.

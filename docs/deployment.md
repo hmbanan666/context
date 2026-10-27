@@ -4,8 +4,8 @@
 27 October 2026 after separate owner approval. Hosted TLS/OAuth and actual
 Codex CLI login passed. The owner confirmed an actual ChatGPT capture-to-Codex
 roundtrip, and a connected Codex tool independently recalled the same synthetic
-record. Its separately approved live redeploy/recovery verification is in
-progress; Sprint 2 is not closed by a local test result. Further merges or live
+record. Its separately approved live container recreation and offline restore
+passed on 27 October 2026; Sprint 2 synthetic acceptance is closed. Further merges or live
 changes still require their applicable owner approval under AGENTS.md.
 
 ## Provider and addresses
@@ -223,7 +223,9 @@ Owner refresh sessions used for setup were revoked before first-login MFA.
 The owner then completed authenticator setup in their own browser. Provider
 inspection confirmed an OTP credential, no pending `CONFIGURE_TOTP` action and
 an active `context-chatgpt` session. The ChatGPT UI returned to the installed
-Context page. Actual ChatGPT tool execution still needs its own evidence.
+Context page. At that setup checkpoint, actual ChatGPT tool execution still
+needed separate evidence; the later owner-confirmed roundtrip and live recovery
+verification are recorded below.
 Run the Codex login again for a new authorized session; the setup credentials
 were removed locally. Do not infer tool compatibility from provider sessions.
 
@@ -267,7 +269,7 @@ It skips existing realms and does not automatically apply later config edits.
 
 ## Observed hosted evidence — 27 October 2026
 
-The deployed source is the PR #4 merge commit
+The initial deployed source was the PR #4 merge commit
 [`65ccd0b`](https://github.com/hmbanan666/context/commit/65ccd0bd5a0a017b16f84f1c0be980d307424688).
 The Context image observed after redeploy is
 `sha256:6ab5fc45dda8d3bc5f9a0255e08f3eb30cf3c96d85ace7437b960199e0391719`.
@@ -309,14 +311,43 @@ credentials, user UUIDs and database dumps are not committed. Current backup
 copies are on the same host. Off-host backup delivery and recovery after loss of
 the entire host have **not** been demonstrated.
 
-## Remaining hosted acceptance
+## Roundtrip recovery acceptance — 27 October 2026
 
-- Actual ChatGPT tool execution and a fresh Codex tool invocation still need
-  to be demonstrated.
-- An actual ChatGPT `capture` writes one synthetic record; a fresh Codex session
-  `recall`s its exact stable ID and checksum. Tool discovery alone is not proof.
-- Repeat the persistence/recovery check with the record created by ChatGPT.
-- Record the deployed commit and evidence separately from PR/CI/merge state.
+The owner confirmed the actual ChatGPT capture-to-Codex roundtrip. A connected
+Codex `recall` independently retrieved the same synthetic record before and
+after the separately approved live verification. The tested original retained
+its exact text, ID, checksum, origin, scope, capture timestamp and `unreviewed`
+status. No approval was inferred from its content or origin field.
+
+- The fetched deployment checkout was verified as
+  [`dfd0331`](https://github.com/hmbanan666/context/commit/dfd03319a14df47522ef517eb06f0ac6132e2e7d).
+  No Sprint 3 branch was merged or deployed. The actual running Context image
+  was independently read from Compose as
+  `sha256:4bb1852c91b39d761700fd3f8e0d41b5fd89d54f0b45338a799857e7a4ad4ff4`.
+- A new SQLite online snapshot contained the selected synthetic source, its
+  persistent request key/fingerprint and working FTS; integrity passed.
+- A full main-only redeploy completed at 13:27:24 UTC. Actual Context-only
+  container recreation followed at 13:29:30 UTC, so a cached no-op was not
+  counted as a persistence proof. Exact recall/search passed afterward; replay
+  of the stored request returned `duplicate: true` and the original record.
+  A forbidden data scope was denied.
+- Context alone stopped at 13:31:12 UTC. The snapshot was restored into an
+  absent, separate backup-volume database. Integrity, exact source equality,
+  FTS, retry identity/fingerprint and wrong-scope absence passed. The original
+  live database was never overwritten or replaced.
+- The original database runtime restarted at 13:31:21 UTC. Final connected
+  recall matched, HTTPS health returned 200, and anonymous MCP returned 401
+  with its OAuth challenge. All three Context services were healthy; identity
+  services retained their original creation times.
+- Temporary verification patches were disabled. Runtime mounts again contained
+  only the dedicated data/backups volumes, the normal deployment command was
+  restored, and automatic deployment remained disabled.
+
+The private sanitized operational summary is retained with the Context-only
+verification artifacts; raw logs, credentials and database snapshots are not
+committed. Sprint 2 synthetic acceptance is closed. Off-host backup delivery,
+whole-host-loss recovery and real private-memory ingestion remain outside that
+demonstration. Sprint 3 deployment is a separate approval.
 
 ## Sprint 3 activation — separate from the Sprint 2 live check
 

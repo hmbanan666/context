@@ -5,10 +5,17 @@
 merged in PR #4 and deployed with separate owner approval. Hosted TLS/OAuth,
 actual Codex CLI login, SDK persistence and recovery checks passed. The owner
 confirmed the actual ChatGPT-to-Codex roundtrip; connected Codex recall was
-independently observed. Its live redeploy/recovery verification is separate.
+independently observed. Its separately approved live container recreation and
+isolated offline restore passed, closing Sprint 2 synthetic acceptance.
 The owner explicitly authorized Sprint 3 implementation on 27 October 2026.
 Its reviewable slices are implemented/tested but not yet merged or deployed.
 Sprint 4 remains proposed; merge and deployment require separate approval.
+
+Sprint 3 review stack:
+[source materials #6](https://github.com/hmbanan666/context/pull/6),
+[structured knowledge #7](https://github.com/hmbanan666/context/pull/7),
+[subscription processing #8](https://github.com/hmbanan666/context/pull/8),
+[project context/access #9](https://github.com/hmbanan666/context/pull/9).
 
 ## North-star acceptance
 
