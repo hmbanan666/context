@@ -10,14 +10,24 @@ import {
 } from "@modelcontextprotocol/node";
 import { oauthScopes, protectMcp } from "./auth.js";
 import type { Config } from "./config.js";
+import { KnowledgeStore } from "./knowledge.js";
 import { createContextMcp } from "./mcp.js";
 import { SourceStore } from "./store.js";
 
 export async function startService(config: Config) {
   const store = new SourceStore(config.databasePath);
+  let knowledge: KnowledgeStore;
+  try {
+    knowledge = new KnowledgeStore(config.databasePath);
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   const mcp =
     config.oauth || config.localMcpScopes
-      ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth)
+      ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth, {
+          knowledge,
+        })
       : undefined;
   const authenticated =
     mcp && config.oauth ? protectMcp(mcp, config.oauth) : mcp;
@@ -105,6 +115,7 @@ export async function startService(config: Config) {
     });
   } catch (error) {
     await mcp?.close();
+    knowledge.close();
     store.close();
     throw error;
   }
@@ -119,6 +130,7 @@ export async function startService(config: Config) {
         });
       } finally {
         await mcp?.close();
+        knowledge.close();
         store.close();
       }
     },

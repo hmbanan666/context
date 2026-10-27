@@ -5,14 +5,21 @@ import {
 } from "@modelcontextprotocol/server";
 import { pilotScope } from "./auth.js";
 import { captureSchema, recallSchema, scopeSchema } from "./contracts.js";
+import type { KnowledgeStore } from "./knowledge.js";
+import { registerKnowledgeTools } from "./mcp-knowledge.js";
 import { registerMaterialTools } from "./mcp-materials.js";
 import { IdempotencyConflict, type SourceStore } from "./store.js";
-import { toolResult as result } from "./tool-results.js";
+import { type AuthorizeTool, toolResult as result } from "./tool-results.js";
+
+export interface McpStores {
+  readonly knowledge?: KnowledgeStore;
+}
 
 export function createContextMcp(
   store: SourceStore,
   scopes: readonly string[],
   protectedMode = false,
+  stores: McpStores = {},
 ) {
   const localScopes = scopes.map((scope) => scopeSchema.parse(scope));
   return createMcpHandler(
@@ -36,17 +43,15 @@ export function createContextMcp(
         name: "context-synthetic-pilot",
         version: "0.2.0",
       });
-      registerMaterialTools(
-        server,
-        store,
-        (scope, operation) => {
-          if (!can(operation)) return insufficientScope(operation);
-          if (!allowed.has(scope))
-            return result({ error: "forbidden_scope" }, true);
-          return undefined;
-        },
-        protectedMode,
-      );
+      const authorize: AuthorizeTool = (scope, operation) => {
+        if (!can(operation)) return insufficientScope(operation);
+        if (!allowed.has(scope))
+          return result({ error: "forbidden_scope" }, true);
+        return undefined;
+      };
+      registerMaterialTools(server, store, authorize, protectedMode);
+      if (stores.knowledge)
+        registerKnowledgeTools(server, stores.knowledge, authorize);
       server.registerTool(
         "capture",
         {
