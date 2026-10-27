@@ -159,6 +159,9 @@ the standard MCP tool-error response.
   FTS phrases, not SQL or FTS expressions; punctuation-only queries may match
   nothing. Exact lookup outside the requested scope returns `not_found`.
 
+Text, origin and query must be nonblank, well-formed Unicode without NUL
+characters. Malformed input is rejected before storage or consuming its key.
+
 Idempotency is persistent and scoped: repeating the same key and exact
 text/origin/scope/version returns the original source and `duplicate: true`,
 including after restart. Reusing it with different input returns

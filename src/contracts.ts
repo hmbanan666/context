@@ -14,7 +14,11 @@ const nonblank = (max: number) =>
     .string()
     .min(1)
     .max(max)
-    .refine((s) => s.trim().length > 0);
+    .refine((s) => s.trim().length > 0)
+    // Unicode-mode matching catches unpaired surrogates, but permits emoji pairs.
+    .refine((s) => !s.includes("\0") && !/[\uD800-\uDFFF]/u.test(s), {
+      message: "Use well-formed Unicode without NUL characters",
+    });
 
 export const captureSchema = z.strictObject({
   version: z.literal(1),
