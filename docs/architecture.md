@@ -1,9 +1,10 @@
 # Architecture hypothesis
 
 **Status:** Local source persistence and synthetic MCP capture/recall are
-implemented (see README for the tested contract). An OAuth resource server and
-Keycloak configuration are prepared; hosted authentication and real client
-linking remain unverified. Later knowledge/execution layers remain proposals.
+implemented (see README for the tested contract). The protected synthetic pilot
+is deployed with Keycloak; hosted OAuth and actual Codex CLI login are verified.
+Actual ChatGPT write and a fresh Codex tool invocation remain unverified. Later
+knowledge/execution layers remain proposals.
 
 ## Purpose
 
@@ -105,7 +106,7 @@ because it has memory or orchestration features.
 
 - Does the owner's current ChatGPT plugin connection permit private
   authenticated `capture` (actual write call)?
-- Which OAuth provider offers the smallest compliant personal setup?
+- Can the deployed Keycloak provider complete the actual ChatGPT linking flow?
 - How do we prove an approval originated from a real user instead of a model?
 - Can Codex retrieve a scoped note from a new session with the same stable ID?
 - Which subscription-backed LLM features actually work under permitted
