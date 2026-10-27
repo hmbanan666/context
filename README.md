@@ -233,6 +233,54 @@ Signature verification proves possession of the trusted signing key; operating
 that key as a human approval boundary remains the owner's responsibility.
 No real owner key has been provisioned by this implementation.
 
+### Subscription-backed processing
+
+`queue_processing` queues an existing same-scope source using `version`, `scope`,
+`sourceId` and `idempotencyKey`; it requires source read and write permission.
+`processing_status` reads one job by optional `id` or a bounded recent list.
+MCP never starts a model process and never returns lease credentials or raw
+model output. Jobs and retry keys are part of the same SQLite backup.
+
+An operator can process the local synthetic database with an existing ChatGPT
+Codex login:
+
+```sh
+codex login
+npm run build
+npm run memory:process -- ./data/context.db synthetic:local-foundation --once
+```
+
+`--drain` handles at most 20 eligible jobs and does not wait for retry delays.
+The command reports only job IDs/statuses and exits unsuccessfully if an
+attempt fails. It is an explicit local operator command, separate from the
+HTTP service. The Docker image does not include Codex or subscription
+credentials; hosted model processing has not been demonstrated.
+
+The adapter requires the actually probed `codex-cli 0.164.0`, an existing
+ChatGPT login, strict configuration and disabled shell, MCP, browser, plugins,
+agents and code-mode execution. It removes API-key overrides and has no paid
+API fallback. Inputs go through stdin, with a schema-only private temporary
+directory, a 90-second timeout and a 1 MiB output limit. Unknown CLI versions,
+tool events, incomplete streams or unrecognized events fail closed. The CLI's
+known code-mode-disabled startup diagnostic is accepted; it is not treated as
+a tool capability. This is a version-specific integration, not a guarantee for
+future CLI releases.
+
+Before deriving knowledge, the worker persists schema-valid output whose
+quotes match the original source. Leases exclude simultaneous workers; stale
+workers cannot complete a job. Three attempts use bounded backoff. Restarts
+replay saved output with stable per-item keys, including after partial writes,
+so a repeated model paraphrase cannot create duplicate results. All generated
+knowledge remains `suggested` and carries processor version `memory-v1`.
+
+On 27 October 2026 an actual local synthetic job completed through this
+adapter: two grounded items, unchanged original and persistent retry identity.
+Repeated standalone subscription probes also completed. Token-refresh
+recovery, sustained quota behavior and remote subscription processing remain
+unverified. Current official guidance: [authentication](https://learn.chatgpt.com/docs/auth),
+[noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
+and [configuration](https://learn.chatgpt.com/docs/config-file/config-reference).
+
 Run the independent MCP Inspector CLI smoke check:
 
 ```sh

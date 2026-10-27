@@ -5,14 +5,17 @@ import {
 } from "@modelcontextprotocol/server";
 import { pilotScope } from "./auth.js";
 import { captureSchema, recallSchema, scopeSchema } from "./contracts.js";
+import type { JobStore } from "./jobs.js";
 import type { KnowledgeStore } from "./knowledge.js";
 import { registerKnowledgeTools } from "./mcp-knowledge.js";
 import { registerMaterialTools } from "./mcp-materials.js";
+import { registerProcessingTools } from "./mcp-processing.js";
 import { IdempotencyConflict, type SourceStore } from "./store.js";
 import { type AuthorizeTool, toolResult as result } from "./tool-results.js";
 
 export interface McpStores {
   readonly knowledge?: KnowledgeStore;
+  readonly jobs?: JobStore;
 }
 
 export function createContextMcp(
@@ -52,6 +55,7 @@ export function createContextMcp(
       registerMaterialTools(server, store, authorize, protectedMode);
       if (stores.knowledge)
         registerKnowledgeTools(server, stores.knowledge, authorize);
+      if (stores.jobs) registerProcessingTools(server, stores.jobs, authorize);
       server.registerTool(
         "capture",
         {
