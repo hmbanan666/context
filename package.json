@@ -1,0 +1,27 @@
+{
+  "name": "context",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": "24.22.1",
+    "npm": "11.19.1"
+  },
+  "packageManager": "npm@11.19.1",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/src/main.js",
+    "seed:synthetic": "node dist/scripts/seed-synthetic.js",
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "test:smoke": "npm run build && node --test dist/test/restart.test.js",
+    "check": "npm run lint && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}
