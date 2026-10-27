@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.output/
+coverage/
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+data/
+storage/
+uploads/
+secrets/
+*.log
+.DS_Store
