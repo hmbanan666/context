@@ -18,6 +18,24 @@ This repository contains open-source code and synthetic fixtures only.
 **Do not commit real conversations, personal notes, manuscripts, documents,
 uploads, credentials, tokens, or instance databases.**
 
+## Product direction and validation
+
+Context remains a **headless Personal Context Engine**: low-friction capture,
+durable originals, grounded recall and optional interchangeable processing
+from different inputs and AI clients. Security scopes control disclosure;
+inferred project/topic relationships are separate from permissions. Automatic
+tagging and cross-project memory are goals, not shipped capabilities.
+
+A six-month synthetic local evaluation ingested 60 notes. Answer quality was
+**10/12 complete answers both before and after** the current worker; the
+worker created 90 suggested items but no persistent relations. This proves
+useful grounded archiving, **not** a measured benefit from extraction or a
+production-ready autonomous memory service. ChatGPT login friction and
+write-call blocking remain unresolved UX observations. Findings, limitations
+and candidate next experiments are in
+[the post-core validation roadmap](docs/roadmap.md#post-core-product-validation--findings-and-candidate-experiments).
+**No new sprint, merge or deployment is authorized by this roadmap update.**
+
 ## First meaningful end-to-end test
 
 1. Save a synthetic note via the Context MCP `capture` tool in ChatGPT.

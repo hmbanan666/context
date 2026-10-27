@@ -49,6 +49,39 @@ Dokploy hosts the service; it does not authenticate MCP users or own personal
 memory. Auth is implemented by Context or a compatible independent OAuth
 provider. A public HTTPS endpoint is not a public data permission.
 
+## Product direction after core validation
+
+**Owner-approved intent (27 October 2026), not an implemented feature set:**
+Context is a headless, client-agnostic Personal Context Engine. Its usefulness
+should not depend on a particular input application, model vendor, storage
+backend or hosting platform. Existing ChatGPT/Codex, SQLite and
+Dokploy/Keycloak paths are concrete pilot integrations, not mandatory future
+deployments. Keep persistence and retrieval working when no inference worker
+is available.
+
+**Separate security scopes from meaning.** Today's scope protects who can
+read a source; it is not the source's topic or single project assignment. In a
+future low-friction inbox, the user should be able to capture a note without
+manual tagging. Inferred topics and multi-project associations must not grant
+new access, promote private material to shared context or imply disclosure
+approval. Keep source bytes and approval evidence independent of model output.
+
+**Post-core evidence:** In a local 60-note / six-month synthetic evaluation,
+source retrieval produced 10/12 complete grounded answers both before and
+after processing. The worker generated 90 suggested knowledge items but no
+stored relationships and no measured retrieval lift in that single comparison.
+An answering model performed thematic synthesis from original snippets. This
+motivates testing retrieval over derived knowledge and longitudinal
+consolidation **as hypotheses**, not implementing a graph/RAG stack by default.
+See [roadmap post-core validation](roadmap.md#post-core-product-validation--findings-and-candidate-experiments)
+for limits and candidate acceptance.
+
+**Usability risks are independent of memory quality:** reported recurrent
+ChatGPT reauthorization and platform-blocked bulk write calls need diagnosis
+with real client evidence. A locally successful Codex OAuth refresh or memory
+worker job does not prove the end-user ChatGPT flow. Do not weaken existing
+authorization to hide these symptoms.
+
 ## Data model, introduced incrementally
 
 - `source`: original content, immutable ID, type, origin, timestamps,
