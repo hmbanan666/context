@@ -58,15 +58,23 @@ retrieved that original synthetic record on 27 October 2026. After separate
 approval, that exact record survived actual container recreation on `dfd0331`
 and an offline restore into a separate file. Source equality, checksum, FTS,
 retry identity and scope denial passed; the original live database was retained.
-See [deployment](docs/deployment.md) for evidence, configuration and remaining
-acceptance evidence and remaining operational limitations. Real private-memory
-ingestion remains unapproved.
+See [deployment](docs/deployment.md) for acceptance evidence, configuration and
+remaining operational limitations. Real private-memory ingestion remains
+unapproved.
 
-**Sprint 3: implemented and tested in separate reviewable changes.** Source
+**Sprint 3: synthetic acceptance closed on 27 October 2026.** Source
 materials, grounded knowledge, signed owner review, durable local subscription
-processing and project context/access are implemented. They are not yet merged
-or deployed. An actual local subscription job completed; hosted model execution
-and its credential lifecycle remain unverified.
+processing and project context/access were merged in PRs #6–#9 after separate
+owner approval. Release `ff9fd9a` runs as Context `0.3.0`: all 14 tools, actual
+queue writes for A and access denial for B, complete new-schema backup/restore and
+automatic Codex OAuth refresh after natural expiry passed. The targeted
+Codex-only optional refresh-scope fix was separately approved and merged in
+PR #10. No offline session was requested by the six-scope online login.
+Actual subscription processing passed locally; unattended hosted model
+execution and its credential lifecycle remain unverified. The previously
+linked ChatGPT connection reported an expired credential and needs normal
+reconnection and refreshed tool discovery. New hosted tools were verified
+through Codex OAuth; a fresh ChatGPT invocation after this release is unverified.
 
 ## Local development
 

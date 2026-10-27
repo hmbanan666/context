@@ -8,7 +8,10 @@ tool independently retrieved that synthetic record on 27 October 2026. Its
 approved live redeploy and isolated offline restore passed, closing Sprint 2
 synthetic acceptance. Exact operational evidence is recorded in deployment.md.
 Sprint 3 source materials, grounded knowledge, local subscription processing and
-project context are implemented in reviewable changes, not yet merged/deployed.
+project context were reviewed, tested and merged in PRs #6–#9. Hosted synthetic
+acceptance for `ff9fd9a`, including project isolation, queued-job restore and
+actual Codex OAuth refresh after expiry, passed. The Codex-only provider fix
+was separately approved in PR #10. Exact evidence is in deployment.md.
 Execution orchestration remains a proposal.
 
 ## Purpose

@@ -352,7 +352,9 @@ demonstration. Sprint 3 deployment is a separate approval.
 ## Sprint 3 activation — separate from the Sprint 2 live check
 
 The source-material, structured-memory, local-processing and project-access
-changes are separate reviewable PRs. They have not been deployed by the
+changes were merged in PRs #6–#9 after separate owner approval. The release
+source is `ff9fd9a5594eaf52a59ae1590391f705ef09c6a9`, with successful main CI;
+its tree matches the previously tested PR #9 head. This is separate from the
 Sprint 2 verification. The base Compose configuration retains the original
 pilot's read/write scope and denies processing by default.
 
@@ -382,6 +384,123 @@ To activate synthetic project access after approving and deploying those PRs:
    Confirm allowed project access and denied foreign-project access through
    actual tools; discovery alone does not prove those operations.
 
+Clients may cache tool definitions. Refresh MCP discovery or reconnect after
+the release to discover all 14 tools; new optional operation/project scopes
+require normal OAuth authorization. Existing pilot read/write remains valid.
+
+For normal Codex use, request only its effective data grants (`pilot` and A),
+plus read/write/process. Keep the registered client and exact loopback callback
+from the original configuration. The live isolation test additionally requested
+B to prove that a signed B scope cannot override server policy; B is unnecessary
+for ordinary Codex use. The verification RPC isolated Context configuration from
+unrelated local MCP entries, which were not changed.
+
+### Codex CLI refresh compatibility
+
+The actual Codex CLI 0.164.0 session exposed a provider compatibility issue
+after its five-minute access token expired: refresh requested the original
+scopes plus `offline_access`, which was not optional for `context-codex`.
+The provider rejected the request with `invalid_scope`. Fresh browser login
+alone did not fix the subsequent refresh failure.
+
+The pinned rmcp client adds this scope when issuer discovery advertises it;
+explicit login scopes do not disable that behavior. See
+[OpenAI MCP OAuth guidance](https://learn.chatgpt.com/docs/extend/mcp) and the
+[pinned refresh implementation](https://github.com/modelcontextprotocol/rust-sdk/blob/98a54789b80110ad210495c4ad845c89e1980471/crates/rmcp/src/transport/auth.rs#L2385).
+
+The owner separately approved the minimal provider fix, merged in
+[PR #10](https://github.com/hmbanan666/context/pull/10): attach the existing
+`offline_access` scope as **optional only to `context-codex`**. It was applied
+at 14:44:23 UTC on 27 October 2026 without an application rebuild. Do not add it
+to default scopes or to the initial six-scope authorization request; do not
+change the ChatGPT client, roles, callbacks, data grants or token lifetime.
+Keycloak 26.8.1 intersects refresh-request scopes with the original refresh
+grant and preserves its token type. The regression smoke exercises exactly
+this request and verifies that the rotated grant remains online, omits
+`offline_access` and retains a maximum five-minute access-token lifetime.
+
+Optional attachment also permits a future explicitly requested offline session
+for an eligible owner; it is therefore a permission change rather than a
+metadata-only workaround. Live acceptance must include actual CLI refresh
+after natural expiry, unchanged project isolation and no added offline session.
+
+### Hosted Sprint 3 release evidence — 27 October 2026
+
+The deployed application source is
+[`ff9fd9a`](https://github.com/hmbanan666/context/commit/ff9fd9a5594eaf52a59ae1590391f705ef09c6a9),
+with actual image
+`sha256:7c65263cb03bab4d4c8c570c8a6066a1eb64d979e93e3f064a8b844c21ca0749`.
+The separately approved provider compatibility fix is in
+[`18f4898`](https://github.com/hmbanan666/context/commit/18f48989a854d794bdc17d59476ac8cb6f9296c5).
+That bootstrap/test change required no application rebuild; it was applied to
+the existing realm through the targeted admin scope attachment.
+
+The owner separately approved optional `context:process`, `synthetic:project-a`
+and `synthetic:project-b` scopes for the two existing clients. Their callbacks,
+default scopes, attributes, roles, owner and access-token lifetime were retained.
+The active server grants retain pilot read/write for both clients. ChatGPT has
+A/B read/write and A processing; Codex has A read/write/processing and no B grant.
+The instance's persistent `deploy/projects.yaml` patch contains only this
+approved nonsecret policy. Existing private Dokploy environment values were
+not read or rewritten; the repository's parameterized overlay remains reusable.
+Retain the policy patch until an equivalent environment configuration is
+separately provisioned. The normal command includes this overlay before the
+final Dokploy network override.
+
+- A real owner OAuth session discovered version `0.3.0` and exercised all
+  14 tools through the supported Codex app-server RPC interface. No token
+  value was extracted and no model turn was needed for those calls.
+- File metadata and original UTF-8 BOM/CRLF bytes survived capture, read and
+  stable retries; changed retry input conflicted. Ideas, observations and
+  decision proposals retained exact source links/quotes and `suggested` status.
+  Relations remained suggested, invalid quotes were rejected, approval claims
+  were rejected, and unsigned decision history stayed empty.
+- The actual A source-to-knowledge/context/queue path passed; repeated queue input
+  returned the same job. The job remained `queued` with zero attempts: no
+  hosted model process was installed or run.
+- Known-ID, search, read, context, write and processing requests for B returned
+  `forbidden_scope`. This code is emitted only after the signed operation and
+  requested data scope are present, proving that signed B permission alone
+  did not override the Codex server policy. Missing signed scope and pilot
+  processing requests also failed closed.
+- A fresh online snapshot containing both original files, six suggested
+  knowledge items, two relations and the actual queued A job was restored
+  into a new absent file. Original materials/bytes, source/retry keys, knowledge,
+  relations, queue/retry identity, FTS, foreign keys, integrity and A/B scope
+  isolation passed. The original live database was never replaced.
+- At 14:55:22 UTC, a new app-server process reused the same CLI-managed cached
+  online grant after 338.044 seconds from the initial suite's completion. No
+  intervening login, token extraction or expiry manipulation occurred. Automatic
+  authentication/refresh succeeded, all 14 tools were discovered, legacy and
+  A knowledge/file/context/job/retry checks passed, and signed B access and
+  pilot processing remained denied. This closes the actual CLI refresh defect,
+  rather than relying only on a successful fresh login or provider smoke.
+- After automatic refresh, offline-session counts remained zero for both clients
+  at 14:57:08 UTC. Final health/metadata returned 200 and missing-auth MCP
+  returned 401. The actual running image was independently reconfirmed at
+  14:57:10 UTC; all three Context services were healthy.
+- Temporary operational patches were disabled, the approved project-policy
+  patch was retained, original runtime mounts remained, and the normal command
+  with projects/dokploy overrides was restored. Automatic deployment stayed
+  disabled. No other Dokploy application was accessed.
+
+The private sanitized release summary and operational snapshots remain outside
+Git. The original ChatGPT fixture and its persistent retry identity were
+unchanged throughout migration, deployment and recovery.
+
+Sprint 3 synthetic-pilot acceptance is closed on these combined hosted,
+isolated-provider, container-recovery and actual local model results. The
+application release, later provider bootstrap fix, and documentation-only
+closure remain separately identifiable commits.
+
+The previously linked ChatGPT connection separately reported an inactive token
+and needs normal reconnection. Its provider failure was not the Codex
+`invalid_scope` issue, and its client scopes were not changed by the refresh fix.
+A fresh ChatGPT invocation after this release is not claimed; hosted new-tool
+acceptance used real owner Codex OAuth, including automatic refresh.
+
+### Processing and owner review limits
+
 The operator-launched `memory:process` command requires the authoritative local
 SQLite file and the separately installed, probed Codex CLI with a ChatGPT login.
 It is not a remote worker transport. Do not process an old snapshot and replace
@@ -399,7 +518,8 @@ the source-material → knowledge → context → queue path, client-specific fo
 project denial even with a signed foreign scope, and missing project/process
 scope rejection. The container smoke verifies original file bytes, metadata,
 knowledge, queued jobs, FTS and retry identity after restart and isolated restore.
-These are test-instance results, not claims about a deployed Sprint 3 service.
+These isolated automated checks complement the separate hosted observations
+above; neither substitutes for the other.
 
 No claim in this document authorizes real private-memory ingestion or access
 to other Dokploy applications.
