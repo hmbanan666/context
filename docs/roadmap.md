@@ -8,7 +8,9 @@ confirmed the actual ChatGPT-to-Codex roundtrip; connected Codex recall was
 independently observed. Its separately approved live container recreation and
 isolated offline restore passed, closing Sprint 2 synthetic acceptance.
 The owner explicitly authorized Sprint 3 implementation on 27 October 2026.
-Its reviewable slices are implemented/tested but not yet merged or deployed.
+Its four reviewed/tested slices were merged in PRs #6–#9 after separate owner
+approval. Hosted synthetic release acceptance passed for `ff9fd9a`, closing
+Sprint 3; the separately approved Codex refresh compatibility fix is PR #10.
 Sprint 4 remains proposed; merge and deployment require separate approval.
 
 Sprint 3 review stack:
@@ -107,6 +109,14 @@ independent storage/access review, non-root container restart/restore, and
 real disposable Keycloak project-token tests. PR review, merge, deployment and
 hosted acceptance remain distinct states. Do not label the sprint shipped solely
 because its local tests pass.
+
+**Observed hosted evidence:** all 14 tools exercised through real owner OAuth;
+source/material/knowledge/relation/context/queue checks; A access and B denial
+despite a signed B scope; exact queued-job snapshot/restore; unchanged original
+ChatGPT source/retry; new-process automatic OAuth refresh after more than five
+minutes without another login. Sprint 3 synthetic acceptance is closed on this
+combined evidence. Unattended hosted model execution, real private ingestion,
+owner signing-key provisioning and whole-host-loss recovery remain separate.
 
 ## Sprint 4 — Idea to verified work
 
