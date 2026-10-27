@@ -175,6 +175,32 @@ failed writes leave neither a source nor an index entry. Idempotency keys have
 no expiry in this experiment. Unconfigured scopes return `forbidden_scope`
 before lookup/write. Storage failures return a generic `storage_unavailable`.
 
+### Source materials
+
+The additive material tools preserve the existing `capture`/`recall` v1
+contract. `capture_material` accepts the same fields as `capture`, plus optional
+`metadata`: `type` (`note` or `document`), `title`, `createdAt` (ISO timestamp),
+and `sourceUri` (HTTP(S) URL without credentials). Metadata is immutable and
+participates in retry identity. `createdAt` describes the source; `capturedAt`
+remains the server's receipt timestamp. URLs are recorded, never fetched.
+
+`capture_file` accepts `version`, `scope`, `origin`, `idempotencyKey`, a simple
+`.txt`/`.md` `filename`, matching `mediaType` (`text/plain`/`text/markdown`),
+canonical `contentBase64`, and optional metadata. Files must contain nonblank,
+valid UTF-8 and fit within 16 KiB. Original bytes, including BOM and line
+endings, are stored as SQLite BLOBs in the same transaction as the source,
+metadata, FTS entry and request key. SQLite snapshots therefore contain the
+complete material without a separate blob-volume recovery procedure.
+
+`read_material` and `read_file` require `version`, `scope` and `id`. The former
+returns source/metadata/file descriptor; the latter returns original bytes as
+base64 after checksum verification. All four tools enforce the same operation
+and data-scope grants as capture/recall. Existing sources receive a conservative
+`note` material view without rewriting their original records. Request keys are
+shared across capture tools; using a key for a different operation conflicts.
+Only synthetic materials are authorized. PDF, audio, images, URL fetching and
+automatic interpretation are outside this slice.
+
 Run the independent MCP Inspector CLI smoke check:
 
 ```sh
