@@ -19,6 +19,26 @@ test("defaults to a persistent local database and validates configuration", () =
   }
 });
 
+test("protected mode requires the approved HTTPS URLs, explicit owner and no local bypass", () => {
+  const env = {
+    NODE_ENV: "production",
+    CONTEXT_AUTH: "oauth",
+    CONTEXT_PUBLIC_URL: "https://context.kosarev.space/mcp",
+    CONTEXT_OAUTH_ISSUER: "https://context.kosarev.space/auth/realms/context",
+    CONTEXT_OWNER_SUBJECT: "synthetic-owner",
+  };
+  assert.ok(readConfig(env).oauth);
+  for (const change of [
+    { CONTEXT_OWNER_SUBJECT: "" },
+    { CONTEXT_PUBLIC_URL: "http://context.kosarev.space/mcp" },
+    { CONTEXT_OAUTH_ISSUER: "https://untrusted.example" },
+    { CONTEXT_AUTH: "none" },
+    { CONTEXT_LOCAL_MCP: "synthetic" },
+    { CONTEXT_LOCAL_SCOPES: "synthetic:hosted-pilot" },
+  ])
+    assert.throws(() => readConfig({ ...env, ...change }));
+});
+
 test("local MCP is opt-in and can only grant explicit synthetic scopes", () => {
   assert.equal(readConfig({}).localMcpScopes, undefined);
   assert.deepEqual(

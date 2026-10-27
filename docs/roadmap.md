@@ -1,9 +1,10 @@
 # Experimental roadmap
 
 **Planning snapshot:** 27 October 2026  
-**Status:** Sprint 0 merged in PR #2 after CI and code review. Sprint 1 local
-implementation prepared for review after owner approval to continue. Sprints
-2–4 remain proposed; no milestone is automatically authorized.
+**Status:** Sprints 0 and 1 merged in PRs #2 and #3. Sprint 2 protected resource,
+provider configuration, container and recovery work is prepared for review.
+Hosted deployment and actual ChatGPT-to-Codex acceptance remain incomplete.
+Sprints 3–4 remain proposed; no milestone is automatically authorized.
 
 ## North-star acceptance
 
