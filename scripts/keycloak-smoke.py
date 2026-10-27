@@ -125,16 +125,33 @@ def main():
             assert payload["sub"] == "00000000-0000-4000-8000-000000000001"
             assert set(full_scope.split()).issubset(set(payload["scope"].split()))
             print("Keycloak code exchange, verifier rejection and resource audience: passed", flush=True)
-            refreshed = exchange({"grant_type": "refresh_token", "client_id": "context-codex",
-                                  "refresh_token": tokens["refresh_token"], "resource": resource})
+            # Codex 0.164.0/rmcp appends this advertised scope during refresh,
+            # even when the original authorization requested only online scopes.
+            assert "offline_access" in metadata["scopes_supported"]
+            original_refresh = json.loads(base64.urlsafe_b64decode(tokens["refresh_token"].split(".")[1] + "=="))
+            assert original_refresh["typ"] == "Refresh"
+            refresh_scopes = tokens["scope"] + " offline_access"
+            try:
+                refreshed = exchange({"grant_type": "refresh_token", "client_id": "context-codex",
+                                      "refresh_token": tokens["refresh_token"], "resource": resource,
+                                      "scope": refresh_scopes})
+            except urllib.error.HTTPError as error:
+                failure = json.load(error)
+                raise AssertionError("Codex-compatible refresh rejected: " + failure.get("error", "unknown")) from None
             assert refreshed["refresh_token"] != tokens["refresh_token"]
+            rotated_refresh = json.loads(base64.urlsafe_b64decode(refreshed["refresh_token"].split(".")[1] + "=="))
+            rotated_access = json.loads(base64.urlsafe_b64decode(refreshed["access_token"].split(".")[1] + "=="))
+            assert rotated_refresh["typ"] == "Refresh"
+            assert set(refreshed["scope"].split()) == set(tokens["scope"].split())
+            assert "offline_access" not in rotated_access["scope"].split()
+            assert rotated_access["exp"] - rotated_access["iat"] <= 300
             try:
                 exchange({"grant_type": "refresh_token", "client_id": "context-codex",
                           "refresh_token": tokens["refresh_token"], "resource": resource})
                 raise AssertionError("Refresh token reuse was accepted")
             except urllib.error.HTTPError as error:
                 assert error.code == 400
-            print("Keycloak refresh rotation and replay rejection: passed", flush=True)
+            print("Codex-compatible refresh, unchanged online grant/lifetime, rotation and replay rejection: passed", flush=True)
             chatgpt_code = authorize(verifier, "context-chatgpt")
             confidential = exchange({"grant_type": "authorization_code", "client_id": "context-chatgpt", "code": chatgpt_code,
                                      "redirect_uri": "http://127.0.0.1:8765/callback", "resource": resource, "code_verifier": verifier},
