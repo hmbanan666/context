@@ -10,6 +10,7 @@ import {
 } from "@modelcontextprotocol/node";
 import { oauthScopes, protectMcp } from "./auth.js";
 import type { Config } from "./config.js";
+import { JobStore } from "./jobs.js";
 import { KnowledgeStore } from "./knowledge.js";
 import { createContextMcp } from "./mcp.js";
 import { SourceStore } from "./store.js";
@@ -17,8 +18,15 @@ import { SourceStore } from "./store.js";
 export async function startService(config: Config) {
   const store = new SourceStore(config.databasePath);
   let knowledge: KnowledgeStore;
+  let jobs: JobStore;
   try {
     knowledge = new KnowledgeStore(config.databasePath);
+    try {
+      jobs = new JobStore(config.databasePath);
+    } catch (error) {
+      knowledge.close();
+      throw error;
+    }
   } catch (error) {
     store.close();
     throw error;
@@ -27,6 +35,7 @@ export async function startService(config: Config) {
     config.oauth || config.localMcpScopes
       ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth, {
           knowledge,
+          jobs,
         })
       : undefined;
   const authenticated =
@@ -115,6 +124,7 @@ export async function startService(config: Config) {
     });
   } catch (error) {
     await mcp?.close();
+    jobs.close();
     knowledge.close();
     store.close();
     throw error;
@@ -130,6 +140,7 @@ export async function startService(config: Config) {
         });
       } finally {
         await mcp?.close();
+        jobs.close();
         knowledge.close();
         store.close();
       }
