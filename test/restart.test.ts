@@ -6,6 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import { z } from "zod";
 import { syntheticSource } from "../fixtures/synthetic-source.js";
 import { SourceStore } from "../src/store.js";
 
@@ -15,6 +20,8 @@ function childEnvironment(databasePath: string): NodeJS.ProcessEnv {
     NODE_ENV: "test",
     CONTEXT_DB_PATH: databasePath,
     CONTEXT_PORT: "0",
+    CONTEXT_LOCAL_MCP: "synthetic",
+    CONTEXT_LOCAL_SCOPES: "synthetic:local-foundation",
   };
 }
 
@@ -86,6 +93,7 @@ test("synthetic source survives two real service processes and a repeated seed",
   const directory = await mkdtemp(join(tmpdir(), "context-restart-"));
   const databasePath = join(directory, "nested", "context.db");
   const env = childEnvironment(databasePath);
+  let capturedSource: Record<string, unknown> | undefined;
   try {
     for (let restart = 0; restart < 2; restart++) {
       const seed = run(
@@ -100,6 +108,70 @@ test("synthetic source survives two real service processes and a repeated seed",
         const health = await fetch(`http://127.0.0.1:${port}/health`);
         assert.equal(health.status, 200);
         assert.deepEqual(await health.json(), { status: "ok" });
+        const client = new Client({
+          name: "context-process-smoke",
+          version: "1.0.0",
+        });
+        try {
+          await client.connect(
+            new StreamableHTTPClientTransport(
+              new URL(`http://127.0.0.1:${port}/mcp`),
+            ),
+          );
+          const saved = await client.callTool({
+            name: "capture",
+            arguments: {
+              version: 1,
+              scope: syntheticSource.scope,
+              text: syntheticSource.text,
+              origin: "fixture:process-smoke",
+              idempotencyKey: "process-smoke-001",
+            },
+          });
+          assert.ok(!saved.isError);
+          const output = z
+            .record(z.string(), z.unknown())
+            .parse(saved.structuredContent);
+          const source = z.record(z.string(), z.unknown()).parse(output.source);
+          assert.equal(output.duplicate, restart === 1);
+          if (restart === 0) capturedSource = source;
+          else assert.deepEqual(source, capturedSource);
+          assert.equal(source.text, syntheticSource.text);
+          assert.equal(
+            source.checksum,
+            "764a377a0b97c616c0d85f32c933f1be9c400b422a2581687778222efa45ae31",
+          );
+          const recalled = await client.callTool({
+            name: "recall",
+            arguments: {
+              version: 1,
+              scope: syntheticSource.scope,
+              id: source.id,
+            },
+          });
+          assert.deepEqual(
+            z.record(z.string(), z.unknown()).parse(recalled.structuredContent)
+              .sources,
+            [capturedSource],
+          );
+          const seeded = await client.callTool({
+            name: "recall",
+            arguments: {
+              version: 1,
+              scope: syntheticSource.scope,
+              query: "imaginary blue marbles",
+            },
+          });
+          const matches = z
+            .object({ sources: z.array(z.object({ id: z.string() })) })
+            .parse(seeded.structuredContent);
+          assert.deepEqual(
+            matches.sources.map((match) => match.id).sort(),
+            [syntheticSource.id, String(source.id)].sort(),
+          );
+        } finally {
+          await client.close();
+        }
       } finally {
         await stop(child);
       }

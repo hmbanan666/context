@@ -1,6 +1,8 @@
 # Architecture hypothesis
 
-**Status: proposal, not a description of running software.**
+**Status:** Local source persistence and synthetic MCP capture/recall are
+implemented (see README for the tested contract). Hosted authentication and
+the later knowledge/execution layers below remain proposals.
 
 ## Purpose
 

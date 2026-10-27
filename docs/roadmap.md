@@ -1,8 +1,9 @@
 # Experimental roadmap
 
 **Planning snapshot:** 27 October 2026  
-**Status:** Sprint 0 implementation prepared for review after owner approval
-to begin work. Sprints 1–4 remain proposed; no milestone is automatically authorized.
+**Status:** Sprint 0 merged in PR #2 after CI and code review. Sprint 1 local
+implementation prepared for review after owner approval to continue. Sprints
+2–4 remain proposed; no milestone is automatically authorized.
 
 ## North-star acceptance
 

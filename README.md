@@ -49,10 +49,10 @@ Agent instructions: [AGENTS.md](AGENTS.md)
 
 ## Status
 
-**Sprint 0: local TypeScript service and SQLite foundation. Nothing is deployed.**
-The service exposes only a loopback health endpoint. MCP capture/recall, remote
-authentication and plugin interoperability belong to later approved milestones
-and have not been implemented or demonstrated.
+**Sprint 1: local MCP capture/recall and SQLite full-text search. Nothing is deployed.**
+The service exposes a loopback health endpoint and an explicitly enabled,
+synthetic-only MCP endpoint. Hosted authentication and ChatGPT/Codex plugin
+interoperability have not been implemented or demonstrated.
 
 ## Local development
 
@@ -80,7 +80,9 @@ lint/format checks, type checking, compilation and all tests; GitHub CI runs
 the same command on PRs and pushes to `main`. After changing source, run
 `npm run build` before `npm start` or `npm run seed:synthetic`.
 
-No cloud account, API key, LLM or runtime package dependency is required.
+No cloud account, API key or LLM is required. MCP uses the official TypeScript
+SDK v2 (`@modelcontextprotocol/server` and `@modelcontextprotocol/node`) and Zod.
+The SDK client is a development dependency for integration tests.
 SQLite uses Node's built-in `node:sqlite` module (currently release-candidate
 stability; an experimental warning may appear). See the
 [Node SQLite reference](https://nodejs.org/download/release/v24.22.1/docs/api/sqlite.html).
@@ -95,6 +97,8 @@ but the service does not load `.env` automatically.
 | `NODE_ENV`        | `development`       | Only `development` and `test` are supported. Other modes fail before opening the database or listener. |
 | `CONTEXT_PORT`    | `3000`              | Integer 0–65535; 0 requests a free local port, printed at startup.                                     |
 | `CONTEXT_DB_PATH` | `./data/context.db` | Persistent SQLite file, relative to the working directory or absolute. Parent directories are created. |
+| `CONTEXT_LOCAL_MCP` | unset | Set exactly `synthetic` to enable the local no-auth MCP experiment. Otherwise `/mcp` returns 404. |
+| `CONTEXT_LOCAL_SCOPES` | `synthetic:local-foundation` when MCP is enabled | Comma-separated list of 1–8 distinct permitted synthetic scopes. Requires explicit MCP opt-in. |
 
 The listener is fixed to `127.0.0.1`; there is no public bind option. Do not
 expose this milestone through a proxy or tunnel. Production authentication
@@ -113,16 +117,82 @@ starts and stops the actual compiled service, repeats seed/start/stop, then
 checks the original text, provenance, scope, timestamp, SHA-256 checksum and
 `unreviewed` status through the internal store after each shutdown. It also
 checks that production mode creates neither a listener nor a database.
-Temporary files are removed. This proves local persistence; it does not prove
-an MCP client or ChatGPT roundtrip.
+The smoke test also uses a fresh official MCP client against each service
+process: it captures, recalls, searches and retries the same source after a real
+process restart, with unchanged ID, timestamp, text and checksum. Temporary files
+are removed. This proves local MCP persistence, not a ChatGPT roundtrip.
 
 The optional `npm run seed:synthetic` command writes the same public fixture
 to the configured local database and safely repeats without overwriting it.
-The internal source store supports insert-only records and scoped exact lookup;
-scope arguments are not caller authentication. No source read/write routes are
-exposed: `/mcp`, `/capture`, `/recall` and `/sources` return 404.
+The source store supports insert-only records, scoped exact lookup and SQLite
+FTS5 phrase search. Startup upgrades Sprint 0 databases additively and indexes
+existing sources without changing their original content. HTTP source REST
+routes `/capture`, `/recall` and `/sources` do not exist.
 
-Sprint 0 stops here for code and test-environment review before remote access.
+### Local MCP experiment
+
+```sh
+CONTEXT_LOCAL_MCP=synthetic npm start
+```
+
+The Streamable HTTP endpoint is `http://127.0.0.1:3000/mcp`. Without this opt-in,
+only health is exposed. This is intentionally an isolated **no-auth, synthetic
+test mode**: all local clients share the configured scope grants. A client cannot
+grant itself scopes through tool arguments or headers. This mode does not verify
+a person's identity and must never be used for real private data. Requests with
+an Authorization header are rejected rather than treating a token as verified.
+The service validates Host and Origin and rejects request bodies over 64 KiB.
+
+Both tools require `version: 1` and one configured `synthetic:` scope (maximum
+80 characters; lowercase letters/digits/colon/underscore/hyphen). Successful
+results and application errors carry `version: 1`, machine-readable
+`structuredContent` and equivalent JSON text. SDK input-validation errors use
+the standard MCP tool-error response.
+
+- `capture`: `text` (1–8192 UTF-16 code units), `origin` (1–256), and
+  `idempotencyKey` (1–128 ASCII letters/digits/period/underscore/colon/hyphen).
+  Returns `source` and `duplicate`. Source includes server-generated UUID and UTC
+  timestamp, original text/origin/scope, UTF-8 SHA-256 checksum, and `unreviewed`
+  status. Approval/status claims and unknown fields are rejected.
+- `recall`: exactly one of `id` (1–128 identifier characters) or `query` (1–256),
+  plus optional `limit` (1–20, default 10). Returns `sources`. Queries are literal
+  FTS phrases, not SQL or FTS expressions; punctuation-only queries may match
+  nothing. Exact lookup outside the requested scope returns `not_found`.
+
+Idempotency is persistent and scoped: repeating the same key and exact
+text/origin/scope/version returns the original source and `duplicate: true`,
+including after restart. Reusing it with different input returns
+`idempotency_conflict`. Source and request key commit in one SQLite transaction;
+failed writes leave neither a source nor an index entry. Idempotency keys have
+no expiry in this experiment. Unconfigured scopes return `forbidden_scope`
+before lookup/write. Storage failures return a generic `storage_unavailable`.
+
+Run the independent MCP Inspector CLI smoke check:
+
+```sh
+npm run inspect:smoke
+```
+
+It downloads pinned Inspector **2.12.0** through `npx` on first use (network
+access required), starts a temporary synthetic instance on a free loopback port,
+checks tool discovery in modern and legacy protocol eras, captures and retries,
+then restarts the service and verifies exact recall and FTS with new Inspector
+clients. It uses a temporary client configuration and removes its test database.
+This optional interoperability check is separate from the offline `npm run check`
+suite after dependencies are installed.
+
+To inspect a running local instance manually:
+
+```sh
+npx --yes @modelcontextprotocol/inspector@2.12.0 --cli \
+  --server-url http://127.0.0.1:3000/mcp --transport http \
+  --protocol-era modern --method tools/list
+```
+
+The implementation follows the official
+[SDK HTTP serving guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/http.md).
+Remote access, hosted OAuth and actual ChatGPT/Codex interoperability remain
+Sprint 2 work; no private-memory ingestion is authorized by this local proof.
 
 ## Hosting
 
