@@ -1,7 +1,8 @@
 # Experimental roadmap
 
 **Planning snapshot:** 27 October 2026  
-**Status:** Proposed milestones. No milestone is automatically authorized.
+**Status:** Sprint 0 implementation prepared for review after owner approval
+to begin work. Sprints 1–4 remain proposed; no milestone is automatically authorized.
 
 ## North-star acceptance
 
