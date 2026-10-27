@@ -76,6 +76,13 @@ linked ChatGPT connection reported an expired credential and needs normal
 reconnection and refreshed tool discovery. New hosted tools were verified
 through Codex OAuth; a fresh ChatGPT invocation after this release is unverified.
 
+**Sprint 4: implementation authorized on 27 October 2026; branch acceptance
+in progress.** The work-evidence slice adds signed dispatch/disclosure,
+independent public GitHub observations and a scoped planner package. A tested
+branch or open PR is not a merged release, completed intention or deployed
+result. Real owner signing-key provisioning and hosted Sprint 4 activation
+remain unverified.
+
 ## Local development
 
 Use Node **24.22.1** and npm **11.19.1**, pinned in `.nvmrc` and `package.json`.
@@ -330,6 +337,78 @@ See `.env.example` for a synthetic grant map and
 [deployment](docs/deployment.md) for the explicit project override and Keycloak
 scope setup. Realm imports do not update an already deployed realm. Activating
 new hosted scopes and model processing requires their own verified setup.
+
+### Approved intent and work evidence
+
+`work_context` is a read-only MCP tool requiring `version: 1`, one authorized
+synthetic `scope`, a work `id`, and optional `maxBytes` (1024–65536, default
+65536). It returns the exact original materials, decision proposal, signed
+approval, separate signed work authorization and independently collected GitHub
+facts. Text remains untrusted data. The complete rationale and latest observation
+must fit; otherwise it returns `context_too_large` without a partial chain.
+Older observations are bounded to 20 and omitted whole when necessary, with
+`historyTruncated`. A new client does not need the owner's personal history.
+
+Decision approval alone does not authorize dispatch or disclosure. A separate
+Ed25519 receipt uses `workAuthorizationPayload` in `src/work.ts`, with a distinct
+protocol domain. Its `authorization` binds `version`, `scope`, `idempotencyKey`,
+`intentId`, the current approved review's `approvalId`, exact `repository`,
+`branch`, `baseBranch`, nonempty `requiredChecks`, `dispatch: true`, and
+`disclose: {intent: true, sourceIds: [...]}`. The source IDs must name exactly
+the intent's immutable sources. The trusted owner key must match the approval's
+signer and be selected independently of the receipt. The private key stays
+outside Context and agent access. There is no MCP authorization, dispatch,
+GitHub mutation, merge or deployment tool.
+
+Explicit local operator commands:
+
+```sh
+npm run build
+npm run work -- authorize ./data/context.db /private/owner-public.pem /private/signed-work.json
+npm run work -- sync ./data/context.db synthetic:project-a WORK_ID PR_NUMBER REFRESH_KEY
+npm run work -- context ./data/context.db synthetic:project-a WORK_ID
+```
+
+`authorize` records permission, rather than starting an agent or publishing a
+package. Existing client read grants still govern context access. Receipt replay
+is persistent and idempotent; changed input conflicts. Revoking or replacing the
+approved intent disables the old work authorization before any GitHub request.
+New approval requires new dispatch/disclosure authorization.
+
+`sync` performs bounded unauthenticated GETs to `api.github.com` for a **public**
+same-repository PR and its exact head's check runs/commit statuses. Only
+repository, PR number and commit SHA leave the process; original materials and
+knowledge text are never sent. It rejects redirects, private/fork targets,
+branch mismatches, mixed heads, PR drift and incomplete collections. Each
+response is limited to 1 MiB and 15 seconds; collections at 100 entries fail
+closed. All signed required check names need success; any observed failure or
+pending result prevents passing. These are owner-selected checks, not a claim
+to have read GitHub branch-protection policy. GitHub rate limits or outages
+produce a durable `github_unavailable` observation and a nonzero command exit.
+
+Observations and failures are append-only. The first successful observation
+binds a PR number; retries of a refresh key return that same observation without
+network access. Use a new key for a new observation. `result: merged_ci_passed`
+requires current authorization, a PR created after authorization, actual merge
+evidence and passing head CI. Open, draft, closed-unmerged, failed, missing-check
+or historical PRs remain `unverified`, with a `resultReason`. GitHub facts have
+observation times and `freshness: historical_observation`; no read silently
+refreshes them. A later failed refresh cannot reuse an earlier passing result.
+This verifies the recorded merge and CI, not the intent's semantic correctness.
+`deployment` remains **`unverified`**: neither merge nor CI proves the approved
+revision is running. All tables and retry identity are included in SQLite backup.
+
+The optional public-read protocol probe uses only ephemeral **synthetic** keys:
+
+```sh
+npm run work:probe -- --synthetic hmbanan666/context fix/codex-mcp-refresh 10
+```
+
+An optional final argument exports the synthetic context to a new file for a
+fresh planner. This historical PR can demonstrate independent GitHub ingestion
+and stable retries; because it predates the new fixture authorization, it cannot
+complete that fixture's intention. These fixture signatures do not provision a
+real human approval boundary or close hosted Sprint 4 acceptance.
 
 Run the independent MCP Inspector CLI smoke check:
 

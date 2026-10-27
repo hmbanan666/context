@@ -523,3 +523,24 @@ above; neither substitutes for the other.
 
 No claim in this document authorizes real private-memory ingestion or access
 to other Dokploy applications.
+
+## Sprint 4 branch boundary
+
+Sprint 4 is authorized for implementation, not live activation. The branch adds
+an additive work-authorization/observation schema and read-only `work_context`
+tool (service discovery version `0.4.0`, 15 tools). Existing deployed `0.3.0`
+evidence above remains unchanged; no branch test implies it is running remotely.
+
+Local work commands operate on the authoritative synthetic database. Do not
+refresh a snapshot and replace a concurrently written live database. The hosted
+image does not fetch GitHub on MCP reads, hold GitHub credentials, provision an
+owner signing key or dispatch tasks. Public GitHub observations, merge/CI
+verification and live revision evidence remain distinct; deployment is always
+reported unverified by this slice.
+
+The real owner signing-key boundary is still unprovisioned. Ephemeral fixture
+signatures and historical public PR probes test the protocol only. Merging the
+reviewed PR, deploying that exact revision, provisioning/using the owner's key
+outside agent access and validating hosted work-context access each retain their
+applicable separate owner approval and verification. No other Dokploy app or
+production database is involved in the branch checks.

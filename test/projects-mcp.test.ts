@@ -14,6 +14,7 @@ import { JobStore } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
+import { WorkStore } from "../src/work.js";
 
 test("protected MCP applies project and operation grants to every read, write, processing and context tool", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-projects-"));
@@ -23,6 +24,7 @@ test("protected MCP applies project and operation grants to every read, write, p
     jobs = new JobStore(path);
   const a = "synthetic:project-a",
     b = "synthetic:project-b";
+  const work = new WorkStore(path, sources, knowledge);
   const grants: ClientGrants = {
     "context-chatgpt": { read: [a, b], write: [a, b], process: [a, b] },
     "context-codex": { read: [a], write: [], process: [] },
@@ -62,6 +64,7 @@ test("protected MCP applies project and operation grants to every read, write, p
   const mcp = createContextMcp(sources, [], true, {
     knowledge,
     jobs,
+    work,
     clientGrants: grants,
   });
   const key = await generateKeyPair("RS256");
@@ -118,6 +121,7 @@ test("protected MCP applies project and operation grants to every read, write, p
       ["knowledge_history", { id: kb.id }],
       ["processing_status", { id: jobB.id }],
       ["project_context", {}],
+      ["work_context", { id: "foreign-work" }],
     ] as const;
     for (const [name, args] of reads) {
       const result = await codex.callTool({
@@ -190,7 +194,7 @@ test("protected MCP applies project and operation grants to every read, write, p
       Buffer.byteLength(JSON.stringify(context.structuredContent)) <= 2048,
     );
     const tools = (await codex.listTools()).tools;
-    assert.equal(tools.length, 14);
+    assert.equal(tools.length, 15);
     assert.ok(tools.every((tool) => tool._meta?.securitySchemes !== undefined));
     const ownerWithoutProcessing = await connect("context-chatgpt", [
       "context:read",
@@ -222,6 +226,15 @@ test("protected MCP applies project and operation grants to every read, write, p
     assert.equal(
       (
         await missingRead.callTool({
+          name: "work_context",
+          arguments: { version: 1, scope: a, id: "unknown-work" },
+        })
+      ).isError,
+      true,
+    );
+    assert.equal(
+      (
+        await missingRead.callTool({
           name: "project_context",
           arguments: { version: 1, scope: a },
         })
@@ -233,6 +246,7 @@ test("protected MCP applies project and operation grants to every read, write, p
   } finally {
     for (const client of clients) await client.close();
     await mcp.close();
+    work.close();
     jobs.close();
     knowledge.close();
     sources.close();

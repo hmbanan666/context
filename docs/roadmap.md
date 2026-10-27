@@ -11,7 +11,10 @@ The owner explicitly authorized Sprint 3 implementation on 27 October 2026.
 Its four reviewed/tested slices were merged in PRs #6–#9 after separate owner
 approval. Hosted synthetic release acceptance passed for `ff9fd9a`, closing
 Sprint 3; the separately approved Codex refresh compatibility fix is PR #10.
-Sprint 4 remains proposed; merge and deployment require separate approval.
+The owner explicitly authorized Sprint 4 implementation on 27 October 2026.
+Its narrow work-evidence slice is being tested on a separate branch; neither
+Sprint 4 acceptance nor release is closed. Merge and deployment require
+separate approval.
 
 Sprint 3 review stack:
 [source materials #6](https://github.com/hmbanan666/context/pull/6),
@@ -131,6 +134,30 @@ owner signing-key provisioning and whole-host-loss recovery remain separate.
 **Acceptance:** fresh planner retrieves why the task exists and what really
 shipped, backed by original sources and GitHub evidence; failed or unmerged
 PR does not count as completed.
+
+**Implementation boundary:** one existing signed approved decision, a separate
+signed dispatch/disclosure permission bound to public repository/branches,
+operator-only GitHub reads, append-only observations and one scoped read-only
+`work_context` package. No agent launcher, GitHub writes, scheduler, new tracker,
+merge or deployment automation. Old merged PRs are historical facts, not results
+of a newly authorized intention. Deployment stays unverified without independent
+live revision evidence. Synthetic signing tests cannot substitute for actual
+owner-key provisioning, human permission or hosted acceptance.
+
+**Observed branch evidence:** `npm run check` passed 79 tests; the Docker build,
+non-root container restart/backup/restore and disposable real-Keycloak smoke
+passed. New tests reject signature/scope/approval mismatches, stale approvals,
+open/closed-unmerged/failed/pending/missing-check PRs, retrospective completion,
+mixed/incomplete GitHub evidence and oversized partial context. Restore retains
+the work history and retry identity; repeated large observations retain a usable
+latest package. A new MCP client read the same complete chain through two real
+service processes. A fresh Codex planner consumed only an exported synthetic
+package and correctly distinguished its source, two permissions, actual merge/CI
+facts, retrospective linkage and unknown deployment. The public PR #10 probe
+confirmed head `1f3d770`, merge `18f4898`, passing `check` and unchanged originals/
+retries, while reporting `pr_predates_authorization`, not completed work. This
+is local protocol evidence with ephemeral synthetic keys, not human approval or
+a deployed Sprint 4 result.
 
 ## Not in current scope
 
