@@ -58,10 +58,9 @@ test("MCP client captures, retries, searches and recalls an unchanged source aft
   try {
     client = await connect(`http://127.0.0.1:${service.address.port}`);
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
-      "capture",
-      "recall",
-    ]);
+    const names = tools.tools.map((tool) => tool.name);
+    for (const name of ["capture", "recall"]) assert.ok(names.includes(name));
+    assert.equal(names.includes("approve"), false);
     const saved = await client.callTool({
       name: "capture",
       arguments: capture,

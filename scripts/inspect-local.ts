@@ -76,10 +76,9 @@ async function smoke() {
         const tools = z
           .array(z.object({ name: z.string() }))
           .parse(listed.tools);
-        assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-          "capture",
-          "recall",
-        ]);
+        const names = tools.map((tool) => tool.name);
+        for (const name of ["capture", "recall"])
+          assert.ok(names.includes(name));
         console.log(`Inspector ${era}: tools/list passed`);
       }
       const saved = await inspect(

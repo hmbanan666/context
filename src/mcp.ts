@@ -5,19 +5,9 @@ import {
 } from "@modelcontextprotocol/server";
 import { pilotScope } from "./auth.js";
 import { captureSchema, recallSchema, scopeSchema } from "./contracts.js";
+import { registerMaterialTools } from "./mcp-materials.js";
 import { IdempotencyConflict, type SourceStore } from "./store.js";
-
-function result(
-  data: Record<string, unknown>,
-  isError = false,
-): CallToolResult {
-  const output = { version: 1, ...data };
-  return {
-    content: [{ type: "text", text: JSON.stringify(output) }],
-    structuredContent: output,
-    isError,
-  };
-}
+import { toolResult as result } from "./tool-results.js";
 
 export function createContextMcp(
   store: SourceStore,
@@ -46,6 +36,17 @@ export function createContextMcp(
         name: "context-synthetic-pilot",
         version: "0.2.0",
       });
+      registerMaterialTools(
+        server,
+        store,
+        (scope, operation) => {
+          if (!can(operation)) return insufficientScope(operation);
+          if (!allowed.has(scope))
+            return result({ error: "forbidden_scope" }, true);
+          return undefined;
+        },
+        protectedMode,
+      );
       server.registerTool(
         "capture",
         {
