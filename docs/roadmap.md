@@ -11,10 +11,13 @@ The owner explicitly authorized Sprint 3 implementation on 27 October 2026.
 Its four reviewed/tested slices were merged in PRs #6–#9 after separate owner
 approval. Hosted synthetic release acceptance passed for `ff9fd9a`, closing
 Sprint 3; the separately approved Codex refresh compatibility fix is PR #10.
-The owner explicitly authorized Sprint 4 implementation on 27 October 2026.
-Its narrow work-evidence slice is being tested on a separate branch; neither
-Sprint 4 acceptance nor release is closed. Merge and deployment require
-separate approval.
+Sprint 4 implementation was separately authorized and merged in
+[PR #12](https://github.com/hmbanan666/context/pull/12) as `d2c570a` on
+27 October 2026. Its release record reports Context `0.4.0` deployed with
+protected hosted checks. Human-confirmation end-to-end acceptance remains
+unverified. The owner stopped manual key/JSON signing and technical development
+to evaluate the core's usefulness. No new sprint or UI is authorized.
+Any further merge or deployment requires separate approval.
 
 Sprint 3 review stack:
 [source materials #6](https://github.com/hmbanan666/context/pull/6),
@@ -143,6 +146,23 @@ merge or deployment automation. Old merged PRs are historical facts, not results
 of a newly authorized intention. Deployment stays unverified without independent
 live revision evidence. Synthetic signing tests cannot substitute for actual
 owner-key provisioning, human permission or hosted acceptance.
+
+**Final disposition — 27 October 2026:** Sprint 4 is technically implemented
+and deployed. A real synthetic source and grounded suggested decision were
+persisted and reread with stable checksums and retry identity. The owner then
+stopped manual Ed25519 signing as unsuitable for the Personal Context Engine's
+user experience. No real signed approval, dispatch/disclosure authorization or
+new acceptance PR was created. The complete human-confirmation-to-result chain
+remains unverified; fixture signatures and historical PRs cannot close it.
+
+**Product conclusion:** ordinary memory should operate autonomously within its
+authorized scope, without manual keys, JSON or per-record signatures. Actions
+with consequences require simple user confirmation through a trusted
+authenticated environment. This is a product requirement, not an implemented
+replacement for the current signature boundary. Existing protections remain;
+no bypass, new UI or new sprint is authorized. Technical development stops
+while the owner evaluates the usefulness of the existing core. See the
+[acceptance report](deployment.md#sprint-4-release-and-final-acceptance).
 
 **Observed branch evidence:** `npm run check` passed 79 tests; the Docker build,
 non-root container restart/backup/restore and disposable real-Keycloak smoke
