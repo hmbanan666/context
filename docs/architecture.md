@@ -1,5 +1,42 @@
 # Architecture hypothesis
 
+## Context Package MVP
+
+The owner approved this bounded retrieval implementation on 28 October 2026.
+It supplements the existing personal timeline without changing capture, grants,
+OAuth or signed work evidence. It is a prepared branch, not a live release.
+
+`context_package` authorizes one scope before any search or counts. SQLite FTS5
+retrieves up to 100 ranked originals and 100 derived items, applying scope,
+source-date and rejected-status filters before candidate limits. It uses the
+existing original index and one external-content `knowledge_items_fts` index.
+First open transactionally backfills existing knowledge; an insert trigger
+keeps append-only additions indexed. No original text is rewritten.
+
+The package interleaves the independently ranked lists (raw BM25 scores from
+different indexes are not comparable), validates quoted provenance, and includes
+compact verbatim excerpts. Timeline mode selects source dates newest first and
+only considers knowledge attached to the bounded source candidates. From the
+included knowledge seeds it inspects up to 50 stored relations, adds at most one
+hop, and requires both endpoints and every cited original in the same scope and
+period. It does not infer a new relationship from word similarity.
+
+Each addition is atomic: an item/relation fits with all its source cards, or the
+whole addition is omitted. The response reserves space for omission flags before
+accepting a bundle. Entry and UTF-8 JSON budgets bound the client payload; no
+model runs on this path. Internal SQL counts may scan more rows than returned,
+and large-archive latency/backfill time have not been benchmarked. Exact source
+reads remain separately authorized; originals and file BLOBs are immutable.
+
+The package is a ranked evidence sample, not an exhaustive answer. Short excerpts
+can omit needed facts; one-hop expansion can miss remote connections; mixed-period
+knowledge is conservatively excluded. Literal FTS lacks translation, synonyms and
+Russian stemming. See [contract](../README.md#context-package-mvp--current-approved-development)
+and [measured comparison](context-package-evaluation.md). SQLite's
+[FTS5 documentation](https://www.sqlite.org/fts5.html) defines rank ordering and
+external-content rebuild behavior used here. No embeddings or new framework are
+justified by this small experiment.
+
 ## Current personal text pilot
 
 The owner approved the personal text pilot on 28 October 2026. Earlier stop

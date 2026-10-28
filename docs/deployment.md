@@ -1,5 +1,32 @@
 # Protected Context deployment
 
+## Context Package MVP release preparation
+
+The new `context_package` tool is branch implementation, not a deployed feature.
+No new environment variable, OAuth scope, provider change or deployment service
+is needed. Existing personal reads require enabled protected personal mode and
+its current data/read grants. A client may need to refresh tool discovery after
+an approved server update; do not ask it to recreate the connection or edit scopes.
+
+First startup transactionally creates/backfills a derived-knowledge FTS index.
+This adds a table and insert trigger; it does not change original rows or file
+bytes. Test backup/restore before an approved release using the existing procedure.
+Old code can still use the database and its insert trigger, so rollback need not
+restore or overwrite concurrent writes. Large-index startup cost is not measured.
+
+Local regression, container recovery and disposable Keycloak refresh checks are
+recorded in [the experiment report](context-package-evaluation.md). After separate
+release approval, verify the actual client's question → bounded package → exact
+source read journey, then repeat after inactivity. Local OAuth fixtures do not
+prove ChatGPT tool discovery or long-idle behavior in production.
+
+**Prior pilot status correction:** the [PR #18 release record](https://github.com/hmbanan666/context/pull/18)
+reports the owner-approved provider compatibility profile is active, actual
+ChatGPT synthetic save/read/retry and refresh after a short idle period passed,
+and backups include that acceptance record. Forty-minute idle, next-day and
+independent personal cross-client acceptance remain open. The missing-scope
+failure described below is the earlier #17 diagnosis, not the current blocker.
+
 ## Personal text pilot activation
 
 **28 October 2026: PR #17 merged; personal mode activated with owner approval.**
@@ -13,7 +40,7 @@ were preserved. This is a verified point-in-time backup, not an automatic backup
 schedule. The [release evidence](https://github.com/hmbanan666/context/pull/17)
 contains no private records.
 
-Actual client acceptance is still open. After the owner reconnected, both new
+Historical #17 diagnosis (superseded by #18 above): after the owner reconnected, both new
 tools became available but capture/read returned missing-scope challenges. At
 11:04 UTC, read-only inspection confirmed that the fresh ChatGPT authorization
 requested only `context:process context:write context:read`; data scopes and
@@ -79,7 +106,7 @@ the owner to reconnect or claim provider smoke tests prove ChatGPT behavior.
 
 ### Existing ChatGPT connection compatibility
 
-**Prepared correction, not yet activated.**
+**Activated with separate approval in PR #18; procedure retained for operators.**
 [`deploy/keycloak/personal-chatgpt.json`](../deploy/keycloak/personal-chatgpt.json)
 is an additive operator profile for `context-chatgpt`, not a complete realm
 import or a replacement client representation. It promotes only these already

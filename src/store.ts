@@ -15,6 +15,8 @@ import {
   type MaterialMetadata,
 } from "./materials.js";
 
+import { ftsTerms, type PackageSelection } from "./package-query.js";
+
 export interface SourceInput {
   readonly id: string;
   readonly text: string;
@@ -503,6 +505,48 @@ export class SourceStore {
           material,
           position: { timestamp: row.timestamp, row: row.row },
         };
+      }),
+    };
+  }
+
+  // SQL selects bounded candidates; full originals never leave this layer by default.
+  packageCandidates(input: PackageSelection) {
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 101)
+      throw new Error("Invalid candidate bound");
+    const date = "source_timestamp(COALESCE(m.created_at, s.captured_at))";
+    const conditions = ["s.scope = ?"];
+    const params: (string | number)[] = [input.scope];
+    if (input.from) {
+      conditions.push(`${date} >= ?`);
+      params.push(Date.parse(input.from));
+    }
+    if (input.until) {
+      conditions.push(`${date} < ?`);
+      params.push(Date.parse(input.until));
+    }
+    const match = input.terms.length > 0;
+    if (match) {
+      conditions.push("sources_fts MATCH ?");
+      params.push(ftsTerms(input.terms));
+    }
+    const from = `FROM sources s LEFT JOIN source_metadata m ON m.source_id = s.id ${match ? "JOIN sources_fts ON sources_fts.rowid = s.rowid" : ""}`;
+    const where = conditions.join(" AND ");
+    const total = Number(
+      this.#database
+        .prepare(`SELECT COUNT(*) n ${from} WHERE ${where}`)
+        .get(...params)?.n,
+    );
+    const rows = this.#database
+      .prepare(
+        `SELECT s.id ${from} WHERE ${where} ORDER BY ${match ? "sources_fts.rank," : ""} ${date} DESC, s.id LIMIT ?`,
+      )
+      .all(...params, input.limit);
+    return {
+      total,
+      materials: rows.map((row) => {
+        const material = this.findMaterial(String(row.id), input.scope);
+        if (!material) throw new Error("Missing source candidate");
+        return material;
       }),
     };
   }

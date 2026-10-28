@@ -25,6 +25,7 @@
     "memory:process": "node dist/scripts/process-memory.js",
     "test:oauth-provider": "npm run build && python3 scripts/keycloak-smoke.py",
     "test:container": "python3 scripts/container-smoke.py",
+    "eval:context-package": "npm run build && node dist/test/evaluate-context-package.js",
     "check": "npm run lint && npm run typecheck && npm test"
   },
   "devDependencies": {

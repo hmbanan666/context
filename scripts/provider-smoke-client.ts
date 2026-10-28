@@ -295,8 +295,12 @@ const personalGrants: ClientGrants = {
     process: [],
   },
 };
+const personalKnowledge = personalDatabase
+  ? new KnowledgeStore(personalDatabase)
+  : undefined;
 const personalMcp = createContextMcp(personalSources, [], true, {
   personalMemory: true,
+  ...(personalKnowledge ? { knowledge: personalKnowledge } : {}),
   clientGrants: personalGrants,
 });
 const personalHandler = protectMcp(personalMcp, {
@@ -354,6 +358,35 @@ try {
       .parse(evidence.structuredContent).sources,
     [material],
   );
+  if (personalKnowledge) {
+    const packaged = await personal.callTool({
+      name: "context_package",
+      arguments: {
+        question: "What happened at the observatory?",
+        from: "2026-09-01T00:00:00Z",
+        until: "2026-10-01T00:00:00Z",
+        maxBytes: 2048,
+      },
+    });
+    assert.ok(!packaged.isError);
+    const cards = z
+      .object({
+        sources: z.array(
+          z.object({ id: z.string(), excerpt: z.object({ text: z.string() }) }),
+        ),
+      })
+      .parse(packaged.structuredContent).sources;
+    assert.equal(cards.length, 1);
+    assert.equal(
+      cards[0]?.id,
+      z.object({ source: z.object({ id: z.string() }) }).parse(material).source
+        .id,
+    );
+    assert.equal(cards[0]?.excerpt.text, input.text);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(packaged.structuredContent)) <= 2048,
+    );
+  }
   if (missingProjectToken) {
     const reduced = await connectPersonal(missingProjectToken);
     assert.equal(
@@ -393,5 +426,6 @@ try {
 } finally {
   for (const client of personalClients) await client.close();
   await personalMcp.close();
+  personalKnowledge?.close();
   personalSources.close();
 }

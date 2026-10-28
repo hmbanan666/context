@@ -1,6 +1,27 @@
 # Experimental roadmap
 
-## Current milestone — personal text pilot, approved 28 October 2026
+## Current milestone — Context Package MVP, approved 28 October 2026
+
+The owner explicitly authorized one focused retrieval PR: natural questions,
+compact source-grounded packages, dates and existing relations, bounded payloads,
+follow-up source reads and a reproducible synthetic baseline comparison. This
+supersedes the proposal-only status of retrieval experiment B below, without
+opening the other candidate milestones. Merge and deployment remain separate
+owner decisions.
+
+Implementation uses SQLite/FTS and existing structured knowledge only. The
+[experiment report](context-package-evaluation.md) records 7/10 complete evidence
+sets in 10 calls versus 5/10 in 14 calls for paged keyword retrieval. This is a
+fact-availability measure, not an LLM answer-quality result. Timeline completeness
+regresses at 4 KiB; paraphrase and inflection remain unresolved. No paid API,
+automatic extraction, new infrastructure, UI, Telegram or audio is included.
+
+The deliverable is a tested PR and local/provider evidence. Actual hosted
+ChatGPT/Codex discovery and use of the new tool remain unverified until a separately
+approved release. This implementation does not close the personal pilot's long-idle,
+next-day or independent personal cross-client acceptance criteria.
+
+## Personal text pilot, approved 28 October 2026
 
 The owner approved implementation and necessary rule corrections. This
 supersedes historical development-stop statements and the prior proposal-only
@@ -30,14 +51,11 @@ part of this slice.
 4. Only after those activation checks, the owner-selected real notes can enter
    private storage. Public tests, PRs and logs contain only synthetic fixtures.
 
-**Observed release and current blocker:** PR #17 is merged and personal mode is
-active; source preservation and on/off-host backup/restore passed. The actual
-reconnected ChatGPT app requests only operation scopes and cannot edit that
-list. Its personal capture/read fail before storage. The current corrective
-slice prepares explicit data/offline defaults for this existing client, keeping
-its app registration and server authorization checks. This correction stays
-inside the approved text-pilot outcome; applying it live still requires release
-approval. Long-idle, next-day and cross-client acceptance remain unverified.
+**Observed release:** PRs #17 and #18 are merged. The #18 release record
+reports approved activation, actual synthetic ChatGPT save/read/retry and refresh
+after a short idle period, an offline session and verified on/off-host recovery.
+No app recreation or editable scope field was required. Forty-minute idle,
+next-day and independent personal cross-client acceptance remain unverified.
 
 Report each state independently. If the client's refresh remains broken,
 diagnose the actual request/grant before changing token lifetimes or repeating
