@@ -15,7 +15,8 @@ keeps append-only additions indexed. No original text is rewritten.
 
 The package interleaves the independently ranked lists (raw BM25 scores from
 different indexes are not comparable), validates quoted provenance, and includes
-compact verbatim excerpts. Timeline mode selects source dates newest first and
+compact verbatim excerpts anchored to the same FTS token matches, preserving
+original UTF-16 offsets. Timeline mode selects source dates newest first and
 only considers knowledge attached to the bounded source candidates. From the
 included knowledge seeds it inspects up to 50 stored relations, adds at most one
 hop, and requires both endpoints and every cited original in the same scope and

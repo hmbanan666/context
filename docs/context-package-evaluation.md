@@ -147,7 +147,7 @@ excerpts, old-database FTS backfill, subsequent inserts and backup/restore.
 Observed verification commands:
 
 ```sh
-npm run check                         # lint, typecheck, 94 tests passed
+npm run check                         # lint, typecheck, 97 tests passed
 npm run eval:context-package           # comparison above
 docker build -t context:ci .
 npm run test:container                 # non-root restart, backup/restore, denial passed
@@ -183,3 +183,32 @@ pagination and follow-up reads. Do not expand the architecture on this evidence
 alone. The next required approval is merge, and separately production deployment;
 neither is performed by this task. Actual ChatGPT/Codex discovery and long-idle
 use of the new tool remain unverified until an approved release.
+
+
+## Final release-readiness review
+
+Independent final reviews of head `d90e88b` covered access/provenance and the
+retrieval specification. The standards review found no blocking access, original
+preservation or migration defect. The specification review found one P2 defect:
+FTS matched a token but the separately matched excerpt could anchor inside a
+longer word (`art` in `departure`) or miss normalized matches (`cafe`/`Café`,
+`istanbul`/`İstanbul`). Three regressions failed before the correction.
+
+The correction obtains the first matching position from SQLite FTS5 `highlight`
+for both originals and knowledge. It compares the highlighted prefix against the
+unchanged text to retain original UTF-16 offsets, without a second tokenizer or
+Unicode normalization implementation. Timeline and relation-only evidence still
+start at the beginning when they have no lexical seed match. Public schemas,
+authorization, ranking, limits, migration and original writes are unchanged.
+All 97 tests pass and the benchmark summary remains identical. This final small
+fix was checked with regression tests and the full suite; a second independent
+review of the fix is not claimed.
+
+Additional isolated synthetic release probes passed: an injected conflict after
+FTS table creation rolled back the entire index migration; four concurrent first
+initializations produced a valid backfilled index; FTS external-content integrity
+and original/retry identity passed. An independent probe ran the actual base
+commit's SourceStore and KnowledgeStore before and after upgrade: old-code writes
+remained indexed on reopening new code, while BOM/CRLF/emoji file bytes, metadata,
+checksums and retries were unchanged. These were temporary local probes, not
+production data or a release activation.

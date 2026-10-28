@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { scopeSchema } from "./contracts.js";
-import { ftsTerms, type PackageSelection } from "./package-query.js";
+import {
+  ftsMatchOffset,
+  ftsTerms,
+  type PackageSelection,
+} from "./package-query.js";
 import { IdempotencyConflict } from "./store.js";
 
 const identifier = z
@@ -405,7 +409,7 @@ export class KnowledgeStore {
     )
       throw new Error("Invalid candidate bound");
     if (!input.terms.length && !sourceIds.length)
-      return { total: 0, items: [] };
+      return { total: 0, items: [], matchOffsets: new Map<string, number>() };
     const conditions = ["k.scope = ?", "status <> 'rejected'"];
     const params: (string | number)[] = [input.scope];
     const invalid = ["s.id IS NULL"];
@@ -442,13 +446,24 @@ export class KnowledgeStore {
         .prepare(`SELECT count(*) n FROM (${selection} WHERE ${where})`)
         .get(...params)?.n,
     );
+    const matchOffsets = new Map<string, number>();
+    const rankedSelection = match
+      ? selection.replace(
+          "SELECT ",
+          "SELECT highlight(knowledge_items_fts,0,' ','') AS highlighted, ",
+        )
+      : selection;
     const items = this.#database
       .prepare(
-        `${selection} WHERE ${where} ORDER BY ${match ? "knowledge_items_fts.rank," : ""} k.created_at DESC, k.id LIMIT ?`,
+        `${rankedSelection} WHERE ${where} ORDER BY ${match ? "knowledge_items_fts.rank," : ""} k.created_at DESC, k.id LIMIT ?`,
       )
       .all(...params, input.limit)
-      .map(decodeItem);
-    return { total, items };
+      .map(({ highlighted, ...row }) => {
+        const item = decodeItem(row);
+        matchOffsets.set(item.id, ftsMatchOffset(item.text, highlighted));
+        return item;
+      });
+    return { total, items, matchOffsets };
   }
 
   packageRelations(scope: string, ids: readonly string[]) {

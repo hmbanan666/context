@@ -432,7 +432,7 @@ test("derived FTS backfills existing knowledge and persists through capture, reo
 
 test("Unicode excerpts are exact and never split surrogate pairs", () => {
   const text = `${"😀".repeat(150)}needle ${"🚀".repeat(300)}`;
-  const e = excerpt(text, ["needle"], 361);
+  const e = excerpt(text, text.indexOf("needle"), 361);
   assert.equal(e.text, text.slice(e.start, e.end));
   assert.ok(e.text.includes("needle"));
   assert.ok(!/[\uD800-\uDFFF]/u.test(e.text));
@@ -440,8 +440,63 @@ test("Unicode excerpts are exact and never split surrogate pairs", () => {
 
 test("case-fold expansion cannot shift source excerpt offsets", () => {
   const text = `${"İ".repeat(500)} needle useful fact`;
-  const e = excerpt(text, ["needle"]);
+  const e = excerpt(text, text.indexOf("needle"));
   assert.ok(e.start >= 0 && e.start <= e.end && e.end <= text.length);
   assert.equal(e.text, text.slice(e.start, e.end));
   assert.ok(e.text.includes("needle useful fact"));
 });
+
+for (const [question, prefix, fact] of [
+  ["art", "Synthetic departure log. ", "Art exhibition attendance was 73."],
+  ["cafe", "Synthetic cafeine log. ", "Café budget was 73."],
+  ["istanbul", "İ".repeat(300), "İstanbul budget was 73."],
+] as const) {
+  test(`source and knowledge excerpts use actual FTS matches for ${question}`, async () => {
+    const f = await setup();
+    try {
+      const text = `${prefix}${"Filler 😀. ".repeat(100)}${fact}`;
+      const source = f.store.captureMaterial({
+        version: 1,
+        scope,
+        text,
+        origin: "fixture:fts-excerpt",
+        idempotencyKey: "original",
+      }).material.source;
+      const item = f.knowledge.add({
+        version: 1,
+        scope,
+        kind: "observation",
+        text,
+        sourceRefs: [{ sourceId: source.id }],
+        creator: { kind: "model", name: "fixture" },
+        idempotencyKey: "derived",
+      }).item;
+      const client = await f.connect();
+      const response = await client.callTool({
+        name: "context_package",
+        arguments: { question, maxBytes: 4096 },
+      });
+      assert.ok(!response.isError);
+      const result = response.structuredContent as unknown as ReturnType<
+        typeof buildContextPackage
+      >;
+      assert.equal(result.sources[0]?.id, source.id);
+      assert.equal(result.items[0]?.id, item.id);
+      for (const card of [result.sources[0], result.items[0]]) {
+        assert.ok(card);
+        assert.ok(
+          card.excerpt.text.includes(fact),
+          "The short sole FTS matching fact must fit in its excerpt",
+        );
+        assert.equal(
+          card.excerpt.text,
+          text.slice(card.excerpt.start, card.excerpt.end),
+        );
+      }
+      assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 4096);
+      assert.deepEqual(f.store.find(source.id, scope), source);
+    } finally {
+      await f.cleanup();
+    }
+  });
+}

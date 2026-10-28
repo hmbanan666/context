@@ -50,3 +50,15 @@ export function ftsTerms(terms: readonly string[]): string {
     throw new Error("Invalid search terms");
   return terms.map((t) => `"${t.replaceAll('"', '""')}"`).join(" OR ");
 }
+
+// Paired with highlight(index, 0, ' ', ''): the first inserted space differs
+// from the first matched token (which cannot start with ASCII whitespace).
+// Comparing unmodified prefixes yields an original UTF-16 offset without
+// inventing tokenization/case-fold rules or relying on collision-free markers.
+export function ftsMatchOffset(text: string, highlighted: unknown): number {
+  if (typeof highlighted !== "string") return 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== highlighted[i]) return i;
+  }
+  return 0;
+}

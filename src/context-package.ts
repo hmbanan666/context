@@ -9,16 +9,8 @@ import { contextPackageSchema, questionTerms } from "./package-query.js";
 import type { SourceStore } from "./store.js";
 
 // Offsets are UTF-16 code units into the immutable text; avoid splitting emoji pairs.
-export function excerpt(text: string, terms: readonly string[], maximum = 360) {
-  // Match against the original: lowercasing can expand Unicode characters and
-  // would make its offsets invalid for the immutable source.
-  const hits = terms
-    .map((term) => {
-      const literal = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp(literal, "iu").exec(text)?.index ?? -1;
-    })
-    .filter((i) => i >= 0);
-  let start = Math.max(0, (hits.length ? Math.min(...hits) : 0) - 80);
+export function excerpt(text: string, matchOffset = 0, maximum = 360) {
+  let start = Math.max(0, matchOffset - 80);
   if (start > 0 && /[\uDC00-\uDFFF]/u.test(text[start] ?? "")) start--;
   let end = Math.min(text.length, start + maximum);
   if (end < text.length && /[\uDC00-\uDFFF]/u.test(text[end] ?? "")) end--;
@@ -29,7 +21,7 @@ export function excerpt(text: string, terms: readonly string[], maximum = 360) {
     truncated: start > 0 || end < text.length,
   };
 }
-function sourceCard(m: Material, terms: readonly string[]) {
+function sourceCard(m: Material, matchOffset = 0) {
   return {
     id: m.source.id,
     checksum: m.source.checksum,
@@ -37,17 +29,17 @@ function sourceCard(m: Material, terms: readonly string[]) {
     status: m.source.status,
     capturedAt: m.source.capturedAt,
     sourceDate: m.metadata.createdAt ?? m.source.capturedAt,
-    excerpt: excerpt(m.source.text, terms),
+    excerpt: excerpt(m.source.text, matchOffset),
   };
 }
-function itemCard(k: KnowledgeItem, terms: readonly string[]) {
+function itemCard(k: KnowledgeItem, matchOffset = 0) {
   return {
     id: k.id,
     kind: k.kind,
     status: k.status,
     createdAt: k.createdAt,
     creator: k.creator,
-    excerpt: excerpt(k.text, terms, 480),
+    excerpt: excerpt(k.text, matchOffset, 480),
     sourceIds: k.sourceRefs.map((r) => r.sourceId),
   };
 }
@@ -201,9 +193,14 @@ export function buildContextPackage(
       ...result,
       sources: [
         ...result.sources,
-        ...newSources.map((m) => sourceCard(m, terms)),
+        ...newSources.map((m) =>
+          sourceCard(m, original.matchOffsets.get(m.source.id)),
+        ),
       ],
-      items: [...result.items, ...newItems.map((k) => itemCard(k, terms))],
+      items: [
+        ...result.items,
+        ...newItems.map((k) => itemCard(k, derived.matchOffsets.get(k.id))),
+      ],
       relations: [...result.relations, ...rs.map(relationCard)],
     };
     // Reserve space for every bounded coverage reason before accepting a bundle.

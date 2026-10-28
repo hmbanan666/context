@@ -15,7 +15,11 @@ import {
   type MaterialMetadata,
 } from "./materials.js";
 
-import { ftsTerms, type PackageSelection } from "./package-query.js";
+import {
+  ftsMatchOffset,
+  ftsTerms,
+  type PackageSelection,
+} from "./package-query.js";
 
 export interface SourceInput {
   readonly id: string;
@@ -538,14 +542,20 @@ export class SourceStore {
     );
     const rows = this.#database
       .prepare(
-        `SELECT s.id ${from} WHERE ${where} ORDER BY ${match ? "sources_fts.rank," : ""} ${date} DESC, s.id LIMIT ?`,
+        `SELECT s.id, ${match ? "highlight(sources_fts,0,' ','')" : "NULL"} AS highlighted ${from} WHERE ${where} ORDER BY ${match ? "sources_fts.rank," : ""} ${date} DESC, s.id LIMIT ?`,
       )
       .all(...params, input.limit);
+    const matchOffsets = new Map<string, number>();
     return {
       total,
+      matchOffsets,
       materials: rows.map((row) => {
         const material = this.findMaterial(String(row.id), input.scope);
         if (!material) throw new Error("Missing source candidate");
+        matchOffsets.set(
+          material.source.id,
+          ftsMatchOffset(material.source.text, row.highlighted),
+        );
         return material;
       }),
     };
