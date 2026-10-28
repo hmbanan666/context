@@ -57,6 +57,7 @@ def main():
         profiles = {
             "expiry": (2, {"accessTokenLifespan": 5, "ssoSessionIdleTimeout": 3, "ssoSessionMaxLifespan": 8}, 30, 60),
             "idle": (3, {"accessTokenLifespan": 5}, 4, 60),
+            "compatibility": (5, {"accessTokenLifespan": 5, "ssoSessionIdleTimeout": 3, "ssoSessionMaxLifespan": 8}, 30, 60),
             "maximum": (4, {"accessTokenLifespan": 5, "offlineSessionIdleTimeout": 60,
                             "offlineSessionMaxLifespanEnabled": False, "offlineSessionMaxLifespan": 12}, 60, 6),
         }
@@ -64,6 +65,12 @@ def main():
             test_realm = copy.deepcopy(realm)
             test_realm.update(settings, realm="context-" + name)
             test_realm["users"][0]["id"] = f"00000000-0000-4000-8000-{owner_number:012d}"
+            if name == "compatibility":
+                profile = json.loads(Path("deploy/keycloak/personal-chatgpt.json").read_text())
+                target = next(client for client in test_realm["clients"] if client["clientId"] == profile["clientId"])
+                target["defaultClientScopes"] += profile["defaultClientScopes"]
+                target["optionalClientScopes"] = [scope for scope in target["optionalClientScopes"]
+                                                  if scope not in profile["defaultClientScopes"]]
             for client in test_realm["clients"]:
                 if client["clientId"] == "context-chatgpt":
                     client["attributes"].update({"client.offline.session.idle.timeout": str(idle),
@@ -168,6 +175,44 @@ def main():
                 raise AssertionError("An invalidated refresh grant was accepted")
 
             verifier = "synthetic-pkce-verifier-for-local-tests-only-0001"
+            # Reproduce the immutable scope list of the existing ChatGPT app.
+            compatibility = provider_for("compatibility")
+            legacy_request = "context:process context:write context:read"
+            compatible = grant("context-chatgpt", legacy_request, compatibility)
+            assert "private:personal" in claims(compatible["access_token"])["scope"].split(), "Existing app cannot access personal memory"
+            assert claims(compatible["refresh_token"])["typ"] == "Offline", "Existing app did not receive offline refresh"
+            print("Existing ChatGPT scope list receives personal and offline defaults: passed", flush=True)
+
+            assert set(full_scope.split()).issubset(set(compatible["scope"].split()))
+            read_only = grant("context-chatgpt", "context:read", compatibility)
+            assert "context:write" not in read_only["scope"].split()
+            personal_database = str(Path(directory) / "compatible-personal.db")
+            proof = {"issuer": compatibility["issuer"], "accessToken": compatible["access_token"],
+                     "ownerSubject": "00000000-0000-4000-8000-000000000005",
+                     "personalDatabase": personal_database, "personalReadOnlyToken": read_only["access_token"]}
+            subprocess.run(["node", "dist/scripts/provider-smoke-client.js"], check=True,
+                           input=json.dumps(proof), text=True)
+            initial_access = claims(compatible["access_token"])
+            time.sleep(max(0, initial_access["iat"] + 9 - time.time()))
+            assert initial_access["exp"] <= time.time()
+            compatible_rotated = renew("context-chatgpt", compatible, compatibility)
+            assert claims(compatible_rotated["refresh_token"])["typ"] == "Offline"
+            assert set(compatible_rotated["scope"].split()) == set(compatible["scope"].split())
+            proof.pop("personalReadOnlyToken")
+            proof.update(accessToken=compatible_rotated["access_token"], expectedPersonalDuplicate=True)
+            subprocess.run(["node", "dist/scripts/provider-smoke-client.js"], check=True,
+                           input=json.dumps(proof), text=True)
+            # A fixed-scope app may repeat its original scope string during refresh.
+            compatible_again = renew("context-chatgpt", compatible_rotated, compatibility, legacy_request)
+            assert claims(compatible_again["refresh_token"])["typ"] == "Offline"
+            assert set(compatible_again["scope"].split()) == set(compatible["scope"].split())
+            rejected(lambda: renew("context-chatgpt", compatible, compatibility))
+            # This profile does not alter the independent Codex client.
+            unchanged_codex = grant("context-codex", legacy_request, compatibility)
+            assert "private:personal" not in unchanged_codex["scope"].split()
+            assert claims(unchanged_codex["refresh_token"])["typ"] == "Refresh"
+            print("Existing app save/reopen after access and online session expiry, exact retry, read-only denial, rotation and Codex isolation: passed", flush=True)
+
             code = authorize(verifier)
             params = {"grant_type": "authorization_code", "client_id": "context-codex", "code": code,
                       "redirect_uri": "http://127.0.0.1:8765/callback", "resource": resource, "code_verifier": "wrong-verifier"}

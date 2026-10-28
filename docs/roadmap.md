@@ -30,6 +30,15 @@ part of this slice.
 4. Only after those activation checks, the owner-selected real notes can enter
    private storage. Public tests, PRs and logs contain only synthetic fixtures.
 
+**Observed release and current blocker:** PR #17 is merged and personal mode is
+active; source preservation and on/off-host backup/restore passed. The actual
+reconnected ChatGPT app requests only operation scopes and cannot edit that
+list. Its personal capture/read fail before storage. The current corrective
+slice prepares explicit data/offline defaults for this existing client, keeping
+its app registration and server authorization checks. This correction stays
+inside the approved text-pilot outcome; applying it live still requires release
+approval. Long-idle, next-day and cross-client acceptance remain unverified.
+
 Report each state independently. If the client's refresh remains broken,
 diagnose the actual request/grant before changing token lifetimes or repeating
 logins. Telegram and voice are the next candidate only after text use succeeds.

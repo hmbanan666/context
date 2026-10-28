@@ -23,6 +23,9 @@ const {
   ownerSubject,
   missingProjectToken,
   missingProcessToken,
+  personalReadOnlyToken,
+  personalDatabase,
+  expectedPersonalDuplicate,
 } = z
   .strictObject({
     issuer: z.url(),
@@ -30,6 +33,9 @@ const {
     ownerSubject: z.uuid().default("00000000-0000-4000-8000-000000000001"),
     missingProjectToken: z.string().optional(),
     missingProcessToken: z.string().optional(),
+    personalReadOnlyToken: z.string().optional(),
+    personalDatabase: z.string().optional(),
+    expectedPersonalDuplicate: z.boolean().default(false),
   })
   .parse(JSON.parse(input));
 const resource = "https://context.kosarev.space/mcp";
@@ -276,7 +282,7 @@ try {
 }
 
 // The private namespace contains fictional fixtures in this disposable provider test.
-const personalSources = new SourceStore(":memory:");
+const personalSources = new SourceStore(personalDatabase ?? ":memory:");
 const personalGrants: ClientGrants = {
   "context-chatgpt": {
     read: [personalDataScope],
@@ -324,6 +330,11 @@ try {
   };
   const saved = await personal.callTool({ name: "remember", arguments: input });
   assert.ok(!saved.isError);
+  assert.equal(
+    z.object({ duplicate: z.boolean() }).parse(saved.structuredContent)
+      .duplicate,
+    expectedPersonalDuplicate,
+  );
   const material = z
     .object({ material: z.unknown() })
     .parse(saved.structuredContent).material;
@@ -353,6 +364,27 @@ try {
     assert.equal(
       (await reduced.callTool({ name: "remember", arguments: input })).isError,
       true,
+    );
+  }
+  if (personalReadOnlyToken) {
+    const reader = await connectPersonal(personalReadOnlyToken);
+    const read = await reader.callTool({
+      name: "memory_context",
+      arguments: {},
+    });
+    assert.ok(!read.isError);
+    assert.deepEqual(
+      z.object({ sources: z.array(z.unknown()) }).parse(read.structuredContent)
+        .sources,
+      [material],
+    );
+    const denied = await reader.callTool({
+      name: "remember",
+      arguments: input,
+    });
+    assert.equal(denied.isError, true);
+    z.object({ error: z.literal("insufficient_scope") }).parse(
+      denied.structuredContent,
     );
   }
   console.log(
