@@ -2,6 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { scopeSchema } from "./contracts.js";
+import {
+  ftsMatchOffset,
+  ftsTerms,
+  type PackageSelection,
+} from "./package-query.js";
 import { IdempotencyConflict } from "./store.js";
 
 const identifier = z
@@ -208,6 +213,14 @@ export class KnowledgeStore {
       this.#database
         .prepare("SELECT id, text, scope FROM sources LIMIT 1")
         .get();
+      this.#database.function(
+        "source_timestamp",
+        { deterministic: true },
+        (value) =>
+          typeof value === "string" && Number.isFinite(Date.parse(value))
+            ? Date.parse(value)
+            : null,
+      );
       this.#database.exec(`
         BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS knowledge_items (
@@ -253,6 +266,21 @@ export class KnowledgeStore {
         ) STRICT;
         COMMIT;
       `);
+      this.#database.exec("BEGIN IMMEDIATE;");
+      if (
+        !this.#database
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE name = 'knowledge_items_fts'",
+          )
+          .get()
+      ) {
+        this.#database.exec(`CREATE VIRTUAL TABLE knowledge_items_fts USING fts5(text, content='knowledge_items', content_rowid='rowid');
+          CREATE TRIGGER knowledge_items_fts_insert AFTER INSERT ON knowledge_items BEGIN
+            INSERT INTO knowledge_items_fts(rowid,text) VALUES(new.rowid,new.text);
+          END;
+          INSERT INTO knowledge_items_fts(knowledge_items_fts) VALUES('rebuild');`);
+      }
+      this.#database.exec("COMMIT;");
     } catch (error) {
       if (this.#database.isTransaction) this.#database.exec("ROLLBACK");
       this.#database.close();
@@ -370,6 +398,84 @@ export class KnowledgeStore {
       )
       .all(scope, limit)
       .map(decodeItem);
+  }
+
+  packageCandidates(input: PackageSelection, sourceIds: readonly string[]) {
+    if (
+      !Number.isInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > 101 ||
+      sourceIds.length > 100
+    )
+      throw new Error("Invalid candidate bound");
+    if (!input.terms.length && !sourceIds.length)
+      return { total: 0, items: [], matchOffsets: new Map<string, number>() };
+    const conditions = ["k.scope = ?", "status <> 'rejected'"];
+    const params: (string | number)[] = [input.scope];
+    const invalid = ["s.id IS NULL"];
+    const date = "source_timestamp(COALESCE(m.created_at,s.captured_at))";
+    if (input.from) {
+      invalid.push(`${date} < ?`);
+      params.push(Date.parse(input.from));
+    }
+    if (input.until) {
+      invalid.push(`${date} >= ?`);
+      params.push(Date.parse(input.until));
+    }
+    conditions.push(
+      `NOT EXISTS (SELECT 1 FROM json_each(k.source_refs) ref LEFT JOIN sources s ON s.id=json_extract(ref.value,'$.sourceId') AND s.scope=k.scope LEFT JOIN source_metadata m ON m.source_id=s.id WHERE ${invalid.join(" OR ")})`,
+    );
+    const match = input.terms.length > 0;
+    if (match) {
+      conditions.push("knowledge_items_fts MATCH ?");
+      params.push(ftsTerms(input.terms));
+    } else {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM json_each(k.source_refs) ref WHERE json_extract(ref.value,'$.sourceId') IN (${sourceIds.map(() => "?").join(",")}))`,
+      );
+      params.push(...sourceIds);
+    }
+    const selection =
+      itemSelection +
+      (match
+        ? " JOIN knowledge_items_fts ON knowledge_items_fts.rowid = k.rowid"
+        : "");
+    const where = conditions.join(" AND ");
+    const total = Number(
+      this.#database
+        .prepare(`SELECT count(*) n FROM (${selection} WHERE ${where})`)
+        .get(...params)?.n,
+    );
+    const matchOffsets = new Map<string, number>();
+    const rankedSelection = match
+      ? selection.replace(
+          "SELECT ",
+          "SELECT highlight(knowledge_items_fts,0,' ','') AS highlighted, ",
+        )
+      : selection;
+    const items = this.#database
+      .prepare(
+        `${rankedSelection} WHERE ${where} ORDER BY ${match ? "knowledge_items_fts.rank," : ""} k.created_at DESC, k.id LIMIT ?`,
+      )
+      .all(...params, input.limit)
+      .map(({ highlighted, ...row }) => {
+        const item = decodeItem(row);
+        matchOffsets.set(item.id, ftsMatchOffset(item.text, highlighted));
+        return item;
+      });
+    return { total, items, matchOffsets };
+  }
+
+  packageRelations(scope: string, ids: readonly string[]) {
+    if (!ids.length) return [];
+    if (ids.length > 20) throw new Error("Too many relation seeds");
+    const placeholders = ids.map(() => "?").join(",");
+    return this.#database
+      .prepare(
+        `${relationSelection} WHERE scope=? AND (from_id IN (${placeholders}) OR to_id IN (${placeholders})) ORDER BY created_at DESC,id LIMIT 51`,
+      )
+      .all(scope, ...ids, ...ids)
+      .map(decodeRelation);
   }
 
   relate(input: RelateKnowledgeInput): {

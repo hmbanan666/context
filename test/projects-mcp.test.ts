@@ -121,6 +121,7 @@ test("protected MCP applies project and operation grants to every read, write, p
       ["knowledge_history", { id: kb.id }],
       ["processing_status", { id: jobB.id }],
       ["project_context", {}],
+      ["context_package", { question: "secret" }],
       ["work_context", { id: "foreign-work" }],
     ] as const;
     for (const [name, args] of reads) {
@@ -194,7 +195,7 @@ test("protected MCP applies project and operation grants to every read, write, p
       Buffer.byteLength(JSON.stringify(context.structuredContent)) <= 2048,
     );
     const tools = (await codex.listTools()).tools;
-    assert.equal(tools.length, 15);
+    assert.equal(tools.length, 16);
     assert.ok(tools.every((tool) => tool._meta?.securitySchemes !== undefined));
     const ownerWithoutProcessing = await connect("context-chatgpt", [
       "context:read",

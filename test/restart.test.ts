@@ -280,7 +280,7 @@ test("a fresh MCP planner reads only the complete authorized work chain after pr
           assert.equal(JSON.stringify(denied).includes(f.source.id), false);
         }
         const names = (await client.listTools()).tools.map((tool) => tool.name);
-        assert.equal(names.length, 15);
+        assert.equal(names.length, 16);
         assert.ok(names.includes("work_context"));
         assert.equal(
           names.some((name) => /dispatch|authorize|sync_work/.test(name)),

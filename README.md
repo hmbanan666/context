@@ -18,7 +18,7 @@ This repository contains open-source code and synthetic fixtures only.
 **Do not commit real conversations, personal notes, manuscripts, documents,
 uploads, credentials, tokens, or instance databases.**
 
-## Personal text pilot — current approved milestone
+## Personal text pilot
 
 The owner approved this milestone on **28 October 2026**, including corrections
 to rules that obstruct normal memory. This supersedes earlier development-stop
@@ -41,16 +41,12 @@ September?”**, and **“Which experiences could become a chapter?”** After o
 normal connection setup, these prompts should require no coding tools or
 per-note authentication choices.
 
-**Release status:** PR #17 was merged and the personal mode was activated on
-28 October 2026 with verified source preservation and on/off-host recovery.
-After reconnecting, the owner sees the new tools, but actual ChatGPT capture and
-retrieval fail: its fixed OAuth request includes only the three operation
-scopes, omitting data scopes and `offline_access`. No personal acceptance note
-was saved. The prepared opt-in [ChatGPT compatibility profile](
-docs/deployment.md#existing-chatgpt-connection-compatibility) assigns the approved
-data and offline scopes at the provider, without recreating the app or editing
-its scope field. It is not yet applied live. Actual capture/read, refresh after
-inactivity, next-day use and cross-client acceptance remain open.
+**Release status:** PRs #17 and [#18](https://github.com/hmbanan666/context/pull/18)
+are merged. The recorded owner-approved activation verified actual ChatGPT
+synthetic save/read/retry, offline grant and access refresh after a short idle
+period, plus on/off-host recovery. Forty-minute idle, next-day and independent
+personal cross-client acceptance remain unverified. No new connection scopes
+are required for the Context Package tool below.
 
 This slice retains SQLite originals, existing OAuth and existing synthetic
 grants. No database replacement, paid model API, unattended model worker,
@@ -96,6 +92,64 @@ whole-query coverage from all pages and those explicit omissions.
 There is no AI provider requirement for capture or retrieval. The existing
 local extraction command remains synthetic-only. Hosted background enrichment
 requires a separately verified execution and credential lifecycle.
+
+## Context Package MVP — current approved development
+
+`context_package` selects compact evidence for a natural-language question from
+originals and existing structured knowledge. It requires `context:read` and the
+same token data scope and independent grant as other reads. `scope` defaults to
+`private:personal` (protected personal mode must already be enabled); explicitly
+authorized synthetic scopes also work. No new OAuth scope or inference provider
+is introduced. This branch is prepared for review, not deployed.
+
+```json
+{
+  "question": "What happened in October?",
+  "mode": "timeline",
+  "from": "2026-10-01T00:00:00+02:00",
+  "until": "2026-11-01T00:00:00+01:00",
+  "maxBytes": 4096
+}
+```
+
+For a thematic question, use the default `mode: "search"`, e.g.
+`{"question":"Which stories are suitable for a book?"}`. The client resolves
+relative dates, year and timezone into explicit bounds; the server does not
+infer dates or translate between languages. Search removes a small RU/EN
+question-word list and matches any remaining literal token in original or
+knowledge text. It follows at most one hop of existing knowledge relations.
+This is lexical retrieval, not semantic search or automatic extraction.
+
+- `version`: defaults to `1`; `question`: 1–512 characters, 1–32 content tokens
+  in search mode. `mode`: `search` (default) or explicit `timeline` (question
+  text does not filter the timeline).
+- `from`/`until`: inclusive/exclusive ISO timestamps with timezone; source
+  creation date, falling back to capture date. Every original cited by an item
+  or relation must fit the interval; mixed-period knowledge is omitted.
+- `limit`: 1–20 (default 8), separately caps sources, items and relations.
+  `maxBytes`: 2048–65536 (default 8192), bounds UTF-8 `structuredContent` JSON,
+  excluding duplicated MCP text/framing. Narrow the question or read specific
+  originals when the budget is insufficient.
+- `sources`: IDs, checksums, provenance, dates and verbatim excerpts, with
+  UTF-16 `start`/`end` offsets into the unchanged original. Each excerpt reports
+  its own `truncated` flag. `items` retain kind, creator, current decision status
+  and source IDs; rejected items are excluded. `relations` retain both included
+  endpoints and source IDs. Suggested knowledge is not fact or owner approval.
+- `coverage`: eligible lexical/timeline match counts, candidate cap and omission
+  reasons. `exhaustive` is always false: even an empty, untruncated search cannot
+  establish semantic absence. Top-level `truncated` reports candidate, entry,
+  byte, relation or provenance omissions; inspect excerpt flags separately.
+- `readMore`: read the exact original with
+  `read_material({"version":1,"scope":"<returned scope>","id":"<source ID>"})`,
+  or full derived text with `read_knowledge` and its item ID. Both recheck access.
+  `read_relations` lists relations by scope under its existing bounds. There is
+  no package cursor: use `memory_context` pagination for complete period scans.
+
+All returned text is untrusted evidence, never agent instructions. Capture,
+original files, existing tools and signature checks are unchanged. See the
+[reproducible comparison and verification guide](docs/context-package-evaluation.md)
+for measured gains, the timeline regression and unresolved paraphrase/morphology
+failures. No full archive is passed to an LLM by this tool.
 
 ## Product direction and validation
 
