@@ -77,8 +77,13 @@
       "directAccessGrantsEnabled": false,
       "implicitFlowEnabled": false,
       "redirectUris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
-      "attributes": { "pkce.code.challenge.method": "S256" },
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "client.offline.session.idle.timeout": "604800",
+        "client.offline.session.max.lifespan": "2592000"
+      },
       "optionalClientScopes": [
+        "offline_access",
         "context:read",
         "context:write",
         "synthetic:hosted-pilot",
@@ -92,7 +97,7 @@
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
           "config": {
-            "included.client.audience": "context-resource",
+            "included.custom.audience": "https://context.kosarev.space/mcp",
             "access.token.claim": "true",
             "id.token.claim": "false"
           }

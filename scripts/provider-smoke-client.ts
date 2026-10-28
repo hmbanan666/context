@@ -16,10 +16,17 @@ import { SourceStore } from "../src/store.js";
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const { issuer, accessToken, missingProjectToken, missingProcessToken } = z
+const {
+  issuer,
+  accessToken,
+  ownerSubject,
+  missingProjectToken,
+  missingProcessToken,
+} = z
   .strictObject({
     issuer: z.url(),
     accessToken: z.string(),
+    ownerSubject: z.uuid().default("00000000-0000-4000-8000-000000000001"),
     missingProjectToken: z.string().optional(),
     missingProcessToken: z.string().optional(),
   })
@@ -30,7 +37,7 @@ const mcp = createContextMcp(store, [], true);
 const protectedMcp = protectMcp(mcp, {
   issuer,
   resource,
-  ownerSubject: "00000000-0000-4000-8000-000000000001",
+  ownerSubject,
 });
 const client = new Client({
   name: "synthetic-keycloak-proof",
@@ -105,7 +112,7 @@ const projectMcp = createContextMcp(sources, [], true, {
 const config = {
   issuer,
   resource,
-  ownerSubject: "00000000-0000-4000-8000-000000000001",
+  ownerSubject,
   clientGrants: grants,
 };
 const handler = protectMcp(projectMcp, config);

@@ -229,6 +229,159 @@ verification are recorded below.
 Run the Codex login again for a new authorized session; the setup credentials
 were removed locally. Do not infer tool compatibility from provider sessions.
 
+## ChatGPT long-idle refresh candidate — not activated
+
+**Status (28 October 2026):** the owner authorized preparation of one OAuth PR,
+including isolated tests and an application/rollback plan. Merge, changes to the
+running Keycloak, ChatGPT connection settings and production deployment remain
+separate approval gates. This is not a claim that ChatGPT refresh is fixed.
+
+The reported ChatGPT journey required two interactive password/MFA logins.
+The retained provider log recorded `context-chatgpt` refresh rejection with
+`invalid_token` / `Token is not active`, followed by a new provider session.
+The expired online-grant explanation is consistent with that evidence, but
+the two authorization-code flows were not independently reconstructed: successful
+events were not retained. Codex's earlier `invalid_scope` defect is separate.
+
+The candidate allows **explicitly requested**, rotating offline authorization
+for `context-chatgpt`, with a provisional seven-day idle / thirty-day absolute
+limit. An optional scope attachment alone does not upgrade an existing online
+grant. The owner must approve this policy before activation.
+
+| Target | Before this candidate | Candidate value |
+| --- | --- | --- |
+| ChatGPT optional client scopes | No `offline_access` | Add existing `offline_access`, optional only |
+| ChatGPT `client.offline.session.idle.timeout` | Inherits realm | `604800` (7 days) |
+| ChatGPT `client.offline.session.max.lifespan` | Inherits realm | `2592000` (30 days) |
+| ChatGPT `context-audience` mapper | `included.client.audience=context-resource` | Replace with `included.custom.audience=https://context.kosarev.space/mcp` |
+
+Keycloak's audience mapper prioritizes `included.client.audience` when both
+selectors are present: **replace** that selector, rather than adding a second
+selector to the same mapper. In the isolated 26.8.1 test, resource-indicator
+audience propagation was lost after offline refresh outlived the online session.
+The fixed custom audience preserves the exact resource requirement; Context's
+signature, issuer, owner, client, scope and maximum five-minute access-token
+checks are unchanged. No resource-server authorization code changes are needed.
+
+**Codex impact:** its client registration, scopes, mapper, online lifetimes and
+offline policy are unchanged. Its normal online grant stays online even when
+rmcp adds `offline_access` during refresh. No realm fields change. The earlier
+plan to enable a realm-wide offline maximum was dropped after testing the
+pinned version: **Keycloak 26.8.1 enforces a positive client-specific offline
+maximum even when the realm maximum switch is disabled**. General administration
+documentation describes the switch as required, but the pinned
+[expiration implementation](https://github.com/keycloak/keycloak/blob/26.8.1/server-spi-private/src/main/java/org/keycloak/models/utils/SessionExpirationUtils.java)
+and actual token/expiry tests establish the narrower behavior here. Revalidate
+it before any provider upgrade. This PR does not certify long-idle offline MCP
+interoperability for Codex; normal Codex online refresh and project isolation
+remain regression requirements.
+
+Offline authorization survives ordinary SSO logout; revoking an offline grant
+is a separate operation. See the
+[Keycloak offline policy](https://www.keycloak.org/docs/latest/server_admin/index.html#_offline-access)
+and [pinned audience mapper](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/mappers/AudienceProtocolMapper.java).
+
+### Isolated checks
+
+`npm run test:oauth-provider` imports disposable synthetic realms in a loopback-only
+Keycloak container. The base realm uses the candidate policy; additional realms
+shorten lifetimes to seconds without changing provider time or production values.
+The checks exercise explicit confidential offline authorization, online versus
+offline expiry, exact-audience protected MCP capture/recall and project grants,
+offline idle/max expiry, a non-sliding maximum after rotation, omitted/unchanged
+refresh scopes, replay/concurrent reuse rejection, and explicit revocation.
+Codex online refresh and its unchanged offline policy with the realm maximum
+disabled are checked independently.
+
+A concurrent same-token request being rejected is protection evidence, not
+evidence that ChatGPT serializes refresh correctly. Reuse can revoke the client
+grant; do not increase reuse or disable rotation to hide a client race.
+No local fixture proves ChatGPT requested or retained an offline grant.
+
+### Application plan — separate explicit approval required
+
+1. Privately snapshot only the fields in the table, the existing ChatGPT mapper
+   ID/config, optional/default scope names, current relevant event settings and
+   active online/offline session counts for both clients, and the current realm
+   offline settings for comparison only. Do not export secrets,
+   users, raw tokens, complete realm exports or unrelated applications. Compare
+   actual values with the proposed diff; stop on unexpected drift. Verify that
+   the existing owner and built-in offline client scope already have the required
+   `offline_access` role mapping. Missing entitlement requires a separate decision,
+   not an automatic new role grant.
+2. After approval of the exact diff and the Codex impact, use targeted admin
+   updates in the dedicated Context realm. Merge only the two ChatGPT lifecycle
+   attributes into its existing attributes; keep PKCE S256, MFA/browser flows,
+   callbacks, client authentication/secret, default scopes and Context data grants.
+   Attach the existing offline scope as optional, replace only the audience
+   selector in the existing mapper. Keep all realm offline settings unchanged;
+   a different provider version or policy is a preflight blocker, not permission
+   to enable a realm-wide maximum.
+   Read back the allowed fields and compare. Importing the bootstrap export does
+   not update an existing realm. No application rebuild or restart is required.
+3. With separate permission for connection setup, have the owner authorize the
+   actual **Context Test** app as `context-chatgpt`, requesting its intended
+   operation/data scopes plus `offline_access`. Keep the existing confidential
+   client and `client_secret_basic`; do not enable unrelated OIDC identity scopes
+   or open registration. If the UI cannot request the extra scope, stop and
+   report that integration blocker. Do not substitute an SDK authorization for
+   actual ChatGPT evidence.
+4. Temporarily retain successful/failed login, code-exchange and refresh events
+   only in the Context realm, with approved short retention (for example 900
+   seconds), then restore the prior event settings. Privately correlate the
+   actual authorization and refresh to the same client/grant. Report only UTC
+   times, client ID, requested/granted scope names, token type/session category,
+   outcome and counts. Never publish tokens, codes, state, credentials, user or
+   session IDs, IP addresses, or raw HAR/provider logs.
+
+### Actual ChatGPT acceptance — pending, not replaced by the smoke test
+
+- Independently observe the real authorization request with
+  `client_id=context-chatgpt` and `offline_access` in `scope`. Establish that its
+  successful exchange created the corresponding **offline** grant, using
+  correlated provider offline-session/event evidence. Discovery advertising the
+  scope, a checked UI box, an aggregate session count or a successful tool call
+  alone is insufficient. Do not extract the actual bearer/refresh token to prove
+  this. If safe correlated evidence is unavailable, report the grant unverified.
+- One initial owner password/MFA authorization, then three cycles of `recall`
+  and one synthetic `capture_material` after natural access expiry (over five
+  minutes), followed by forty minutes of inactivity and a next-day check. Keep
+  the same connection, with no manual reconnect, browser login or silent test
+  credential substitution. Confirm successful offline refresh and record whether
+  any further authorization-code flows or UI prompts occurred.
+- At an access-expiry boundary, try two concurrent read calls. Both should work
+  without another login; investigate any reuse failure as a client-flow defect.
+  Retain rotation/reuse protection. Test writes sequentially and distinguish
+  OAuth failures, Context errors and ChatGPT platform blocks.
+- Verify stable retry IDs/checksums/timestamps, preserved existing synthetic
+  originals, and denied access outside effective grants. A signed scope must not
+  override Context server policy. Recheck the actual Codex online connection
+  after natural expiry without adding offline scope to its initial login.
+- Explicitly revoke the test ChatGPT offline grant in Keycloak and confirm that
+  refresh is denied. An already issued access token can remain valid for at most
+  five minutes. Check what ChatGPT disconnect actually revokes; do not assume
+  disconnect or SSO logout is equivalent to offline revocation.
+
+**Required evidence remains pending:** actual ChatGPT scope request, correlated
+offline grant issuance, automatic refresh after expiry/idle, and Codex/live
+revocation acceptance. Preparation or merge of this PR does not close them.
+
+### Rollback plan
+
+After a separate rollback approval, revoke the ChatGPT offline grants issued
+during the candidate verification, identified privately against the baseline.
+Removing an optional scope or reverting Git alone does not revoke issued grants.
+Restore the prior ChatGPT mapper config, optional scope membership, the two
+attribute keys (remove them if previously absent), and the prior event settings
+from the private field snapshot. Confirm that realm offline settings still
+match the baseline. Preserve all other
+client/realm fields and existing memory. Restoring settings cannot resurrect
+expired/revoked sessions; affected clients may need one normal authorization.
+Confirm refresh rejection for revoked test grants and the five-minute access
+expiry bound, then recheck normal Codex online access and Context health/auth.
+No SQLite restore, memory deletion, client-secret rotation, MFA change, application
+deployment or access to another Dokploy application is part of this procedure.
+
 ## Backup and restore
 
 Keep backups private and copy them off the server to owner-controlled storage;
