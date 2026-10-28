@@ -437,3 +437,11 @@ test("Unicode excerpts are exact and never split surrogate pairs", () => {
   assert.ok(e.text.includes("needle"));
   assert.ok(!/[\uD800-\uDFFF]/u.test(e.text));
 });
+
+test("case-fold expansion cannot shift source excerpt offsets", () => {
+  const text = `${"İ".repeat(500)} needle useful fact`;
+  const e = excerpt(text, ["needle"]);
+  assert.ok(e.start >= 0 && e.start <= e.end && e.end <= text.length);
+  assert.equal(e.text, text.slice(e.start, e.end));
+  assert.ok(e.text.includes("needle useful fact"));
+});

@@ -101,6 +101,7 @@ try {
           ]) {
             const source = "source" in s ? s.source : undefined;
             const id = source?.id ?? ("id" in s ? s.id : undefined);
+            assert(id && labels.has(id), "Unknown or unauthorized evidence ID");
             const text =
               source?.text ??
               ("excerpt" in s ? s.excerpt?.text : undefined) ??

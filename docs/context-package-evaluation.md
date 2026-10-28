@@ -147,7 +147,7 @@ excerpts, old-database FTS backfill, subsequent inserts and backup/restore.
 Observed verification commands:
 
 ```sh
-npm run check                         # lint, typecheck, 93 tests passed
+npm run check                         # lint, typecheck, 94 tests passed
 npm run eval:context-package           # comparison above
 docker build -t context:ci .
 npm run test:container                 # non-root restart, backup/restore, denial passed
@@ -159,7 +159,11 @@ The provider fixture additionally reads the same synthetic personal source via
 its unchanged operation/data grant. The first Docker attempt caught the evaluator
 being placed under runtime scripts; moving it into `test/` fixed the build without
 adding test dependencies to the production image. An old restart assertion was
-updated from 15 to 16 non-personal tools. All existing tests remain enabled.
+updated from 15 to 16 non-personal tools. All existing tests remain enabled. Review also exposed a Unicode case-fold offset
+bug: the new regression failed with `start > end` before the fix, then passed
+with matching performed on the unchanged original. The evaluator now validates
+every returned evidence ID, including pagination and full-original follow-ups,
+before scoring it.
 
 ## Limits and next decision
 

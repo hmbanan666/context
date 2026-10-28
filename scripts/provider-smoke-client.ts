@@ -386,6 +386,9 @@ try {
     assert.ok(
       Buffer.byteLength(JSON.stringify(packaged.structuredContent)) <= 2048,
     );
+    console.log(
+      "Real Keycloak bounded personal context package with exact source evidence: passed",
+    );
   }
   if (missingProjectToken) {
     const reduced = await connectPersonal(missingProjectToken);

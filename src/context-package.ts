@@ -10,8 +10,14 @@ import type { SourceStore } from "./store.js";
 
 // Offsets are UTF-16 code units into the immutable text; avoid splitting emoji pairs.
 export function excerpt(text: string, terms: readonly string[], maximum = 360) {
-  const lower = text.toLowerCase();
-  const hits = terms.map((t) => lower.indexOf(t)).filter((i) => i >= 0);
+  // Match against the original: lowercasing can expand Unicode characters and
+  // would make its offsets invalid for the immutable source.
+  const hits = terms
+    .map((term) => {
+      const literal = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(literal, "iu").exec(text)?.index ?? -1;
+    })
+    .filter((i) => i >= 0);
   let start = Math.max(0, (hits.length ? Math.min(...hits) : 0) - 80);
   if (start > 0 && /[\uDC00-\uDFFF]/u.test(text[start] ?? "")) start--;
   let end = Math.min(text.length, start + maximum);
