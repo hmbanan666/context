@@ -48,8 +48,11 @@ def main():
             client["secret"] = "synthetic-local-only-client-secret"
             client["redirectUris"] = ["http://127.0.0.1:8765/callback"]
     with tempfile.TemporaryDirectory(prefix="context-keycloak-") as directory:
+        # Synthetic fixtures must be readable by container UID 1000, not just the CI runner UID.
+        Path(directory).chmod(0o755)
         fixture = Path(directory) / "context-realm.json"
         fixture.write_text(json.dumps(realm))
+        fixture.chmod(0o644)
         # Only disposable test realms use short lifetimes; provider time is not mocked.
         profiles = {
             "expiry": (2, {"accessTokenLifespan": 5, "ssoSessionIdleTimeout": 3, "ssoSessionMaxLifespan": 8}, 30, 60),
@@ -65,7 +68,9 @@ def main():
                 if client["clientId"] == "context-chatgpt":
                     client["attributes"].update({"client.offline.session.idle.timeout": str(idle),
                                                  "client.offline.session.max.lifespan": str(maximum)})
-            (Path(directory) / f"context-{name}-realm.json").write_text(json.dumps(test_realm))
+            test_fixture = Path(directory) / f"context-{name}-realm.json"
+            test_fixture.write_text(json.dumps(test_realm))
+            test_fixture.chmod(0o644)
         try:
             subprocess.run(["docker", "run", "--detach", "--name", container,
                             "--publish", "127.0.0.1::8080", "--mount",
