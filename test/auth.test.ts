@@ -213,7 +213,12 @@ test("protected MCP permits signed scoped requests and denies writes, cross-scop
       anonymous.headers.get("www-authenticate") ?? "",
       /resource_metadata=.*oauth-protected-resource/,
     );
-    const writer = await connect(await token());
+    const writer = await connect(
+      await token({
+        scope:
+          "context:read context:write synthetic:hosted-pilot offline_access",
+      }),
+    );
     const args = {
       version: 1,
       text: "Synthetic protected yellow kite",
@@ -244,16 +249,22 @@ test("protected MCP permits signed scoped requests and denies writes, cross-scop
       arguments: { version: 1, scope: "synthetic:other", query: "kite" },
     });
     assert.equal(deniedScope.isError, true);
-    const noDataScope = await connect(await token({ scope: "context:read" }));
-    assert.equal(
-      (
-        await noDataScope.callTool({
+    for (const scope of [
+      "offline_access",
+      "context:read context:write offline_access",
+      "synthetic:hosted-pilot offline_access",
+    ]) {
+      const unprivileged = await connect(await token({ scope }));
+      for (const request of [
+        {
           name: "recall",
           arguments: { version: 1, scope: args.scope, id: output.source.id },
-        })
-      ).isError,
-      true,
-    );
+        },
+        { name: "capture", arguments: args },
+      ]) {
+        assert.equal((await unprivileged.callTool(request)).isError, true);
+      }
+    }
   } finally {
     for (const client of clients) await client.close();
     await mcp.close();
@@ -261,65 +272,113 @@ test("protected MCP permits signed scoped requests and denies writes, cross-scop
   }
 });
 
-test("production exposes OAuth metadata and rejects missing authentication without a provider connection", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "context-protected-"));
-  const production = readConfig({
-    NODE_ENV: "production",
-    CONTEXT_AUTH: "oauth",
-    CONTEXT_PUBLIC_URL: config.resource,
-    CONTEXT_OAUTH_ISSUER: config.issuer,
-    CONTEXT_OWNER_SUBJECT: config.ownerSubject,
-    CONTEXT_PORT: "0",
-    CONTEXT_DB_PATH: join(directory, "context.db"),
+for (const scenario of [
+  {
+    name: "pilot",
+    grants: undefined,
+    scopes: [
+      "context:read",
+      "context:write",
+      "synthetic:hosted-pilot",
+      "offline_access",
+    ],
+  },
+  {
+    name: "configured projects",
+    grants: {
+      "context-chatgpt": {
+        read: ["synthetic:project:a"],
+        write: ["synthetic:project:a"],
+        process: [],
+      },
+      "context-codex": {
+        read: ["synthetic:project:b"],
+        write: [],
+        process: [],
+      },
+    },
+    scopes: [
+      "context:read",
+      "context:write",
+      "context:process",
+      "synthetic:project:a",
+      "synthetic:project:b",
+      "offline_access",
+    ],
+  },
+]) {
+  test(`production exposes OAuth metadata with refresh consent (${scenario.name}) and rejects missing authentication`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "context-protected-"));
+    const production = readConfig({
+      NODE_ENV: "production",
+      CONTEXT_AUTH: "oauth",
+      CONTEXT_PUBLIC_URL: config.resource,
+      CONTEXT_OAUTH_ISSUER: config.issuer,
+      CONTEXT_OWNER_SUBJECT: config.ownerSubject,
+      CONTEXT_PORT: "0",
+      CONTEXT_DB_PATH: join(directory, "context.db"),
+      ...(scenario.grants === undefined
+        ? {}
+        : { CONTEXT_CLIENT_GRANTS: JSON.stringify(scenario.grants) }),
+    });
+    const service = await startService(production);
+    try {
+      const url = `http://127.0.0.1:${service.address.port}`;
+      // Node fetch normalizes Host; use a raw HTTP client for host-specific tests elsewhere.
+      const { request } = await import("node:http");
+      const get = (path: string, method = "GET") =>
+        new Promise<{
+          status: number;
+          headers: import("node:http").IncomingHttpHeaders;
+          text: string;
+        }>((resolve, reject) => {
+          const outgoing = request(
+            `${url}${path}`,
+            { method, headers: { Host: "context.kosarev.space" } },
+            (incoming) => {
+              let text = "";
+              incoming.setEncoding("utf8");
+              incoming.on("data", (chunk) => {
+                text += chunk;
+              });
+              incoming.on("end", () =>
+                resolve({
+                  status: incoming.statusCode ?? 0,
+                  headers: incoming.headers,
+                  text,
+                }),
+              );
+            },
+          );
+          outgoing.on("error", reject);
+          outgoing.end();
+        });
+      for (const path of [
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-protected-resource",
+      ]) {
+        const metadata = await get(path);
+        assert.equal(metadata.status, 200);
+        assert.deepEqual(JSON.parse(metadata.text), {
+          resource: config.resource,
+          authorization_servers: [config.issuer],
+          scopes_supported: scenario.scopes,
+          bearer_methods_supported: ["header"],
+          resource_name: "Context synthetic pilot",
+        });
+      }
+      const denied = await get("/mcp", "POST");
+      assert.equal(denied.status, 401);
+      assert.match(
+        String(denied.headers["www-authenticate"]),
+        /oauth-protected-resource/,
+      );
+    } finally {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
-  const service = await startService(production);
-  try {
-    const url = `http://127.0.0.1:${service.address.port}`;
-    // Node fetch normalizes Host; use a raw HTTP client for host-specific tests elsewhere.
-    const { request } = await import("node:http");
-    const get = (path: string, method = "GET") =>
-      new Promise<{
-        status: number;
-        headers: import("node:http").IncomingHttpHeaders;
-        text: string;
-      }>((resolve, reject) => {
-        const outgoing = request(
-          `${url}${path}`,
-          { method, headers: { Host: "context.kosarev.space" } },
-          (incoming) => {
-            let text = "";
-            incoming.setEncoding("utf8");
-            incoming.on("data", (chunk) => {
-              text += chunk;
-            });
-            incoming.on("end", () =>
-              resolve({
-                status: incoming.statusCode ?? 0,
-                headers: incoming.headers,
-                text,
-              }),
-            );
-          },
-        );
-        outgoing.on("error", reject);
-        outgoing.end();
-      });
-    const metadata = await get("/.well-known/oauth-protected-resource/mcp");
-    assert.equal(metadata.status, 200);
-    assert.deepEqual(JSON.parse(metadata.text).authorization_servers, [
-      config.issuer,
-    ]);
-    const denied = await get("/mcp", "POST");
-    assert.equal(denied.status, 401);
-    assert.match(
-      String(denied.headers["www-authenticate"]),
-      /oauth-protected-resource/,
-    );
-  } finally {
-    await service.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+}
 
 test("limits authenticated client request rate with a retry hint", async () => {
   const handler = protectMcp(

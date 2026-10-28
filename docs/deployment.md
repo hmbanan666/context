@@ -229,12 +229,14 @@ verification are recorded below.
 Run the Codex login again for a new authorized session; the setup credentials
 were removed locally. Do not infer tool compatibility from provider sessions.
 
-## ChatGPT long-idle refresh candidate — not activated
+## ChatGPT long-idle refresh — client acceptance pending
 
-**Status (28 October 2026):** the owner authorized preparation of one OAuth PR,
-including isolated tests and an application/rollback plan. Merge, changes to the
-running Keycloak, ChatGPT connection settings and production deployment remain
-separate approval gates. This is not a claim that ChatGPT refresh is fixed.
+**Status (28 October 2026):** PR #15 merged as `82fb71d`. After separate owner
+approval and read-only preflight, its targeted `context-chatgpt` settings were
+applied at 08:44 UTC, preserving additional mapper fields found in the live
+baseline. Realm policy, Codex, MFA, PKCE and rotation stayed unchanged; no Context
+deployment or service restart occurred. This does not establish ChatGPT refresh
+acceptance. Further merge, deployment or configuration changes need approval.
 
 The reported ChatGPT journey required two interactive password/MFA logins.
 The retained provider log recorded `context-chatgpt` refresh rejection with
@@ -243,10 +245,10 @@ The expired online-grant explanation is consistent with that evidence, but
 the two authorization-code flows were not independently reconstructed: successful
 events were not retained. Codex's earlier `invalid_scope` defect is separate.
 
-The candidate allows **explicitly requested**, rotating offline authorization
-for `context-chatgpt`, with a provisional seven-day idle / thirty-day absolute
+The approved policy allows **explicitly requested**, rotating offline
+authorization for `context-chatgpt`, with a seven-day idle / thirty-day absolute
 limit. An optional scope attachment alone does not upgrade an existing online
-grant. The owner must approve this policy before activation.
+grant.
 
 | Target | Before this candidate | Candidate value |
 | --- | --- | --- |
@@ -297,6 +299,42 @@ A concurrent same-token request being rejected is protection evidence, not
 evidence that ChatGPT serializes refresh correctly. Reuse can revoke the client
 grant; do not increase reuse or disable rotation to hide a client race.
 No local fixture proves ChatGPT requested or retained an offline grant.
+
+### Protected-resource scope advertisement follow-up — not deployed
+
+Read-only HTTP checks on 28 October found `offline_access` in both Keycloak
+OAuth/OIDC discovery documents, but absent from both Context metadata paths:
+`/.well-known/oauth-protected-resource/mcp` and
+`/.well-known/oauth-protected-resource`. A new real ChatGPT connection used
+`context-chatgpt` and an online session; no offline session was present at the
+subsequent check. Its exact requested scope list was not recorded, and successful
+provider events were disabled. These facts establish a discovery omission, not
+proof that it alone caused the missing offline grant.
+
+This follow-up advertises `offline_access` in both resource metadata aliases for
+the pilot and configured-project modes. It does not add it to operation scopes,
+data scopes, token-verifier permissions, tool requirements or client grants.
+Valid access without that scope remains supported; that scope alone cannot read
+or write data. Keycloak configuration and token validation are unchanged.
+
+[OpenAI authentication documentation](https://developers.openai.com/plugins/build/auth)
+describes resource `scopes_supported` as permission-discovery metadata, tool
+`securitySchemes` as tool-specific requirements, and advertised OIDC scopes as
+requested by default. The
+[OAuth configuration reference](https://developers.openai.com/plugins/build/plugins#oauth-configuration-reference)
+also documents `baseScopes`, `defaultScopes`, and OIDC overrides for packaged
+connections. It does not establish the exact precedence or settings of this
+custom ChatGPT connection; automatic inclusion after this change remains
+unverified. Do not infer the request from metadata alone or enable identity
+scopes to work around it.
+
+No new user authorization is part of this PR. After separate merge/deployment
+approval, verify the served metadata before any new authorization. Establish the
+actual ChatGPT request's safe `client_id`/`scope` fields and correlate an offline
+grant before proceeding to the expiry/idle acceptance below. If offline consent
+is still omitted, inspect the connector's explicit scope/OIDC overrides rather
+than repeating logins. Reverting this metadata change requires a separately
+approved Context release; it does not revoke previously issued offline grants.
 
 ### Application plan — separate explicit approval required
 
