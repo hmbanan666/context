@@ -81,13 +81,16 @@ export async function startService(config: Config) {
         JSON.stringify({
           resource: config.oauth.resource,
           authorization_servers: [config.oauth.issuer],
-          scopes_supported:
-            config.oauth.clientGrants === undefined
+          // Refresh consent is advertised separately from data-access grants.
+          scopes_supported: [
+            ...(config.oauth.clientGrants === undefined
               ? oauthScopes
               : [
                   ...operationScopes,
                   ...configuredDataScopes(config.oauth.clientGrants),
-                ],
+                ]),
+            "offline_access",
+          ],
           bearer_methods_supported: ["header"],
           resource_name: "Context synthetic pilot",
         }),
