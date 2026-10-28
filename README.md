@@ -41,12 +41,16 @@ September?”**, and **“Which experiences could become a chapter?”** After o
 normal connection setup, these prompts should require no coding tools or
 per-note authentication choices.
 
-**Release status:** code and synthetic acceptance are separate from activation.
-The live personal mode, the actual ChatGPT write/read journey after expiry and
-next-day inactivity, and selected real-note ingestion are not yet verified.
-The connected app returned an invalid OAuth grant during the 28 October
-assessment. Reconnecting once does not establish durable refresh. See the
-[activation and acceptance procedure](docs/deployment.md#personal-text-pilot-activation).
+**Release status:** PR #17 was merged and the personal mode was activated on
+28 October 2026 with verified source preservation and on/off-host recovery.
+After reconnecting, the owner sees the new tools, but actual ChatGPT capture and
+retrieval fail: its fixed OAuth request includes only the three operation
+scopes, omitting data scopes and `offline_access`. No personal acceptance note
+was saved. The prepared opt-in [ChatGPT compatibility profile](
+docs/deployment.md#existing-chatgpt-connection-compatibility) assigns the approved
+data and offline scopes at the provider, without recreating the app or editing
+its scope field. It is not yet applied live. Actual capture/read, refresh after
+inactivity, next-day use and cross-client acceptance remain open.
 
 This slice retains SQLite originals, existing OAuth and existing synthetic
 grants. No database replacement, paid model API, unattended model worker,

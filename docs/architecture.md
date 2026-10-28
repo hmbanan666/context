@@ -14,6 +14,18 @@ are mandatory. It is unavailable to the local no-auth test mode and cannot be
 enabled simply by changing a tool argument. Existing synthetic grants stay
 separate. No automatic disclosure to a new client or project is implied.
 
+For the existing owner-controlled ChatGPT app, its immutable OAuth request can
+remain `context:read context:write context:process`. An opt-in provider profile
+assigns its already approved data scopes and bounded offline access as default
+client scopes. These scopes still appear in signed tokens and every read/write
+still intersects them with independent server grants. Defaults do not add
+operation scopes: a read-only authorization remains unable to write. This is
+an explicit grant to one dedicated client, not automatic consent for every
+future client or inferred topic. New memory tools within this inbox should use
+the stable operation/data contract instead of requiring a new scope per feature.
+The generic realm import and the Codex client stay unchanged; the profile needs
+its own activation and actual-client acceptance.
+
 The new projection is chronological and pageable over originals, with optional
 any-keyword FTS. It distinguishes authored source dates from capture dates,
 handles timezone offsets, pins an insertion watermark across pages, and reports

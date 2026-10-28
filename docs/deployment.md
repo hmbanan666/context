@@ -1,14 +1,27 @@
-# Protected synthetic deployment
+# Protected Context deployment
 
 ## Personal text pilot activation
 
-**28 October 2026: implementation approved; activation pending.** The owner
-authorized the personal text pilot and correction of obstructive rules. The
-existing deployed synthetic instance is not yet a personal-data deployment.
-Follow the concrete release below after separate merge/deployment approval;
-normal operations inside the activated inbox need no per-note approval.
+**28 October 2026: PR #17 merged; personal mode activated with owner approval.**
+Context alone was updated to `2bff73c3284bafa7942ac9c34df3f086a90dceaf`;
+[main CI passed](https://github.com/hmbanan666/context/actions/runs/40669193349).
+Before/after SQLite backups passed integrity and isolated restore. Hash checks
+preserved all previous rows across 12 tables (14 sources). The post-release
+snapshot was transferred encrypted to the owner's Mac, checksum-verified and
+restored locally. Identity containers, credentials and existing synthetic grants
+were preserved. This is a verified point-in-time backup, not an automatic backup
+schedule. The [release evidence](https://github.com/hmbanan666/context/pull/17)
+contains no private records.
 
-### Prepared release delta
+Actual client acceptance is still open. After the owner reconnected, both new
+tools became available but capture/read returned missing-scope challenges. At
+11:04 UTC, read-only inspection confirmed that the fresh ChatGPT authorization
+requested only `context:process context:write context:read`; data scopes and
+`offline_access` were absent, and no offline session existed. The fictional
+acceptance note was not saved. Repeating that same login cannot fix its scope
+list. The owner reports that the app's scope field cannot be edited.
+
+### Activated release delta
 
 - Context `0.5.0` retains the 15 existing tools and adds `remember` and
   `memory_context` only when personal mode is enabled (17 tools total).
@@ -35,19 +48,16 @@ from host loss; historical same-host backups alone do not prove this.
 
 The primary user-facing app is the existing **Context OAuth Test** connection;
 preserve its identity and private audience. Its app-backed plugin package only
-points to the app: editing that package does not change its OAuth configuration.
-The connected tool returned `oauth_token_invalid_grant` during this assessment.
-Read-only public checks found `offline_access` in both deployed resource
-metadata aliases, superseding the older "not deployed" metadata observation
-below. That does not prove the requested scope or issuance of an offline grant.
+points to the app: editing that package does not change OAuth configuration.
+The deployed protected-resource metadata advertises both `private:personal` and
+`offline_access`, and tool metadata advertises its required scopes. That alone
+did not change this app's fixed authorization request.
 
-After the release, verify discovery advertises `private:personal` and the two
-new tools. Configure the existing custom connection's initial authorization
-request for `context:read context:write private:personal offline_access`, keeping
-any explicitly required synthetic scopes. Keep the same client/secret, PKCE,
-callback and `client_secret_basic`; OIDC profile/email are not required.
-The new tools also advertise their exact personal data scope. Verify what the
-actual request sends rather than assuming the UI or metadata selected it.
+Use the explicit compatibility profile below for this existing owner-controlled
+app; do not ask the user to edit scopes or recreate it. A new generic client can
+still request `context:read context:write private:personal offline_access`
+explicitly under the unchanged optional-scope policy. Keep client ID/secret,
+PKCE, callbacks and `client_secret_basic`. OIDC profile/email are not required.
 
 The owner completes one normal password/MFA authorization. The operator verifies
 the correlated offline grant without extracting tokens, then checks sequential
@@ -66,6 +76,60 @@ and "What happened during this period?" — the agent handles technical fields.
 If an actual request cannot obtain the intended grant, report that specific
 client blocker; retain the current data and protections. Do not repeatedly ask
 the owner to reconnect or claim provider smoke tests prove ChatGPT behavior.
+
+### Existing ChatGPT connection compatibility
+
+**Prepared correction, not yet activated.**
+[`deploy/keycloak/personal-chatgpt.json`](../deploy/keycloak/personal-chatgpt.json)
+is an additive operator profile for `context-chatgpt`, not a complete realm
+import or a replacement client representation. It promotes only these already
+approved scopes to defaults: `private:personal`, `offline_access`,
+`synthetic:hosted-pilot`, `synthetic:project-a`, `synthetic:project-b`.
+
+The existing app keeps requesting its three operation scopes. Keycloak 26.8.1
+includes the configured defaults in signed access tokens and in the token
+response; its default offline scope also produces an actual `Offline` refresh
+token. This behavior is verified with the exact legacy request against the real
+provider, not inferred from tool discovery. A read-only operation request still
+cannot write. Server grants and owner/client/audience checks remain mandatory.
+The offline bounds remain seven days idle and thirty days absolute, with
+five-minute access tokens and one-use refresh rotation. Codex is not changed.
+The owner must explicitly authorize these defaults for this dedicated client;
+never apply them to arbitrary or restricted clients.
+
+After separate approval, the operator applies the profile to the existing realm:
+
+1. Snapshot the target client's full configuration, default/optional scope
+   mappings and the matching server grant map privately. Check all five scopes
+   exist and their data access is already owner-approved; check the owner's
+   `offline_access` role. Fail rather than widening unrelated client access.
+2. Resolve the exact `context-chatgpt` internal client ID and each profile scope
+   ID via the Context realm's Admin REST API. For each scope, use
+   `PUT /admin/realms/context/clients/{clientId}/default-client-scopes/{scopeId}`.
+   Preserve `basic` and every unrelated mapping; the five scopes move from
+   optional to default. Do not PUT a replacement client or import the realm.
+3. Reread mappings and assert only those five changed classification. Compare
+   the full client settings, other clients and server grant map with the
+   snapshots. Do not change callbacks, MFA, secrets, token lifetimes, operation
+   scopes or personal processing permissions. No Context rebuild is needed.
+4. Use one normal reconnect of the same app to establish the new grant; an
+   existing token is not proof of migration. Verify its offline session and
+   actual `remember`/`memory_context` success. Do not extract or print tokens.
+   Keep the expiry/idle/next-day and second-client checks described above.
+
+Rollback restores exactly the saved scope classifications and revokes affected
+ChatGPT offline sessions if that access is withdrawn. It does not erase sources
+or replace the database. Existing access tokens may remain valid for up to five
+minutes; removing personal server grants is the separate immediate-access
+revocation path once Context reloads its configuration.
+
+Regression evidence: `npm run test:oauth-provider` first failed with the empty
+profile and the real fixed-scope request (`Existing app cannot access personal
+memory`). With this profile, it exercises personal capture, exact retry after
+reopening the database, refresh after accelerated access/online-session expiry,
+read-only write denial, refresh rotation/replay rejection and unchanged Codex
+behavior. These are disposable synthetic provider checks; actual ChatGPT
+acceptance still follows activation.
 
 ### Observed implementation evidence — 28 October 2026
 
@@ -87,9 +151,9 @@ the owner to reconnect or claim provider smoke tests prove ChatGPT behavior.
   restart/restore; personal tools are covered by the authenticated MCP/provider
   tests, not claimed as exercised by that container check.
 
-All test data is fictional, including records in `private:personal`. These are
-implementation checks, not evidence of live activation, actual ChatGPT refresh,
-real-note use or host-loss recovery.
+All test data is fictional, including records in `private:personal`. The tests
+above are implementation checks. Live release/recovery evidence is recorded at
+the top of this document; actual ChatGPT refresh and real-note use remain open.
 
 ### Rollback
 
