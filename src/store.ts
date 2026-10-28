@@ -36,7 +36,7 @@ interface StoredMaterial {
 }
 
 export interface MemoryPosition {
-  readonly day: number;
+  readonly timestamp: number;
   readonly row: number;
 }
 
@@ -71,6 +71,17 @@ export class SourceStore {
     }
     this.#database = new DatabaseSync(path, { timeout: 5000 });
     try {
+      // Use the same ISO parser as input validation, including offsets SQLite's
+      // date functions cannot parse. Original metadata remains untouched.
+      this.#database.function(
+        "source_timestamp",
+        { deterministic: true },
+        (value) => {
+          if (typeof value !== "string") return null;
+          const timestamp = Date.parse(value);
+          return Number.isFinite(timestamp) ? timestamp : null;
+        },
+      );
       this.#database.exec(`
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS sources (
@@ -420,7 +431,7 @@ export class SourceStore {
   }
 
   // The rowid watermark excludes later arrivals, including backdated notes.
-  // Dates use SQLite's UTC conversion rather than lexical ISO string ordering.
+  // Compare source dates and filters using the same UTC millisecond semantics.
   selectMemory(input: MemorySelection) {
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 51)
       throw new Error("Invalid memory selection limit");
@@ -433,16 +444,16 @@ export class SourceStore {
           )
           .get(input.scope)?.watermark,
       );
-    const date = "julianday(COALESCE(m.created_at, s.captured_at))";
+    const date = "source_timestamp(COALESCE(m.created_at, s.captured_at))";
     const conditions = ["s.scope = ?", "s.rowid <= ?"];
     const params: (string | number)[] = [input.scope, snapshot];
     if (input.from !== undefined) {
-      conditions.push(`${date} >= julianday(?)`);
-      params.push(input.from);
+      conditions.push(`${date} >= ?`);
+      params.push(Date.parse(input.from));
     }
     if (input.until !== undefined) {
-      conditions.push(`${date} < julianday(?)`);
-      params.push(input.until);
+      conditions.push(`${date} < ?`);
+      params.push(Date.parse(input.until));
     }
     if (input.terms.length) {
       conditions.push(
@@ -465,11 +476,15 @@ export class SourceStore {
     );
     if (input.after) {
       conditions.push(`(${date} < ? OR (${date} = ? AND s.rowid < ?))`);
-      params.push(input.after.day, input.after.day, input.after.row);
+      params.push(
+        input.after.timestamp,
+        input.after.timestamp,
+        input.after.row,
+      );
     }
     const rows = this.#database
       .prepare(
-        `SELECT s.id, s.rowid AS row, ${date} AS day ${from}
+        `SELECT s.id, s.rowid AS row, ${date} AS timestamp ${from}
        WHERE ${conditions.join(" AND ")} ORDER BY ${date} DESC, s.rowid DESC LIMIT ?`,
       )
       .all(...params, input.limit);
@@ -480,11 +495,14 @@ export class SourceStore {
         const material = this.findMaterial(String(row.id), input.scope);
         if (
           !material ||
-          typeof row.day !== "number" ||
+          typeof row.timestamp !== "number" ||
           typeof row.row !== "number"
         )
           throw new Error("Invalid stored memory source");
-        return { material, position: { day: row.day, row: row.row } };
+        return {
+          material,
+          position: { timestamp: row.timestamp, row: row.row },
+        };
       }),
     };
   }

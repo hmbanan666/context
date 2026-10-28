@@ -67,6 +67,30 @@ If an actual request cannot obtain the intended grant, report that specific
 client blocker; retain the current data and protections. Do not repeatedly ask
 the owner to reconnect or claim provider smoke tests prove ChatGPT behavior.
 
+### Observed implementation evidence — 28 October 2026
+
+- `npm run check`: lint, type checks, build and **87 tests passed**. The new
+  authenticated MCP tests cover no-scope capture, exact retry after reopening,
+  a second client, read-only denial, owner/scope denial, malformed input,
+  a 28-note paginated period, late/backdated arrival isolation, byte budgets,
+  explicit oversized originals and private-inbox backup/restore.
+- Independent Standards and Spec reviews each found the same date-parser
+  mismatch. A new MCP regression reproduced accepted offsets breaking a read.
+  Source dates and filters now share UTC millisecond comparison semantics,
+  preserving the original metadata; the regression and full suite pass.
+- `npm run test:oauth-provider`: disposable real Keycloak consent, JWKS,
+  personal capture/context/retries, missing-scope denial and refreshed offline
+  access passed. Existing rotation/replay/revocation and Codex checks passed.
+- `docker build -t context:personal-pilot .` and
+  `python3 scripts/container-smoke.py context:personal-pilot` passed. The
+  container check covers the unchanged protected default, non-root runtime and
+  restart/restore; personal tools are covered by the authenticated MCP/provider
+  tests, not claimed as exercised by that container check.
+
+All test data is fictional, including records in `private:personal`. These are
+implementation checks, not evidence of live activation, actual ChatGPT refresh,
+real-note use or host-loss recovery.
+
 ### Rollback
 
 Disable the personal mode and remove only its data grants from Context's map;

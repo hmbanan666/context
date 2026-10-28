@@ -534,3 +534,48 @@ test("a restored private inbox keeps original bytes, metadata, timeline and retr
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("every accepted timezone offset remains retrievable with the same timestamp semantics as filters", async () => {
+  const memory = await openMemory(":memory:");
+  try {
+    const writer = await memory.connect();
+    for (const [index, createdAt] of [
+      "2026-09-01T12:00:00+15:00",
+      "2026-09-01T00:00:00+23:59",
+      "0000-01-01T00:00:00+01:00",
+    ].entries()) {
+      const saved = await writer.callTool({
+        name: "remember",
+        arguments: {
+          text: `Fictional timezone boundary ${index}`,
+          metadata: { createdAt },
+          idempotencyKey: `offset-${index}`,
+        },
+      });
+      assert.ok(!saved.isError);
+    }
+    const reader = await memory.connect("context-codex");
+    const all = await reader.callTool({
+      name: "memory_context",
+      arguments: {},
+    });
+    assert.ok(!all.isError, JSON.stringify(all));
+    assert.equal(contextSchema.parse(all.structuredContent).sources.length, 3);
+    const filtered = await reader.callTool({
+      name: "memory_context",
+      arguments: {
+        from: "2026-09-01T12:00:00+15:00",
+        until: "2026-09-01T13:00:00+15:00",
+      },
+    });
+    assert.ok(!filtered.isError);
+    const page = contextSchema.parse(filtered.structuredContent);
+    assert.equal(page.totalMatchingSources, 1);
+    assert.equal(
+      page.sources[0]?.metadata.createdAt,
+      "2026-09-01T12:00:00+15:00",
+    );
+  } finally {
+    await memory.close();
+  }
+});

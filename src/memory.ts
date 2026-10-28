@@ -29,7 +29,7 @@ const cursorSchema = z.strictObject({
   selection: z.string().regex(/^[a-f0-9]{64}$/),
   snapshot: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   after: z.strictObject({
-    day: z.number().finite(),
+    timestamp: z.number().int().min(-8640000000000000).max(8640000000000000),
     row: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   }),
 });
