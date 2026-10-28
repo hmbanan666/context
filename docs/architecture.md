@@ -1,5 +1,31 @@
 # Architecture hypothesis
 
+## Current personal text pilot
+
+The owner approved the personal text pilot on 28 October 2026. Earlier stop
+statements describe the end of Sprint 4, not a prohibition on this milestone.
+The primary path is authenticated `remember` → immutable source/material →
+`memory_context` → synthesis by the calling AI client. Signed decisions and
+work evidence remain independent of everyday memory.
+
+One explicitly enabled inbox, `private:personal`, is an access boundary, not a
+topic. Both signed OAuth consent and configured per-client operation grants
+are mandatory. It is unavailable to the local no-auth test mode and cannot be
+enabled simply by changing a tool argument. Existing synthetic grants stay
+separate. No automatic disclosure to a new client or project is implied.
+
+The new projection is chronological and pageable over originals, with optional
+any-keyword FTS. It distinguishes authored source dates from capture dates,
+handles timezone offsets, pins an insertion watermark across pages, and reports
+incomplete/oversized evidence. It does not invent interpretations or event dates.
+The client cites the source IDs and performs the answer synthesis. Models are
+not on the capture path. SQLite remains the durable original store, including
+text-file BLOBs; no new storage service or filesystem mirror is needed here.
+
+The complete tool contract is in README. Activation and actual ChatGPT
+acceptance are tracked in deployment.md; tests and a merge do not establish
+that the owner's connection has been upgraded or that next-day refresh works.
+
 **Status:** Local source persistence and synthetic MCP capture/recall are
 implemented (see README for the tested contract). The protected synthetic pilot
 is deployed with Keycloak; hosted OAuth and actual Codex CLI login are verified.

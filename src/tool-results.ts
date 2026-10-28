@@ -1,6 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { ZodError } from "zod";
 import type { OperationScope } from "./access.js";
+import type { personalDataScope } from "./contracts.js";
 import { IdempotencyConflict } from "./store.js";
 
 export type AuthorizeTool = (
@@ -10,7 +11,7 @@ export type AuthorizeTool = (
 
 export function oauthMetadata(
   protectedMode: boolean,
-  scopes: readonly OperationScope[],
+  scopes: readonly (OperationScope | typeof personalDataScope)[],
 ) {
   return protectedMode
     ? { _meta: { securitySchemes: [{ type: "oauth2", scopes: [...scopes] }] } }

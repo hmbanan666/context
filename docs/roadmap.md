@@ -1,5 +1,41 @@
 # Experimental roadmap
 
+## Current milestone — personal text pilot, approved 28 October 2026
+
+The owner approved implementation and necessary rule corrections. This
+supersedes historical development-stop statements and the prior proposal-only
+status for this bounded outcome. It does not authorize automatic future
+milestones; release approval remains separate under AGENTS.md.
+
+**Outcome:** save selected personal notes through ChatGPT without technical
+classification or signatures, reopen the connection on another day, and obtain
+grounded context for a period or chapter through a fresh authorized client.
+
+**Implementation:** an explicitly protected personal inbox, scope-free
+`remember`, and pageable `memory_context` over original sources and dates.
+Existing originals, grants and signature checks remain intact. Client-side
+synthesis is sufficient for the first pilot; extraction's value remains an
+unproved hypothesis. No paid API, hosted worker, Telegram/audio or new UI is
+part of this slice.
+
+**Acceptance:**
+
+1. Protected synthetic capture, exact reread, retries, unauthorized denial,
+   period coverage beyond twenty notes, and restart/restore pass.
+2. The approved release is activated with explicit personal grants while
+   retaining existing synthetic access and data. Original recovery is verified.
+3. The actual ChatGPT connection requests its intended consent, saves and reads
+   sequentially after access expiry, after idle time, and on the next day,
+   without another login. A second authorized client reads the same source.
+4. Only after those activation checks, the owner-selected real notes can enter
+   private storage. Public tests, PRs and logs contain only synthetic fixtures.
+
+Report each state independently. If the client's refresh remains broken,
+diagnose the actual request/grant before changing token lifetimes or repeating
+logins. Telegram and voice are the next candidate only after text use succeeds.
+
+## Historical planning and evidence
+
 **Planning snapshot:** 27 October 2026  
 **Status:** Sprints 0 and 1 merged in PRs #2 and #3. Sprint 2 implementation
 merged in PR #4 and deployed with separate owner approval. Hosted TLS/OAuth,

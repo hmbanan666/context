@@ -1,6 +1,10 @@
-import { type ClientGrants, clientGrantsSchema } from "./access.js";
+import {
+  type ClientGrants,
+  clientGrantsSchema,
+  configuredDataScopes,
+} from "./access.js";
 import type { OAuthConfig } from "./auth.js";
-import { scopeSchema } from "./contracts.js";
+import { personalDataScope, syntheticScopeSchema } from "./contracts.js";
 
 export interface Config {
   readonly port: number;
@@ -40,6 +44,16 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
         JSON.parse(env.CONTEXT_CLIENT_GRANTS),
       );
     }
+    const personalMemory = env.CONTEXT_PERSONAL_MEMORY === "enabled";
+    if (
+      (env.CONTEXT_PERSONAL_MEMORY !== undefined && !personalMemory) ||
+      configuredDataScopes(clientGrants).includes(personalDataScope) !==
+        personalMemory
+    ) {
+      throw new Error(
+        "Personal memory requires explicit OAuth grants and CONTEXT_PERSONAL_MEMORY=enabled",
+      );
+    }
     if (
       env.CONTEXT_PUBLIC_URL !== "https://context.kosarev.space/mcp" ||
       env.CONTEXT_OAUTH_ISSUER !==
@@ -58,6 +72,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
         issuer: env.CONTEXT_OAUTH_ISSUER,
         ownerSubject: env.CONTEXT_OWNER_SUBJECT,
         ...(clientGrants === undefined ? {} : { clientGrants }),
+        ...(personalMemory ? { personalMemory: true } : {}),
       },
     };
   }
@@ -67,7 +82,8 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     env.CONTEXT_PUBLIC_URL !== undefined ||
     env.CONTEXT_OAUTH_ISSUER !== undefined ||
     env.CONTEXT_OWNER_SUBJECT !== undefined ||
-    env.CONTEXT_CLIENT_GRANTS !== undefined
+    env.CONTEXT_CLIENT_GRANTS !== undefined ||
+    env.CONTEXT_PERSONAL_MEMORY !== undefined
   ) {
     throw new Error("Protected configuration requires CONTEXT_AUTH=oauth");
   }
@@ -84,6 +100,6 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   if (scopes.length > 8 || new Set(scopes).size !== scopes.length) {
     throw new Error("Configure 1–8 distinct synthetic scopes");
   }
-  for (const scope of scopes) scopeSchema.parse(scope);
+  for (const scope of scopes) syntheticScopeSchema.parse(scope);
   return { port: Number(port), databasePath, localMcpScopes: scopes };
 }

@@ -9,6 +9,7 @@ import {
 import { z } from "zod";
 import type { ClientGrants } from "../src/access.js";
 import { createTokenVerifier, protectMcp } from "../src/auth.js";
+import { personalDataScope } from "../src/contracts.js";
 import { JobStore } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
@@ -272,4 +273,93 @@ try {
   knowledge.close();
   sources.close();
   await rm(directory, { recursive: true, force: true });
+}
+
+// The private namespace contains fictional fixtures in this disposable provider test.
+const personalSources = new SourceStore(":memory:");
+const personalGrants: ClientGrants = {
+  "context-chatgpt": {
+    read: [personalDataScope],
+    write: [personalDataScope],
+    process: [],
+  },
+  "context-codex": {
+    read: [personalDataScope],
+    write: [personalDataScope],
+    process: [],
+  },
+};
+const personalMcp = createContextMcp(personalSources, [], true, {
+  personalMemory: true,
+  clientGrants: personalGrants,
+});
+const personalHandler = protectMcp(personalMcp, {
+  issuer,
+  resource,
+  ownerSubject,
+  clientGrants: personalGrants,
+});
+const personalClients: Client[] = [];
+async function connectPersonal(token: string) {
+  const client = new Client({
+    name: "synthetic-personal-provider-proof",
+    version: "1",
+  });
+  personalClients.push(client);
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(resource), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+      fetch: async (request, init) =>
+        personalHandler.fetch(new Request(request, init)),
+    }),
+  );
+  return client;
+}
+try {
+  const personal = await connectPersonal(accessToken);
+  const input = {
+    text: "Fictional September observatory diary",
+    idempotencyKey: "personal-provider",
+    metadata: { createdAt: "2026-09-12T12:00:00Z" },
+  };
+  const saved = await personal.callTool({ name: "remember", arguments: input });
+  assert.ok(!saved.isError);
+  const material = z
+    .object({ material: z.unknown() })
+    .parse(saved.structuredContent).material;
+  const retry = await personal.callTool({ name: "remember", arguments: input });
+  assert.deepEqual(retry.structuredContent, {
+    ...(saved.structuredContent as object),
+    duplicate: true,
+  });
+  const evidence = await personal.callTool({
+    name: "memory_context",
+    arguments: { from: "2026-09-01T00:00:00Z", until: "2026-10-01T00:00:00Z" },
+  });
+  assert.ok(!evidence.isError);
+  assert.deepEqual(
+    z
+      .object({ sources: z.array(z.unknown()) })
+      .parse(evidence.structuredContent).sources,
+    [material],
+  );
+  if (missingProjectToken) {
+    const reduced = await connectPersonal(missingProjectToken);
+    assert.equal(
+      (await reduced.callTool({ name: "memory_context", arguments: {} }))
+        .isError,
+      true,
+    );
+    assert.equal(
+      (await reduced.callTool({ name: "remember", arguments: input })).isError,
+      true,
+    );
+  }
+  console.log(
+    "Real Keycloak personal consent, scope-free remember, timeline and retries: passed",
+  );
+} finally {
+  for (const client of personalClients) await client.close();
+  await personalMcp.close();
+  personalSources.close();
 }

@@ -1,9 +1,15 @@
 import { z } from "zod";
 
-export const scopeSchema = z
+export const personalDataScope = "private:personal";
+
+export const syntheticScopeSchema = z
   .string()
   .max(80)
   .regex(/^synthetic:[a-z0-9][a-z0-9:_-]*$/);
+export const scopeSchema = z.union([
+  syntheticScopeSchema,
+  z.literal(personalDataScope),
+]);
 const identifier = z
   .string()
   .min(1)

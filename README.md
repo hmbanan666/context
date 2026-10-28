@@ -1,6 +1,6 @@
 # Context
 
-**Experimental, self-hosted continuity engine for ideas, decisions and verified work.**
+**Experimental, self-hosted Personal Context Engine for grounded memory across AI clients.**
 
 Context is not another messenger, general note-taking application, or autonomous
 coding system. It is a small shared memory service for existing clients
@@ -10,13 +10,88 @@ not just a transcript or a list of tickets.
 ## Hypothesis
 
 A user discusses an idea in their usual chat and explicitly requests
-"capture this". A separate agent can later retrieve the authorized, grounded
-context, turn an approved intention into work, and link the result back to
-source material and verifiable evidence.
+"remember this". A fresh chat or another authorized agent can later retrieve
+the originals, answer questions about a period, or find material for a chapter,
+with dates and source references. Ordinary memory does not need signed approval.
 
 This repository contains open-source code and synthetic fixtures only.
 **Do not commit real conversations, personal notes, manuscripts, documents,
 uploads, credentials, tokens, or instance databases.**
+
+## Personal text pilot — current approved milestone
+
+The owner approved this milestone on **28 October 2026**, including corrections
+to rules that obstruct normal memory. This supersedes earlier development-stop
+statements below; historical acceptance evidence remains historical.
+
+The implementation adds two primary tools in an explicitly enabled protected
+personal mode:
+
+- `remember`: save the requested text and optional source metadata verbatim.
+  The server chooses the personal inbox and records the authenticated client
+  as origin. The agent supplies a stable retry key; the user chooses no scope,
+  folder, key or signature.
+- `memory_context`: retrieve original evidence for a period or keyword query,
+  with dates, source IDs, a count and continuation. The answering client does
+  the synthesis. Follow every page needed for the question; report oversized
+  or unread sources instead of claiming exhaustive coverage.
+
+The intended everyday prompts are **“Remember this: …”**, **“What happened in
+September?”**, and **“Which experiences could become a chapter?”** After one
+normal connection setup, these prompts should require no coding tools or
+per-note authentication choices.
+
+**Release status:** code and synthetic acceptance are separate from activation.
+The live personal mode, the actual ChatGPT write/read journey after expiry and
+next-day inactivity, and selected real-note ingestion are not yet verified.
+The connected app returned an invalid OAuth grant during the 28 October
+assessment. Reconnecting once does not establish durable refresh. See the
+[activation and acceptance procedure](docs/deployment.md#personal-text-pilot-activation).
+
+This slice retains SQLite originals, existing OAuth and existing synthetic
+grants. No database replacement, paid model API, unattended model worker,
+Telegram or audio integration is introduced.
+
+### Personal tool contract
+
+Both tools default `version` to `1` and use the fixed `private:personal` scope
+internally. They require its signed OAuth scope **and** independent server
+read/write grants. Enable them with `CONTEXT_PERSONAL_MEMORY=enabled` in OAuth
+mode and an explicit `CONTEXT_CLIENT_GRANTS` map. The local no-auth mode rejects
+private scopes. Existing clients and synthetic data are not upgraded implicitly.
+
+`remember` takes `text`, `idempotencyKey` and optional `metadata` with the same
+limits as `capture_material`. Its origin is `mcp:<authenticated client id>`;
+this attributes the capturing client, not the authorship or truth of the text.
+Retry unchanged input through the same client to retrieve the same original.
+It does not enqueue processing or change the source's `unreviewed` status.
+
+`memory_context` accepts optional `from` (inclusive) and `until` (exclusive)
+ISO timestamps with timezone. It selects by authored `metadata.createdAt` when
+present, otherwise server `capturedAt`, ordered newest first. These are source
+dates, not inferred event dates. The client translates a user-local period to
+explicit timezone boundaries; source offsets are compared in UTC.
+
+Omit `query` for an overview. Optional `query` matches **any** of 1–16 Unicode
+word tokens in original text through FTS; it is lexical, not semantic or
+morphological search. Use source-language keywords and fall back to the timeline
+for paraphrases. `limit` is 1–50 (default 20); `maxBytes` is 1024–65536 UTF-8
+bytes (default 32768) for the JSON result, excluding duplicated MCP framing.
+
+Results contain complete materials, `totalMatchingSources`, `nextCursor`,
+`truncated`, and `oversizedSources`. Repeat the same filters with the returned
+cursor. Pages use a fixed insertion watermark, so later/backdated arrivals do
+not shift an existing scan; start a new query to include them. A cursor is a
+validated continuation, not an access credential. Every page rechecks access.
+An original too large for a page is explicitly identified and the scan advances;
+retrieve it with `read_material` using its returned ID and scope. Originals are
+never silently shortened. `truncated` is true on continuation pages, when more
+pages remain, or when an oversized original was omitted; the client determines
+whole-query coverage from all pages and those explicit omissions.
+
+There is no AI provider requirement for capture or retrieval. The existing
+local extraction command remains synthetic-only. Hosted background enrichment
+requires a separately verified execution and credential lifecycle.
 
 ## Product direction and validation
 

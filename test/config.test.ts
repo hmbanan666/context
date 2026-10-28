@@ -111,3 +111,47 @@ test("client grants are strict operator configuration confined to authenticated 
     );
   }
 });
+
+test("personal memory is an explicit protected mode, never a local no-auth or implicit grant upgrade", () => {
+  const grants = {
+    "context-chatgpt": {
+      read: ["private:personal"],
+      write: ["private:personal"],
+      process: [],
+    },
+  };
+  const env = {
+    NODE_ENV: "production",
+    CONTEXT_AUTH: "oauth",
+    CONTEXT_PUBLIC_URL: "https://context.kosarev.space/mcp",
+    CONTEXT_OAUTH_ISSUER: "https://context.kosarev.space/auth/realms/context",
+    CONTEXT_OWNER_SUBJECT: "synthetic-owner",
+    CONTEXT_PERSONAL_MEMORY: "enabled",
+    CONTEXT_CLIENT_GRANTS: JSON.stringify(grants),
+  };
+  assert.equal(readConfig(env).oauth?.personalMemory, true);
+  for (const change of [
+    { CONTEXT_PERSONAL_MEMORY: undefined },
+    { CONTEXT_PERSONAL_MEMORY: "true" },
+    { CONTEXT_CLIENT_GRANTS: undefined },
+    {
+      CONTEXT_CLIENT_GRANTS: JSON.stringify({
+        "context-chatgpt": {
+          read: ["synthetic:hosted-pilot"],
+          write: [],
+          process: [],
+        },
+      }),
+    },
+    { CONTEXT_LOCAL_MCP: "synthetic" },
+  ])
+    assert.throws(() => readConfig({ ...env, ...change }));
+  for (const mode of [undefined, "synthetic"]) {
+    assert.throws(() =>
+      readConfig({
+        CONTEXT_PERSONAL_MEMORY: "enabled",
+        ...(mode ? { CONTEXT_LOCAL_MCP: mode } : {}),
+      }),
+    );
+  }
+});

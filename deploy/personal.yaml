@@ -1,0 +1,7 @@
+# Apply after projects.yaml and before dokploy.yaml only for the approved personal pilot.
+# The supplied grant map must preserve any existing synthetic grants that are still needed.
+services:
+  context:
+    environment:
+      CONTEXT_PERSONAL_MEMORY: enabled
+      CONTEXT_CLIENT_GRANTS: ${CONTEXT_CLIENT_GRANTS:?Configure explicit personal and retained synthetic grants}

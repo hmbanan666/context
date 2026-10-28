@@ -18,6 +18,7 @@ export interface OAuthConfig {
   readonly resource: string;
   readonly ownerSubject: string;
   readonly clientGrants?: ClientGrants;
+  readonly personalMemory?: boolean;
 }
 
 export function protectMcp(
