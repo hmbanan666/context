@@ -1,5 +1,107 @@
 # Protected synthetic deployment
 
+## Personal text pilot activation
+
+**28 October 2026: implementation approved; activation pending.** The owner
+authorized the personal text pilot and correction of obstructive rules. The
+existing deployed synthetic instance is not yet a personal-data deployment.
+Follow the concrete release below after separate merge/deployment approval;
+normal operations inside the activated inbox need no per-note approval.
+
+### Prepared release delta
+
+- Context `0.5.0` retains the 15 existing tools and adds `remember` and
+  `memory_context` only when personal mode is enabled (17 tools total).
+- Add the `private:personal` client scope to the dedicated Context realm, with
+  protocol `openid-connect` and `include.in.token.scope=true`; attach it as
+  **optional** to the intended existing ChatGPT/Codex clients. The bootstrap
+  export includes this shape but cannot update an already imported realm.
+- Merge `private:personal` into the approved clients' read/write lists in
+  `CONTEXT_CLIENT_GRANTS`, retaining their existing synthetic lists and grants.
+  Do not add personal processing permission. The two clients may write notes;
+  a future restricted agent must receive an explicitly narrower grant.
+- Apply `deploy/personal.yaml` after the existing project overlay and before
+  `deploy/dokploy.yaml`. It enables `CONTEXT_PERSONAL_MEMORY=enabled` and requires
+  an explicit complete grant map. Preserve existing volumes, networking,
+  identity settings, owner, callbacks, MFA and access-token lifetimes.
+
+Before activation, take and validate a private SQLite online backup and test
+its restore into a separate absent file; retain the authoritative database.
+Never use a restored snapshot to replace concurrent live writes. Deliver an
+owner-controlled off-host copy before treating personal notes as recoverable
+from host loss; historical same-host backups alone do not prove this.
+
+### Connection setup and actual acceptance
+
+The primary user-facing app is the existing **Context OAuth Test** connection;
+preserve its identity and private audience. Its app-backed plugin package only
+points to the app: editing that package does not change its OAuth configuration.
+The connected tool returned `oauth_token_invalid_grant` during this assessment.
+Read-only public checks found `offline_access` in both deployed resource
+metadata aliases, superseding the older "not deployed" metadata observation
+below. That does not prove the requested scope or issuance of an offline grant.
+
+After the release, verify discovery advertises `private:personal` and the two
+new tools. Configure the existing custom connection's initial authorization
+request for `context:read context:write private:personal offline_access`, keeping
+any explicitly required synthetic scopes. Keep the same client/secret, PKCE,
+callback and `client_secret_basic`; OIDC profile/email are not required.
+The new tools also advertise their exact personal data scope. Verify what the
+actual request sends rather than assuming the UI or metadata selected it.
+
+The owner completes one normal password/MFA authorization. The operator verifies
+the correlated offline grant without extracting tokens, then checks sequential
+synthetic `remember`/`memory_context` calls after natural five-minute access
+expiry, after forty minutes of inactivity, and on the next day using the same
+connection. Record only timestamps, outcome, scope names and whether another
+login was needed. A successful initial call is not long-idle acceptance.
+Keep connection failures distinct from platform-blocked writes and tool errors.
+
+Use a second allowed client to read the same synthetic source and verify exact
+text, metadata, checksum and retry identity; deny unauthorized clients/scopes.
+Verify backup/restore includes these records. Then selected real notes may enter
+the private inbox. The user's normal instructions are simply "Remember this"
+and "What happened during this period?" — the agent handles technical fields.
+
+If an actual request cannot obtain the intended grant, report that specific
+client blocker; retain the current data and protections. Do not repeatedly ask
+the owner to reconnect or claim provider smoke tests prove ChatGPT behavior.
+
+### Observed implementation evidence — 28 October 2026
+
+- `npm run check`: lint, type checks, build and **87 tests passed**. The new
+  authenticated MCP tests cover no-scope capture, exact retry after reopening,
+  a second client, read-only denial, owner/scope denial, malformed input,
+  a 28-note paginated period, late/backdated arrival isolation, byte budgets,
+  explicit oversized originals and private-inbox backup/restore.
+- Independent Standards and Spec reviews each found the same date-parser
+  mismatch. A new MCP regression reproduced accepted offsets breaking a read.
+  Source dates and filters now share UTC millisecond comparison semantics,
+  preserving the original metadata; the regression and full suite pass.
+- `npm run test:oauth-provider`: disposable real Keycloak consent, JWKS,
+  personal capture/context/retries, missing-scope denial and refreshed offline
+  access passed. Existing rotation/replay/revocation and Codex checks passed.
+- `docker build -t context:personal-pilot .` and
+  `python3 scripts/container-smoke.py context:personal-pilot` passed. The
+  container check covers the unchanged protected default, non-root runtime and
+  restart/restore; personal tools are covered by the authenticated MCP/provider
+  tests, not claimed as exercised by that container check.
+
+All test data is fictional, including records in `private:personal`. These are
+implementation checks, not evidence of live activation, actual ChatGPT refresh,
+real-note use or host-loss recovery.
+
+### Rollback
+
+Disable the personal mode and remove only its data grants from Context's map;
+retain the original database and synthetic grants. Revoke the affected personal
+client grants at the provider and remove optional personal consent as needed.
+Existing access tokens may last up to five minutes, while server grant removal
+denies personal tool access after restart. Old code ignores private records
+because it rejects their scope; do not restore an old database over new notes.
+
+## Historical synthetic deployment
+
 **Status:** PR #4 merged and the protected synthetic pilot deployed on
 27 October 2026 after separate owner approval. Hosted TLS/OAuth and actual
 Codex CLI login passed. The owner confirmed an actual ChatGPT capture-to-Codex

@@ -96,7 +96,7 @@ def main():
             assert metadata["authorization_response_iss_parameter_supported"] is True
             print("Keycloak discovery and PKCE S256: passed", flush=True)
 
-            full_scope = "context:read context:write context:process synthetic:hosted-pilot synthetic:project-a synthetic:project-b"
+            full_scope = "context:read context:write context:process synthetic:hosted-pilot synthetic:project-a synthetic:project-b private:personal"
 
             def authorize(verifier, client_id="context-codex", scope=full_scope, provider=None):
                 provider = metadata if provider is None else provider

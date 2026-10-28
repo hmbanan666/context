@@ -49,6 +49,7 @@ export async function startService(config: Config) {
           ...(config.oauth?.clientGrants === undefined
             ? {}
             : { clientGrants: config.oauth.clientGrants }),
+          ...(config.oauth?.personalMemory ? { personalMemory: true } : {}),
         })
       : undefined;
   const authenticated =
@@ -92,7 +93,9 @@ export async function startService(config: Config) {
             "offline_access",
           ],
           bearer_methods_supported: ["header"],
-          resource_name: "Context synthetic pilot",
+          resource_name: config.oauth.personalMemory
+            ? "Context personal memory"
+            : "Context synthetic pilot",
         }),
       );
       return;

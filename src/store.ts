@@ -35,6 +35,21 @@ interface StoredMaterial {
   readonly file?: MaterialFileDescriptor & { readonly bytes: Buffer };
 }
 
+export interface MemoryPosition {
+  readonly timestamp: number;
+  readonly row: number;
+}
+
+export interface MemorySelection {
+  readonly scope: string;
+  readonly from?: string;
+  readonly until?: string;
+  readonly terms: readonly string[];
+  readonly snapshot?: number;
+  readonly after?: MemoryPosition;
+  readonly limit: number;
+}
+
 function materialMetadata(
   input: CaptureMaterialInput["metadata"],
   type: MaterialMetadata["type"],
@@ -56,6 +71,17 @@ export class SourceStore {
     }
     this.#database = new DatabaseSync(path, { timeout: 5000 });
     try {
+      // Use the same ISO parser as input validation, including offsets SQLite's
+      // date functions cannot parse. Original metadata remains untouched.
+      this.#database.function(
+        "source_timestamp",
+        { deterministic: true },
+        (value) => {
+          if (typeof value !== "string") return null;
+          const timestamp = Date.parse(value);
+          return Number.isFinite(timestamp) ? timestamp : null;
+        },
+      );
       this.#database.exec(`
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS sources (
@@ -402,6 +428,83 @@ export class SourceStore {
       `)
       .all(scope, limit)
       .map((row) => ({ ...row }) as unknown as Source);
+  }
+
+  // The rowid watermark excludes later arrivals, including backdated notes.
+  // Compare source dates and filters using the same UTC millisecond semantics.
+  selectMemory(input: MemorySelection) {
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 51)
+      throw new Error("Invalid memory selection limit");
+    const snapshot =
+      input.snapshot ??
+      Number(
+        this.#database
+          .prepare(
+            "SELECT COALESCE(MAX(rowid), 0) AS watermark FROM sources WHERE scope = ?",
+          )
+          .get(input.scope)?.watermark,
+      );
+    const date = "source_timestamp(COALESCE(m.created_at, s.captured_at))";
+    const conditions = ["s.scope = ?", "s.rowid <= ?"];
+    const params: (string | number)[] = [input.scope, snapshot];
+    if (input.from !== undefined) {
+      conditions.push(`${date} >= ?`);
+      params.push(Date.parse(input.from));
+    }
+    if (input.until !== undefined) {
+      conditions.push(`${date} < ?`);
+      params.push(Date.parse(input.until));
+    }
+    if (input.terms.length) {
+      conditions.push(
+        "s.rowid IN (SELECT rowid FROM sources_fts WHERE sources_fts MATCH ?)",
+      );
+      params.push(
+        input.terms
+          .map((term) => `"${term.replaceAll('"', '""')}"`)
+          .join(" OR "),
+      );
+    }
+    const from =
+      "FROM sources s LEFT JOIN source_metadata m ON m.source_id = s.id";
+    const total = Number(
+      this.#database
+        .prepare(
+          `SELECT COUNT(*) AS total ${from} WHERE ${conditions.join(" AND ")}`,
+        )
+        .get(...params)?.total,
+    );
+    if (input.after) {
+      conditions.push(`(${date} < ? OR (${date} = ? AND s.rowid < ?))`);
+      params.push(
+        input.after.timestamp,
+        input.after.timestamp,
+        input.after.row,
+      );
+    }
+    const rows = this.#database
+      .prepare(
+        `SELECT s.id, s.rowid AS row, ${date} AS timestamp ${from}
+       WHERE ${conditions.join(" AND ")} ORDER BY ${date} DESC, s.rowid DESC LIMIT ?`,
+      )
+      .all(...params, input.limit);
+    return {
+      snapshot,
+      total,
+      entries: rows.map((row) => {
+        const material = this.findMaterial(String(row.id), input.scope);
+        if (
+          !material ||
+          typeof row.timestamp !== "number" ||
+          typeof row.row !== "number"
+        )
+          throw new Error("Invalid stored memory source");
+        return {
+          material,
+          position: { timestamp: row.timestamp, row: row.row },
+        };
+      }),
+    };
   }
 
   checkHealth(): void {

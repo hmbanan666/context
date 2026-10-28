@@ -56,6 +56,11 @@
       "name": "synthetic:project-b",
       "protocol": "openid-connect",
       "attributes": { "include.in.token.scope": "true" }
+    },
+    {
+      "name": "private:personal",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" }
     }
   ],
   "clients": [
@@ -89,7 +94,8 @@
         "synthetic:hosted-pilot",
         "context:process",
         "synthetic:project-a",
-        "synthetic:project-b"
+        "synthetic:project-b",
+        "private:personal"
       ],
       "protocolMappers": [
         {
@@ -123,7 +129,8 @@
         "synthetic:hosted-pilot",
         "context:process",
         "synthetic:project-a",
-        "synthetic:project-b"
+        "synthetic:project-b",
+        "private:personal"
       ],
       "protocolMappers": [
         {

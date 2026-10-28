@@ -1,18 +1,27 @@
 # Instructions for agents
 
-This repository is an experimental Context service, not a mandate to build a
-general AI operating system.
+Context is a headless Personal Context Engine: capture originals, preserve
+them, and give authorized AI clients useful, source-grounded context.
 
 Before implementation read README.md, docs/architecture.md, docs/roadmap.md
 and docs/deployment.md. Inspect the actual repository state and current PRs.
 
 ## Boundaries
 
-- Execute only a milestone explicitly approved by the owner. The roadmap does
-  not authorize implementing future milestones automatically.
+- Work toward the current owner-approved outcome. Within it, make necessary
+  implementation, test and documentation decisions without asking for each
+  step. Current owner instructions supersede historical stop statements in
+  documents. A roadmap candidate alone does not authorize a new milestone.
 - Keep each change a small, testable vertical slice on a separate branch.
   Prepare focused pull requests with actual evidence. **Never merge or deploy
   without separate explicit owner approval.**
+- Routine memory capture and retrieval within an authorized connection need
+  no per-record signature or technical choices from the user. Save requested
+  originals before interpretation; expose clear success, failure and retry
+  results. Keep access scopes separate from inferred topics.
+- Keep consequential actions and external disclosure separately authorized.
+  Signed work-evidence tools are a separate legacy workflow, not a prerequisite
+  for using memory. Preserve their checks while they remain available.
 - Follow current implementation and tested behavior over design assumptions.
   Treat partial implementation, tested PR, merge and live deployment as
   different states.
@@ -27,6 +36,9 @@ and docs/deployment.md. Inspect the actual repository state and current PRs.
 - Public repository: **synthetic fixtures only**. Do not commit real memory,
   private strategy, raw chat text, book excerpts, uploaded media, credentials
   or any production database contents.
+- Selected real notes may enter the owner-approved private pilot only after
+  protected capture/read and backup/restore are verified for its activation.
+  A private namespace in a test still contains synthetic fixtures only.
 - Persist immutable source input before attempting interpretation. Never
   infer owner approval from similarity search or LLM output.
 - Carry source provenance, decision status, scope and timestamps. Enforce
@@ -43,4 +55,7 @@ and docs/deployment.md. Inspect the actual repository state and current PRs.
 
 Summarize the concrete code changes, test commands and observed results,
 remaining unknowns, evidence links and the exact next required approval.
-Avoid infrastructure or ticket-management bureaucracy.
+Judge readiness by the user's save/reopen/ask journey, including authentication
+after inactivity, rather than tests or tool discovery alone. Complete the
+authorized preparation before requesting release approval. Avoid infrastructure
+or ticket-management bureaucracy.
