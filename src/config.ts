@@ -1,8 +1,3 @@
-import {
-  type ClientGrants,
-  clientGrantsSchema,
-  configuredDataScopes,
-} from "./access.js";
 import type { OAuthConfig } from "./auth.js";
 import { personalDataScope, scopeSchema } from "./contracts.js";
 
@@ -23,10 +18,13 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   }
   if (
     env.CONTEXT_LOCAL_SCOPES !== undefined ||
-    env.CONTEXT_PERSONAL_MEMORY !== undefined
+    env.CONTEXT_PERSONAL_MEMORY !== undefined ||
+    env.CONTEXT_OAUTH_ISSUER !== undefined ||
+    env.CONTEXT_OWNER_SUBJECT !== undefined ||
+    env.CONTEXT_CLIENT_GRANTS !== undefined
   ) {
     throw new Error(
-      "Use CONTEXT_AREAS and explicit client grants instead of legacy mode settings",
+      "Remove legacy auth settings; use built-in auth and the client registry",
     );
   }
   const areas = (env.CONTEXT_AREAS ?? personalDataScope).split(",");
@@ -46,38 +44,52 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     if (env.CONTEXT_LOCAL_MCP !== undefined) {
       throw new Error("OAuth and local no-auth modes cannot be combined");
     }
+    const resource = new URL(env.CONTEXT_PUBLIC_URL ?? "");
     if (
-      env.CONTEXT_CLIENT_GRANTS === undefined ||
-      Buffer.byteLength(env.CONTEXT_CLIENT_GRANTS, "utf8") > 16384
+      resource.protocol !== "https:" ||
+      resource.username ||
+      resource.password ||
+      resource.search ||
+      resource.hash ||
+      resource.pathname !== "/mcp"
     ) {
-      throw new Error("Configure explicit client grants (at most 16384 bytes)");
+      throw new Error("Configure an HTTPS MCP resource ending in /mcp");
     }
-    const clientGrants: ClientGrants = clientGrantsSchema.parse(
-      JSON.parse(env.CONTEXT_CLIENT_GRANTS),
+    const boundedSeconds = (
+      name: string,
+      fallback: number,
+      maximum: number,
+    ) => {
+      const value = env[name] ?? String(fallback);
+      if (
+        !/^\d+$/.test(value) ||
+        Number(value) < 300 ||
+        Number(value) > maximum
+      )
+        throw new Error("Invalid refresh lifetime");
+      return Number(value);
+    };
+    const refreshSeconds = boundedSeconds(
+      "CONTEXT_REFRESH_SECONDS",
+      86400,
+      30 * 86400,
     );
-    if (
-      configuredDataScopes(clientGrants).some((area) => !areas.includes(area))
-    ) {
-      throw new Error("Client grants must name configured areas");
-    }
-    if (
-      env.CONTEXT_PUBLIC_URL !== "https://context.kosarev.space/mcp" ||
-      env.CONTEXT_OAUTH_ISSUER !==
-        "https://context.kosarev.space/auth/realms/context" ||
-      !env.CONTEXT_OWNER_SUBJECT?.trim()
-    ) {
-      throw new Error(
-        "Configure the approved HTTPS resource, issuer and owner subject",
-      );
-    }
+    const offlineSeconds = boundedSeconds(
+      "CONTEXT_OFFLINE_SECONDS",
+      30 * 86400,
+      365 * 86400,
+    );
+    if (offlineSeconds < refreshSeconds)
+      throw new Error("Offline lifetime must cover refresh idle lifetime");
     return {
       port: Number(port),
       databasePath,
       oauth: {
-        resource: env.CONTEXT_PUBLIC_URL,
-        issuer: env.CONTEXT_OAUTH_ISSUER,
-        ownerSubject: env.CONTEXT_OWNER_SUBJECT,
-        clientGrants,
+        resource: resource.href,
+        issuer: resource.origin,
+        areas,
+        refreshSeconds,
+        offlineSeconds,
       },
     };
   }
@@ -87,7 +99,9 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     env.CONTEXT_PUBLIC_URL !== undefined ||
     env.CONTEXT_OAUTH_ISSUER !== undefined ||
     env.CONTEXT_OWNER_SUBJECT !== undefined ||
-    env.CONTEXT_CLIENT_GRANTS !== undefined
+    env.CONTEXT_CLIENT_GRANTS !== undefined ||
+    env.CONTEXT_REFRESH_SECONDS !== undefined ||
+    env.CONTEXT_OFFLINE_SECONDS !== undefined
   ) {
     throw new Error("Protected configuration requires CONTEXT_AUTH=oauth");
   }

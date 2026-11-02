@@ -25,4 +25,4 @@ jobs:
       - run: npm run check
       - run: docker build -t context:ci .
       - run: npm run test:container
-      - run: npm run test:oauth-provider
+      - run: npm run test:oauth

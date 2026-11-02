@@ -7,13 +7,13 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { ClientGrants } from "../src/access.js";
 import { protectMcp } from "../src/auth.js";
 import { JobStore } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
+import { fixtureAuth } from "./fixtures/auth.js";
 
 test("protected MCP applies area and operation grants to every read, write, processing and context tool", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-projects-"));
@@ -59,42 +59,20 @@ test("protected MCP applies area and operation grants to every read, write, proc
     sourceId: sb.id,
     idempotencyKey: "job",
   }).job;
+  const resource = "https://context.example/mcp";
+  const auth = fixtureAuth(grants, resource);
   const mcp = createContextMcp(sources, [], true, {
     knowledge,
     jobs,
-    clientGrants: grants,
+    auth: auth.store,
   });
-  const key = await generateKeyPair("RS256");
-  const jwk = await exportJWK(key.publicKey);
-  const resource = "https://context.kosarev.space/mcp";
-  const config = {
-    issuer: "https://context.kosarev.space/auth/realms/context",
-    resource,
-    ownerSubject: "synthetic-owner",
-    clientGrants: grants,
-  };
-  const handler = protectMcp(
-    mcp,
-    config,
-    createLocalJWKSet({ keys: [{ ...jwk, kid: "fixture" }] }),
-  );
+  const handler = protectMcp(mcp, auth.config, auth.store);
   const clients: Client[] = [];
   const connect = async (
     clientId: string,
     operations = ["context:read", "context:write", "context:process"],
   ) => {
-    const now = Math.floor(Date.now() / 1000);
-    const token = await new SignJWT({
-      sub: config.ownerSubject,
-      azp: clientId,
-      scope: [...operations, a, b].join(" "),
-    })
-      .setProtectedHeader({ alg: "RS256", kid: "fixture" })
-      .setIssuer(config.issuer)
-      .setAudience(resource)
-      .setIssuedAt(now)
-      .setExpirationTime(now + 300)
-      .sign(key.privateKey);
+    const token = auth.token(clientId, [...operations, a, b]);
     const client = new Client({ name: "project-access-test", version: "1" });
     clients.push(client);
     await client.connect(
@@ -268,21 +246,22 @@ test("protected MCP applies area and operation grants to every read, write, proc
       version: 1,
       error: "invalid_cursor",
     });
-    const defaultDenied = await owner.callTool({
+    const defaultSaved = await owner.callTool({
       name: "remember",
       arguments: {
-        text: "Fictional denied default",
+        text: "Fictional client default",
         idempotencyKey: "default",
       },
     });
-    assert.equal(defaultDenied.isError, true);
-    assert.equal(sources.list(a).length, 2);
+    assert.ok(!defaultSaved.isError);
+    assert.equal(sources.list(a).length, 3);
     assert.equal(knowledge.list(a).length, 0);
   } finally {
     for (const client of clients) await client.close();
     await mcp.close();
     jobs.close();
     knowledge.close();
+    auth.store.close();
     sources.close();
     await rm(directory, { recursive: true, force: true });
   }

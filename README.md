@@ -4,12 +4,13 @@ An [MIT](LICENSE) open-source personal context engine for **one owner** and thei
 AI agents. Context preserves sources and provenance so authorized clients can
 remember and answer across conversations and providers through MCP.
 
-**Status: pilot running; stage 1 in progress. Stage 1a is done in this PR,
-not yet merged or deployed.** The approved direction is a
-self-hosted black box, started with one `docker run` command, with built-in OAuth,
-local semantic search, a source-grounded understanding layer and an owner web UI.
-Those are staged targets. Today's protected pilot still uses Keycloak and its
-PostgreSQL database; the one-command product setup is not yet available.
+**Status: stage 1a merged; stage 1b implementation done in PR #23, not yet
+merged or deployed.** The core now provides built-in OAuth 2.1, password + passkey
+owner login and CLI bearer tokens without Keycloak or its PostgreSQL database.
+Existing Keycloak connections must reconnect after the switch. The pilot's last
+recorded release remains unchanged; this PR does not inspect or migrate it.
+The approved one-command black box, local semantic search, understanding layer
+and full owner web UI remain staged targets; see [deployment](docs/deployment.md).
 
 The cleaned-up core provides `remember`, paged `memory_context` and
 bounded `context_package` retrieval over SQLite originals and existing knowledge.
@@ -42,11 +43,14 @@ never expose it remotely or use it for private memory. No model or API key is
 needed. `npm run check` builds the code; rebuild after source changes.
 
 Defaults: port `3000`, SQLite `./data/context.db`, area `personal`. Configure areas
-with `CONTEXT_AREAS`; OAuth requires explicit `CONTEXT_CLIENT_GRANTS` as well as
-signed operation/area scopes. Export configuration variables
-in the shell; [`.env.example`](.env.example) is reference, not an auto-loaded file.
-Protected configuration is still specific to the existing pilot; see
-[deployment](docs/deployment.md) before attempting a protected setup.
+with `CONTEXT_AREAS`. Protected mode uses `CONTEXT_AUTH=oauth` and a public HTTPS
+`CONTEXT_PUBLIC_URL` ending in `/mcp`; client grants live in SQLite. Initialize
+with `npm run context -- owner init`, then connect through standard MCP OAuth or
+issue a CLI token. Public/confidential clients and exact native-app callbacks are
+supported; S256 is mandatory. Protected `remember` uses the credential's default
+write area. Export variables in the shell; [`.env.example`](.env.example) is reference, not an
+auto-loaded file. See [deployment](docs/deployment.md#current-protected-setup) for
+setup, supported clients, token management and the reconnect migration.
 
 ## Direction and current behavior
 

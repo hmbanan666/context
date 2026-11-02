@@ -24,10 +24,8 @@ def main():
     try:
         args = ["docker", "run", "--detach", "--name", container, "--read-only", "--tmpfs", "/tmp",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--publish", "127.0.0.1::3000", *mounts]
-        for value in ["CONTEXT_AUTH=oauth", "CONTEXT_PUBLIC_URL=https://context.kosarev.space/mcp",
-                      "CONTEXT_OAUTH_ISSUER=https://context.kosarev.space/auth/realms/context",
-                      "CONTEXT_OWNER_SUBJECT=synthetic-owner", "CONTEXT_AREAS=sandbox",
-                      'CONTEXT_CLIENT_GRANTS={"context-codex":{"read":["sandbox"],"write":["sandbox"],"process":[]}}', "CONTEXT_DB_PATH=/app/data/context.db"]:
+        for value in ["CONTEXT_AUTH=oauth", "CONTEXT_PUBLIC_URL=https://context.example/mcp",
+                      "CONTEXT_AREAS=sandbox", "CONTEXT_DB_PATH=/app/data/context.db"]:
             args += ["--env", value]
         run(args + [image])
         port = current_port()
@@ -35,7 +33,7 @@ def main():
         def get(path, method="GET"):
             connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
             try:
-                connection.request(method, path, headers={"Host": "context.kosarev.space"})
+                connection.request(method, path, headers={"Host": "context.example"})
                 response = connection.getresponse()
                 status = response.status
                 response.read()

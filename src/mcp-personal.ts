@@ -28,6 +28,7 @@ export function registerPersonalTools(
   authorize: AuthorizeTool,
   clientId: string,
   protectedMode = false,
+  defaultWrite = personalDataScope,
 ) {
   server.registerTool(
     "memory_context",
@@ -58,8 +59,10 @@ export function registerPersonalTools(
     "remember",
     {
       description:
-        "Save the user's requested note verbatim in an authorized area (scope defaults to personal). Generate one idempotencyKey per note and reuse it only for identical retries. Preserve supplied source dates in metadata.createdAt; never invent dates. A saved note is not approval for an action. Confirm saving only after success.",
-      inputSchema: rememberSchema,
+        "Save the user's requested note verbatim in an authorized area (scope defaults to the client’s default write area). Generate one idempotencyKey per note and reuse it only for identical retries. Preserve supplied source dates in metadata.createdAt; never invent dates. A saved note is not approval for an action. Confirm saving only after success.",
+      inputSchema: rememberSchema.extend({
+        scope: scopeSchema.default(defaultWrite),
+      }),
       ...oauthMetadata(protectedMode, ["context:write"]),
       annotations: {
         readOnlyHint: false,

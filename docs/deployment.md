@@ -1,113 +1,165 @@
 # Current deployment and recovery
 
-**Pilot running; stage 1 in progress (2 November 2026).** Current status comes
-from repository configuration and the [PR #19 release record](https://github.com/hmbanan666/context/pull/19),
-not a new live inspection. Every merge, deployment or live configuration change
-requires its applicable explicit owner approval. Stage 1a is done in this PR;
-the cleanup is not yet merged or deployed.
+**Stage 1a merged; stage 1b implementation done in PR #23 (2 November 2026).**
+Stage 1b is not yet merged or deployed. The pilot's last recorded status comes
+from [PR #19](https://github.com/hmbanan666/context/pull/19), not a new inspection.
+This PR removes identity services from the repository, not the live installation.
+Merge, deployment and live changes remain distinct approval/action steps.
 
 ## Current protected setup
 
-The pilot uses Context, **Keycloak and its dedicated PostgreSQL database** behind
-HTTPS. Context stores memory in SQLite on its own persistent volume; Keycloak's
-PostgreSQL stores identity state, not memory. Keycloak remains required until
-stage 1b ships. The target one-command `docker run` setup is not available today;
-use the [README](../README.md#quick-start-today-local-synthetic-development) for
-an isolated local synthetic start.
+The core now provides built-in OAuth 2.1 and owner password + passkey login, with
+memory and auth state in SQLite. [Base Compose](../deploy/compose.yaml) contains
+only Context and its data/backup volumes; Keycloak, its PostgreSQL database,
+bootstrap and realm files are removed. The [hosting overlay](../deploy/dokploy.yaml)
+keeps Context network isolation. Compose uses `CONTEXT_HOST` and
+`CONTEXT_PROXY_NETWORK` for an existing HTTPS proxy. No proxy or server was changed.
+See the [README](../README.md#quick-start-today-local-synthetic-development) for
+local synthetic development. The fully automatic one-command product remains a target.
 
-The repository's deployment files remain the current configuration reference:
+After building with the pinned Node/npm versions, configure protected access:
 
-- [Base Compose](../deploy/compose.yaml): Context, Keycloak, identity database and
-  dedicated volumes; [bootstrap](../deploy/bootstrap.yaml) is for initial identity setup.
-- [Hosting overlay](../deploy/dokploy.yaml): Context-specific network isolation.
-- [Keycloak configuration](../deploy/keycloak/) and the existing ChatGPT compatibility
-  profile: pre-registered clients and the approved default-scope behavior.
-- [Environment reference](../.env.example): export variables explicitly; `.env`
-  is not loaded by the application itself.
+```sh
+export CONTEXT_AUTH=oauth
+export CONTEXT_PUBLIC_URL=https://context.example/mcp
+export CONTEXT_DB_PATH=./data/context.db
+export CONTEXT_AREAS=personal,garden
+npm run context -- owner init
+NODE_ENV=production npm start
+```
 
-Protected application settings require `CONTEXT_AUTH=oauth`,
-`CONTEXT_PUBLIC_URL=https://context.kosarev.space/mcp`,
-`CONTEXT_OAUTH_ISSUER=https://context.kosarev.space/auth/realms/context` and the
-configured `CONTEXT_OWNER_SUBJECT`. These URLs are pinned in current validation.
-`CONTEXT_AREAS` defines 1–8 areas (default `personal`); explicit
-`CONTEXT_CLIENT_GRANTS` read/write/process arrays must use those areas. There is
-no implicit pilot grant. Base Compose passes both settings; the redundant project
-and personal overlays are removed. Retain approved grants when changing a map.
-Never publish actual owner IDs or credentials.
+The packaged/image CLI is `context`; in a checkout use `npm run context -- ...`.
+`owner init` reads a password twice without terminal echo, or once from stdin for
+automation, and refuses to overwrite an existing owner. Never put passwords in
+arguments. First OAuth login enrolls a passkey after password verification; later
+logins require both. Use a current browser with native WebAuthn JSON support.
+There is no password-only fallback or passkey recovery/management UI in this slice;
+retain the enrolled/synced passkey and private backups. Do not reset auth by
+removing the memory database.
 
-For existing installations, remove `CONTEXT_PERSONAL_MEMORY`, replace local
-`CONTEXT_LOCAL_SCOPES` with `CONTEXT_AREAS`, and use `CONTEXT_LOCAL_MCP=enabled`
-for test/development only; legacy settings fail startup. Memory tools now default
-to `personal`, but existing rows stay in their original areas. Explicitly retain
-legacy names such as `private:personal` in the area list, token scopes and grants,
-and supply the original `scope` for reads/retries. No rows are renamed or moved.
+- Resource/audience is the exact HTTPS `CONTEXT_PUBLIC_URL` ending in `/mcp`;
+  issuer and passkey origin are its origin. Discovery is at
+  `/.well-known/oauth-protected-resource/mcp` (also the root alias) and
+  `/.well-known/oauth-authorization-server`. Forward `/mcp`, `/auth/*`, `/oauth/*`
+  and `/.well-known/*` to Context with the public Host header. Prevent direct
+  public HTTP access to the backend. Do not log Authorization/Cookie headers,
+  request bodies or callback queries containing codes; Context logs no credentials.
+- DCR supports `none`, `client_secret_basic` and `client_secret_post`; omitted
+  method defaults to Basic per RFC 7591. Public/native clients should request
+  `none`; existing public registry entries stay public. Unknown optional metadata
+  is ignored. Confidential secrets are returned once, valid until revocation
+  (`client_secret_expires_at: 0`); only hashes persist, separately from listings.
+  Lost secrets require new registration and revocation of the old client.
+- Token exchange, refresh and revocation enforce the registered method. Basic
+  credentials use form encoding before Base64; POST secrets belong in the form
+  body, never the URL. Missing/wrong credentials or method downgrades fail with
+  `invalid_client`; mixed authentication methods are rejected. S256 PKCE and exact
+  resource binding remain mandatory for every client.
+- Callbacks must exactly match registered HTTPS, IP-loopback HTTP or hierarchical
+  private-use app URIs, including `cursor://anysphere.cursor-mcp/oauth/callback`
+  and `com.example.fictional:/oauth/callback`. No wildcards, fragments, userinfo,
+  executable/file schemes (`javascript:`, `data:`, `file:`) or arbitrary HTTP.
+  Consent shows the self-declared name, callback and requested area/operation
+  pairs; the owner narrows rights and selects a default write area. Registration
+  and possession of a client secret do not grant memory access.
+- Access tokens last five minutes. `CONTEXT_REFRESH_SECONDS` defaults to 86400
+  (range 300–2592000). Separately consented `CONTEXT_OFFLINE_SECONDS` defaults to
+  2592000 (up to 31536000 and at least the normal lifetime). Refresh rotates once;
+  reuse revokes the whole family, including access tokens. Rotation cannot extend
+  the original absolute deadline. Expired/revoked families require reconnecting.
+- Owner sessions last ten minutes with Secure/HttpOnly/host-only SameSite=Lax
+  cookies, CSRF and exact Origin checks. Auth bodies are limited to 16 KiB.
+  Single-owner per-minute limits are login 10, token 120, DCR 10,
+  authorization/passkeys 30 and revocation 60; MCP allows 60 per client. Limits
+  reset on restart. Capacity is 256 active clients and 1024 browser sessions;
+  revoke unwanted clients to free registry capacity.
+- `CONTEXT_AREAS` defines 1–8 areas (default `personal`). Unknown/ungranted areas
+  fail closed; automatic inbox classification is not implemented. Production
+  requires protected configuration; local no-auth mode is loopback/dev/test only.
+  Export settings explicitly; [`.env.example`](../.env.example) is not auto-loaded.
 
-Refresh tool discovery: `knowledge_history`, `work_context` and `project_context`
-are removed, along with npm scripts `knowledge:review`, `work` and `work:probe`.
-Use `memory_context`/`context_package`; `capture`/`recall` remain compatible.
-Old work tables remain unused; review rows retain historical knowledge status.
-No destructive startup migration is introduced.
+Headless credentials share OAuth's area checks and live revocation:
 
-Current owner login is handled by Keycloak with its existing password/MFA setup;
-pre-registered ChatGPT/Codex clients use their configured callbacks and grants.
-The approved built-in password + passkey login, DCR and CLI tokens are stage 1b
-work. Existing connections **must reconnect** when that replacement ships.
-The bootstrap realm/profile now uses fictional area examples; a realm bootstrap
-import does not update an existing realm or authorize new grants.
+```sh
+context token create fictional-worker --read personal,garden --write garden --default-write garden --expires 90d
+context client list
+context token list
+context token revoke TOKEN_ID
+context client revoke CLIENT_ID
+```
 
-The resource server rejects absent/invalid credentials and intersects signed
-OAuth scopes with server grants. Revoking a provider session or refresh grant
-can leave an issued access token valid for up to five minutes. Removing server
-grants takes effect after configuration reload/restart. The target revocable
-client/token management is not claimed as already implemented.
+Tokens print once; only hashes persist. Expiry defaults to 90 days and is bounded
+to one year (`m`, `h`, `d` durations). Optional `--process area` additionally needs
+read/write rights. Reusing a CLI client name adds rights to its registry but never
+broadens older tokens; revoked names cannot be reused. Listings expose IDs, rights,
+redirects, default write area and timestamps, never credentials. Revocation takes
+effect on the next request; revoking an OAuth token revokes its whole family.
+Expired OAuth families are pruned after their final access lifetime; CLI history
+remains listed. Protected `remember` uses the credential's default write area.
+
+**Migration/reconnect:** existing ChatGPT/Codex and other Keycloak-issuer
+connections stop working after this release and must reconnect once through
+standard MCP OAuth. Keep the SQLite volume and legacy area names. Remove
+`CONTEXT_OAUTH_ISSUER`, `CONTEXT_OWNER_SUBJECT` and `CONTEXT_CLIENT_GRANTS` (old
+settings fail startup), initialize the owner and approve new registry grants.
+New client IDs change MCP provenance; replaying old writes through a new client
+is not a migration tool. Sources, knowledge, files and retry rows are unaffected.
+Keycloak containers and their dedicated database can be removed after the switch
+under the applicable owner approval; retain private backups for rollback. This
+PR does not perform that migration or delete live containers/volumes.
+
+The 1a compatibility rules still apply: remove `CONTEXT_PERSONAL_MEMORY`, replace
+local `CONTEXT_LOCAL_SCOPES` with `CONTEXT_AREAS`, and opt in with
+`CONTEXT_LOCAL_MCP=enabled`. Retain original areas such as `private:personal` and
+use their original `scope` for reads/retries. Removed tools are `knowledge_history`,
+`work_context` and `project_context`; removed scripts are `knowledge:review`,
+`work` and `work:probe`. Use memory/context tools; `capture`/`recall` remain.
+Old work tables are unused; historical review rows preserve knowledge status.
+No startup code drops or rewrites domain rows. Rollback needs matching code and
+provider configuration; never replace concurrent writes with an old snapshot.
 
 ## Backup and restore today
 
-The current mechanism is an explicit SQLite online snapshot followed by a private
-off-host copy. After building, these commands can be used on a **local synthetic
-database** (choose a new snapshot name each time):
+After building, use a local synthetic database and new private filenames:
 
 ```sh
 npm run database -- backup ./data/context.db ./backups/context-snapshot.db
 npm run database -- restore ./backups/context-snapshot.db ./data/restored.db
 ```
 
-Backup uses SQLite's online backup API, including committed WAL pages, and checks
-source integrity. Restore is offline: stop the target instance first, use an
-absent destination with no `-wal`/`-shm` sidecars, then point `CONTEXT_DB_PATH` at
-the restored file. Neither operation overwrites an existing destination. Validate
-restored integrity, source IDs/checksums, provenance, retry identity, search and
-access denial before using the copy. Never replace concurrent live writes with
-an older snapshot or copy a live SQLite file while ignoring its WAL.
+Online backup includes committed WAL pages, sources, derived records, jobs,
+indexes, retries, owner password hash, passkey public keys, client secret hashes
+and token hashes.
+Commands check integrity and refuse to overwrite destinations. Restore offline
+to an absent file without WAL/SHM sidecars; stop the service before switching
+`CONTEXT_DB_PATH`. Verify source IDs/checksums, provenance, retries, search and
+access denial. Never copy a live SQLite file while ignoring its WAL.
 
-Until stage 1b removes the identity service, recovery also requires a private
-backup of Keycloak's dedicated PostgreSQL database and the instance configuration.
-A realm JSON bootstrap export is not that database backup. Restoring identity
-state must be separately verified with the matching provider version.
+Restoring auth state also rolls back revocations/refresh rotation: revoke restored
+credentials and require reconnect/reissue before external access if the snapshot
+predates revocations. During a Keycloak rollback window, retain its separate
+private identity database backup; realm JSON is not a database backup. Backup
+contents and credentials stay outside Git. Future hard-delete acceptance must
+address retention and restore reconciliation.
 
-Point-in-time off-host copy and isolated restore are recorded in the release PR;
-**nightly scheduling and configurable SFTP/S3-compatible delivery are not shipped**.
-A same-host backup volume does not cover host loss. Stage 1c adds automated delivery
-and recovery checks. Backup contents and target credentials stay outside Git.
-Future hard-delete acceptance must define retention and restore reconciliation
-so a recovered copy cannot silently reintroduce owner-deleted content.
+**Nightly scheduling and configurable SFTP/S3-compatible delivery remain stage
+1c work.** A same-host backup volume does not cover host loss; retain a verified
+private off-host copy and test isolated restore.
 
 ## Verification and limits
 
-Run the pinned Node/npm versions with `npm ci` and `npm run check`. The latter
-runs Biome, type checks, compilation and tests, including pre-cleanup database
-reopen/restore with unchanged source, file, retry and knowledge rows. Biome
-excludes Markdown, so docs
-also need link and consistency review. GitHub CI additionally builds the image,
-runs `npm run test:container` and `npm run test:oauth-provider` with disposable
-synthetic data. The two smoke suites require Docker and Python 3. When Docker is
-unavailable locally, state that limit and use the CI results; do not claim local
-container/provider verification.
+Run `npm ci` and `npm run check` with pinned Node/npm. Checks cover source/knowledge
+preservation, auth/CLI, software-authenticator passkeys, official SDK OAuth/MCP,
+confidential clients, exact native callbacks, expiry, replay/revocation, HTTP
+limits and backup/restore. `npm run test:oauth` replaces the removed Keycloak
+provider smoke test. GitHub CI also builds the image
+and runs `npm run test:container` with disposable synthetic data. Docker is not
+available in this work environment and was not invoked locally; use CI evidence.
+Review Markdown links and current/target consistency separately from Biome.
 
-Recorded pilot save/read/retry, short-idle refresh and isolated recovery passed.
-Actual external `context_package` invocation, forty-minute/next-day personal
-client inactivity and independent personal cross-client acceptance remain
-unverified in the latest release record. No new live check is claimed here.
-Discovery and fixture-provider tests do not establish those user journeys.
-The full [spec acceptance](spec.md#testing-decisions) requires actual-client
-save/reopen/ask and revocation evidence as well as automated checks.
+Actual hosted ChatGPT/Claude/Cursor linking, physical/synced passkeys, proxy routing
+and real next-day save → reopen → ask remain unverified. No live acceptance or
+migration is claimed. See [spec acceptance](spec.md#testing-decisions); discovery
+and fixture tests do not replace actual-client journeys. Protocol references:
+[MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization)
+and [WebAuthn verification](https://simplewebauthn.dev/docs/packages/server).

@@ -3,8 +3,9 @@
 As recorded on **2 November 2026**, the protected pilot runs the implementation
 released in [PR #19](https://github.com/hmbanan666/context/pull/19). This document
 describes repository behavior and recorded release status, not a new inspection
-of the live service. Stage 1a is done in this PR; the cleanup is not yet merged
-or deployed. The [spec](spec.md) and [ADRs](adr/) define the approved target.
+of the live service. Stage 1a is merged; stage 1b implementation is done in
+PR #23, not yet merged or deployed. The [spec](spec.md) and [ADRs](adr/) define
+the approved target; this auth slice does not claim the later capabilities.
 
 ## Runtime and access
 
@@ -12,20 +13,40 @@ The core is a Node/TypeScript service using the MCP SDK with Streamable HTTP at
 `/mcp`, a separate `/health` endpoint and SQLite persistence. The container runs
 as a non-root user with persistent data storage.
 
-**Keycloak is still the authorization server**, backed by its dedicated
-PostgreSQL database. Context is the resource server: it verifies signed tokens,
-issuer, audience, expiry, owner and explicitly configured client identities.
-Operation/data OAuth scopes intersect with independent server grants. Missing or
-invalid authentication is rejected; data requests cannot grant access.
+**The core is now the authorization server and resource server.** Keycloak and
+its dedicated PostgreSQL services/configuration are removed from the repository.
+The configured public HTTPS `/mcp` URL is the exact audience; its origin is the
+issuer. RFC 9728/8414 discovery, DCR, authorization code + mandatory S256 PKCE,
+owner password/passkey login, narrowable consent and revocation are built in.
+DCR supports public (`none`) and confidential (`client_secret_basic` /
+`client_secret_post`) clients; new registrations default to Basic, while existing
+public entries stay public. Secrets are returned once and stored only as hashes
+in `auth_client_secrets`, separately from listings. Token/refresh/revocation
+requests enforce the registered method; unknown optional DCR metadata is ignored.
+HTTPS, IP-loopback HTTP and hierarchical private-use callbacks are exact-matched;
+executable/file schemes, fragments and userinfo are rejected.
 
-Protected configuration currently pins the pilot resource and issuer URLs; this
-is not yet a generic one-command installation. `CONTEXT_AREAS` defines 1–8 areas,
-defaulting to `personal`; `CONTEXT_CLIENT_GRANTS` explicitly assigns each client's
-read/write/process rights within that list. There is no implicit pilot grant.
-The existing protocol field remains `scope`; default routing grants no access.
-Per-client default write areas and inbox sorting remain future work. Local no-auth
+The SQLite registry records clients, rights, redirects, default write area,
+creation/last-use and revocation. Public and confidential clients begin with no
+rights. OAuth and CLI bearer credentials are random 256-bit opaque values stored
+only as SHA-256 hashes; each request intersects their own approved area/operation
+pairs with current client grants. Revocation takes effect on the next request.
+Access lasts five minutes; rotating refresh families have configurable absolute
+normal/offline deadlines. Replaying a consumed code or refresh token revokes all
+family descendants. Consumption/rotation use SQLite transactions.
+
+`context owner init` sets the password using Node scrypt (N=32768, r=8, p=3).
+First password login requires passkey enrollment; later logins require both.
+SimpleWebAuthn verifies challenge, origin, RP ID, signature and user verification.
+Ten-minute owner sessions use Secure/HttpOnly/SameSite=Lax host-only cookies,
+CSRF and exact Origin checks. Auth bodies and request rates are bounded.
+
+`CONTEXT_AREAS` defines 1–8 areas, defaulting to `personal`. The wire field remains
+`scope`; default routing grants no access. Protected `remember` uses the
+credential's default write area; inbox sorting remains future work. Local no-auth
 MCP uses `CONTEXT_LOCAL_MCP=enabled`, is loopback-only for fictional development/
-test data, and is rejected in production.
+test data, and is rejected in production. See [deployment](deployment.md) for
+client authentication methods, callback validation and CLI configuration.
 
 ## Sources and retrieval
 
@@ -38,15 +59,15 @@ The primary memory tools are:
 
 | Tool | Current behavior |
 | --- | --- |
-| `remember` | Saves text and optional metadata in an authorized area (default `personal`), records authenticated-client origin and returns stable identity on unchanged retries. Does not enqueue processing. |
+| `remember` | Saves text and optional metadata in an authorized area (protected default: credential's default write area; local default: `personal`), records authenticated-client origin and returns stable identity on unchanged retries. Does not enqueue processing. |
 | `memory_context` | Pages originals by source date (capture date if absent), with optional any-keyword FTS, continuation and explicit oversized-source reporting. |
 | `context_package` | Returns bounded lexical/timeline evidence from originals and stored knowledge, with excerpts, provenance, status and at most one hop of stored relations. |
 | `read_material` / `read_knowledge` | Retrieves a referenced original or derived item under fresh authorization checks. |
 
 `remember`, `memory_context` and `context_package` accept an authorized `scope`,
-defaulting to `personal`. Clients supply explicit date boundaries and inspect
-coverage/truncation. A package
-is not an exhaustive archive scan; paged original retrieval handles full periods.
+defaulting to `personal` except protected `remember` as described above. Clients
+supply explicit date boundaries and inspect coverage/truncation. A package is not
+an exhaustive archive scan; paged original retrieval handles full periods.
 Current FTS has no Russian/English morphological pipeline or semantic embeddings.
 Derived knowledge is source-grounded but is not yet the approved automatically
 maintained understanding layer with deduplication and superseding.
@@ -69,14 +90,15 @@ is a separate source-ingestion feature.
 ## Recovery and transition
 
 SQLite online backup and offline restore commands exist; they include sources,
-derived records, jobs, indexes and retry state. Automated nightly off-host delivery
-is not implemented. No startup migration drops or rewrites existing rows. Old work
+derived records, jobs, indexes, retry state and auth state. Automated nightly
+off-host delivery is not implemented. No startup migration drops or rewrites existing rows. Old work
 tables remain unused; historical review rows still supply knowledge status, including
 rejection filtering, without a review writer. Existing area names and retry keys
 are preserved. See [deployment](deployment.md) for compatibility and recovery.
 
-Stage 1b replaces Keycloak and its PostgreSQL DB with core OAuth 2.1 AS, DCR, PKCE,
-password + WebAuthn passkey login and CLI tokens; existing ChatGPT/Codex connections
-must reconnect. Later stages add imports/evals, morphology/local embeddings,
-pluggable understanding and owner controls. An inferred topic never grants area
-access. Consult the [glossary](../CONTEXT.md) when naming these new concepts.
+Stage 1b preserves source/knowledge rows and adds only auth tables. Existing
+ChatGPT/Codex and other Keycloak connections must reconnect to the built-in
+issuer; no migration or deployment was performed here. Later stages add nightly
+off-host backup, imports/evals, morphology/local embeddings, pluggable
+understanding and owner controls. An inferred topic never grants area access.
+Consult the [glossary](../CONTEXT.md) when naming these concepts.

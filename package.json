@@ -15,15 +15,16 @@
     "seed:synthetic": "node dist/scripts/seed-synthetic.js",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/test/*.test.js",
+    "test": "npm run build && node --test --test-concurrency=3 dist/test/*.test.js",
     "test:smoke": "npm run build && node --test dist/test/restart.test.js",
     "inspect:smoke": "npm run build && node dist/scripts/inspect-local.js",
     "database": "node dist/scripts/database.js",
     "memory:process": "node dist/scripts/process-memory.js",
-    "test:oauth-provider": "npm run build && python3 scripts/keycloak-smoke.py",
     "test:container": "python3 scripts/container-smoke.py",
     "eval:context-package": "npm run build && node dist/test/evaluate-context-package.js",
-    "check": "npm run lint && npm run typecheck && npm test"
+    "check": "npm run lint && npm run typecheck && npm test",
+    "context": "node dist/scripts/context.js",
+    "test:oauth": "npm run build && node --test dist/test/oauth.test.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
@@ -34,7 +35,10 @@
   "dependencies": {
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/server": "2.4.0",
-    "jose": "6.2.13",
+    "@simplewebauthn/server": "14.0.0",
     "zod": "4.6.7"
+  },
+  "bin": {
+    "context": "dist/scripts/context.js"
   }
 }
