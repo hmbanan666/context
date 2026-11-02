@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { AuthStore } from "../src/auth-store.js";
 import { readConfig } from "../src/config.js";
+import { evalCommand } from "../src/eval-cli.js";
 import { runImport } from "./import-jsonl.js";
 
 async function passwordInput() {
@@ -50,6 +51,10 @@ async function passwordInput() {
   }
 }
 async function main() {
+  if (process.argv[2] === "eval") {
+    await evalCommand(process.argv.slice(3), process.env);
+    return;
+  }
   const [kind, action, name, ...args] = process.argv.slice(2);
   if (kind === "import" && action === "jsonl") {
     await runImport(process.argv.slice(4));
@@ -151,7 +156,7 @@ void main().catch(() => {
     return;
   }
   process.stderr.write(
-    "Context command failed; check arguments, protected configuration and owner state.\n",
+    "Context command failed; check arguments, configuration and local file access.\n",
   );
   process.exitCode = 1;
 });

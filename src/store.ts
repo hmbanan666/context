@@ -72,11 +72,14 @@ function materialMetadata(
 export class SourceStore {
   readonly #database: DatabaseSync;
 
-  constructor(path: string) {
-    if (path !== ":memory:") {
+  constructor(path: string, options: { readOnly?: boolean } = {}) {
+    if (!options.readOnly && path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     }
-    this.#database = new DatabaseSync(path, { timeout: 5000 });
+    this.#database = new DatabaseSync(path, {
+      timeout: 5000,
+      readOnly: options.readOnly ?? false,
+    });
     try {
       // Use the same ISO parser as input validation, including offsets SQLite's
       // date functions cannot parse. Original metadata remains untouched.
@@ -89,6 +92,7 @@ export class SourceStore {
           return Number.isFinite(timestamp) ? timestamp : null;
         },
       );
+      if (options.readOnly) return;
       this.#database.exec(`
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS sources (

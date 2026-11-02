@@ -152,12 +152,16 @@ function validateLimit(scope: string, limit: number): void {
 export class KnowledgeStore {
   readonly #database: DatabaseSync;
 
-  constructor(path: string) {
-    this.#database = new DatabaseSync(path, { timeout: 5000 });
+  constructor(path: string, options: { readOnly?: boolean } = {}) {
+    this.#database = new DatabaseSync(path, {
+      timeout: 5000,
+      readOnly: options.readOnly ?? false,
+    });
     try {
-      this.#database.exec(
-        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;",
-      );
+      if (!options.readOnly)
+        this.#database.exec(
+          "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;",
+        );
       this.#database
         .prepare("SELECT id, text, scope FROM sources LIMIT 1")
         .get();
@@ -169,6 +173,7 @@ export class KnowledgeStore {
             ? Date.parse(value)
             : null,
       );
+      if (options.readOnly) return;
       this.#database.exec(`
         BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS knowledge_items (
