@@ -530,3 +530,165 @@ test("weak semantic neighbours do not fill a package with unrelated evidence", a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("current sources outrank history and duplicate-only matches return one readable canonical", async () => {
+  const dir = await mkdtemp(join(process.cwd(), ".output-tidy-search-"));
+  const f = await openPackageFixture(join(dir, "db"));
+  try {
+    const add = (id: string, text: string, scope = "personal") =>
+      f.store.insert({
+        id,
+        text,
+        scope,
+        origin: "fixture",
+        capturedAt: "2026-01-01T00:00:00Z",
+      });
+    add("old", "lunar agents agents agents limit 3");
+    add("new", "lunar agents limit 4 with a longer explanation");
+    add("canonical", "original garden note");
+    add("copy", "uniquealias garden note");
+    add("foreign", "uniquealias hidden", "forbidden");
+    for (const [kind, fromId, toId] of [
+      ["supersedes", "new", "old"],
+      ["duplicates", "copy", "canonical"],
+    ] as const) {
+      f.knowledge.relate({
+        version: 1,
+        scope: "personal",
+        idempotencyKey: fromId,
+        kind,
+        fromId,
+        toId,
+        sourceRefs: [{ sourceId: fromId }],
+        creator: { kind: "user", name: "fixture" },
+      });
+    }
+    const client = await f.connect();
+    const result = await client.callTool({
+      name: "context_package",
+      arguments: { question: "agents", maxBytes: 10000 },
+    });
+    const cards = (
+      result.structuredContent as {
+        sources: { id: string; supersededBy?: string }[];
+      }
+    ).sources;
+    assert.deepEqual(
+      cards.map((s) => s.id),
+      ["new", "old"],
+    );
+    assert.equal(cards[1]?.supersededBy, "new");
+    const copies = await client.callTool({
+      name: "context_package",
+      arguments: { question: "uniquealias garden", maxBytes: 10000 },
+    });
+    assert.deepEqual(
+      (copies.structuredContent as { sources: { id: string }[] }).sources.map(
+        (s) => s.id,
+      ),
+      ["canonical"],
+    );
+    const canonicalOnly = await client.callTool({
+      name: "context_package",
+      arguments: { question: "original", maxBytes: 10000 },
+    });
+    assert.deepEqual(
+      (
+        canonicalOnly.structuredContent as { sources: { id: string }[] }
+      ).sources.map((s) => s.id),
+      ["canonical"],
+    );
+    assert.deepEqual(
+      f.store.search("uniquealias", "personal", 10).map((s) => s.id),
+      ["canonical"],
+    );
+    assert.deepEqual(
+      f.store.search("agents", "personal", 10).map((s) => s.id),
+      ["new", "old"],
+    );
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("knowledge supersession and canonical chains preserve current cards and exact originals", async () => {
+  const dir = await mkdtemp(join(process.cwd(), ".output-tidy-items-"));
+  const f = await openPackageFixture(join(dir, "db"));
+  try {
+    const source = f.store.capture({
+      version: 1,
+      scope: "personal",
+      idempotencyKey: "evidence",
+      origin: "fixture",
+      text: "Synthetic grounding for lunar policies.",
+    }).source;
+    const item = (key: string, text: string) =>
+      f.knowledge.add({
+        version: 1,
+        scope: "personal",
+        idempotencyKey: key,
+        kind: "observation",
+        text,
+        sourceRefs: [{ sourceId: source.id }],
+        creator: { kind: "model", name: "fixture" },
+      }).item;
+    const old = item("old", "Lunar policy policy policy limit 3"),
+      current = item(
+        "current",
+        "Lunar policy now has limit 4 and preserves an explanation",
+      );
+    const canonical = item("canonical", "Canonical lunar staffing record"),
+      copy = item("copy", "copyalias staffing"),
+      copy2 = item("copy2", "secondalias staffing");
+    for (const [kind, fromId, toId] of [
+      ["supersedes", current.id, old.id],
+      ["duplicates", copy.id, canonical.id],
+      ["duplicates", copy2.id, copy.id],
+    ] as const)
+      f.knowledge.relate({
+        version: 1,
+        scope: "personal",
+        idempotencyKey: fromId,
+        kind,
+        fromId,
+        toId,
+        sourceRefs: [{ sourceId: source.id }],
+        creator: { kind: "user", name: "fixture" },
+      });
+    const client = await f.connect();
+    const result = await client.callTool({
+      name: "context_package",
+      arguments: { question: "policy", maxBytes: 10000 },
+    });
+    const cards = (
+      result.structuredContent as {
+        items: { id: string; supersededBy?: string }[];
+      }
+    ).items;
+    assert.deepEqual(
+      cards.map((k) => k.id),
+      [current.id, old.id],
+    );
+    assert.equal(cards[1]?.supersededBy, current.id);
+    const copies = await client.callTool({
+      name: "context_package",
+      arguments: { question: "secondalias", maxBytes: 10000 },
+    });
+    assert.deepEqual(
+      (copies.structuredContent as { items: { id: string }[] }).items.map(
+        (k) => k.id,
+      ),
+      [canonical.id],
+    );
+    assert.deepEqual(f.knowledge.find(copy2.id, "personal"), copy2);
+    const denied = await client.callTool({
+      name: "read_relations",
+      arguments: { version: 1, scope: "forbidden" },
+    });
+    assert.equal(denied.isError, true);
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

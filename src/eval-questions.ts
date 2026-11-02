@@ -21,13 +21,17 @@ export const evalQuestionSchema = z
     areas: areas.refine((a) => a.length > 0),
     read_areas: areas,
     expected: z.array(matcher).max(100),
+    outranks: z.array(matcher).min(1).max(100).optional(),
     forbidden_areas: areas.default([]),
     tags: z.array(z.string().min(1).max(64)).max(16).default([]),
     placeholder: z.boolean().default(false),
   })
   .refine(
     (q) =>
-      q.placeholder || q.expected.length > 0 || q.forbidden_areas.length > 0,
+      (q.placeholder ||
+        q.expected.length > 0 ||
+        q.forbidden_areas.length > 0) &&
+      (!q.outranks || q.expected.length > 0),
   );
 export type EvalQuestion = z.infer<typeof evalQuestionSchema>;
 const fileSchema = z

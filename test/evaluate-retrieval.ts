@@ -31,7 +31,13 @@ try {
   assert.equal(result.status, 0, result.stderr);
   const summary = JSON.parse(result.stdout);
   assert.equal(summary.metrics.isolation_violations, 0);
-  for (const id of ["exact_en", "exact_ru", "denied_area"])
+  for (const id of [
+    "exact_en",
+    "exact_ru",
+    "denied_area",
+    "current_over_history",
+    "duplicate_only_match",
+  ])
     assert.equal(
       summary.questions.find((q: { id: string }) => q.id === id).pass,
       true,

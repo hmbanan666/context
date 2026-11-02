@@ -17,6 +17,7 @@ import {
 } from "./materials.js";
 import type { PackageSelection } from "./package-query.js";
 import { redact, redactFields } from "./redaction.js";
+import { retrievalRelations } from "./retrieval-relations.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 
 export interface SourceInput {
@@ -30,6 +31,7 @@ export interface SourceInput {
 export interface Source extends SourceInput {
   readonly checksum: string;
   readonly status: "unreviewed";
+  readonly supersededBy?: string;
 }
 
 export class IdempotencyConflict extends Error {}
@@ -314,7 +316,8 @@ export class SourceStore {
           );
         }
         const source = this.find(String(existing.source_id), request.scope);
-        if (!source) throw new Error("Missing idempotent source");
+        if (!source)
+          throw new IdempotencyConflict("Source no longer in requested area");
         this.#database.exec("COMMIT");
         return { source, duplicate: true };
       }
@@ -400,8 +403,23 @@ export class SourceStore {
       WHERE sources_fts MATCH ? AND s.scope = ?
       ORDER BY sources_fts.rank, s.id LIMIT ?
     `)
-      .all(phrase, scope, limit);
-    return rows.map((row) => ({ ...row }) as unknown as Source);
+      .all(phrase, scope, 101);
+    const state = retrievalRelations(this.#database, scope);
+    const found = new Map<string, Source>();
+    for (const row of rows) {
+      const id = String(row.id);
+      const source =
+        this.find(state.canonical(id), scope) ?? this.find(id, scope);
+      const supersededBy = source && state.superseded.get(source.id);
+      if (source)
+        found.set(source.id, {
+          ...source,
+          ...(supersededBy ? { supersededBy } : {}),
+        });
+    }
+    return [...found.values()]
+      .sort((a, b) => Number(!!a.supersededBy) - Number(!!b.supersededBy))
+      .slice(0, limit);
   }
 
   insert(source: SourceInput): Source {

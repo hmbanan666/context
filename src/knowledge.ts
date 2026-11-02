@@ -8,6 +8,7 @@ import {
 } from "./contracts.js";
 import type { PackageSelection } from "./package-query.js";
 import { redactFields } from "./redaction.js";
+import { retrievalRelations } from "./retrieval-relations.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { IdempotencyConflict } from "./store.js";
 
@@ -43,7 +44,7 @@ export const relateKnowledgeSchema = z
     version: z.literal(1),
     scope: scopeSchema,
     idempotencyKey: identifier,
-    kind: z.enum(["supports", "contradicts", "supersedes"]),
+    kind: z.enum(["supports", "contradicts", "supersedes", "duplicates"]),
     fromId: identifier,
     toId: identifier,
     sourceRefs: knowledgeSourceRefsSchema,
@@ -92,7 +93,7 @@ const itemSchema = z.strictObject({
 const relationSchema = z.strictObject({
   id: identifier,
   scope: scopeSchema,
-  kind: z.enum(["supports", "contradicts", "supersedes"]),
+  kind: z.enum(["supports", "contradicts", "supersedes", "duplicates"]),
   fromId: identifier,
   toId: identifier,
   sourceRefs: knowledgeSourceRefsSchema,
@@ -174,9 +175,9 @@ export class KnowledgeStore {
         CREATE TABLE IF NOT EXISTS knowledge_relations (
           id TEXT PRIMARY KEY NOT NULL,
           scope TEXT NOT NULL,
-          kind TEXT NOT NULL CHECK(kind IN ('supports', 'contradicts', 'supersedes')),
-          from_id TEXT NOT NULL REFERENCES knowledge_items(id),
-          to_id TEXT NOT NULL REFERENCES knowledge_items(id),
+          kind TEXT NOT NULL CHECK(kind IN ('supports', 'contradicts', 'supersedes', 'duplicates')),
+          from_id TEXT NOT NULL,
+          to_id TEXT NOT NULL,
           source_refs TEXT NOT NULL,
           creator TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -203,6 +204,32 @@ export class KnowledgeStore {
           PRIMARY KEY(scope, request_key)
         ) STRICT;
         COMMIT;
+      `);
+      // SQLite cannot alter CHECK/FK constraints; copy all historical rows atomically.
+      const relationSql = String(
+        this.#database
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE name='knowledge_relations'",
+          )
+          .get()?.sql,
+      );
+      if (!relationSql.includes("'duplicates'")) {
+        this.#database.exec(`BEGIN IMMEDIATE;
+          ALTER TABLE knowledge_relations RENAME TO knowledge_relations_old;
+          CREATE TABLE knowledge_relations (
+            id TEXT PRIMARY KEY NOT NULL, scope TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('supports','contradicts','supersedes','duplicates')),
+            from_id TEXT NOT NULL, to_id TEXT NOT NULL, source_refs TEXT NOT NULL,
+            creator TEXT NOT NULL, created_at TEXT NOT NULL, CHECK(from_id <> to_id)
+          ) STRICT;
+          INSERT INTO knowledge_relations SELECT * FROM knowledge_relations_old;
+          DROP TABLE knowledge_relations_old;
+          CREATE INDEX knowledge_relations_scope ON knowledge_relations(scope,created_at,id);
+          COMMIT;`);
+      }
+      this.#database.exec(`
+        CREATE INDEX IF NOT EXISTS knowledge_relations_from ON knowledge_relations(scope,from_id,kind);
+        CREATE INDEX IF NOT EXISTS knowledge_relations_to ON knowledge_relations(scope,to_id,kind);
       `);
       this.#database.exec("BEGIN IMMEDIATE;");
       if (
@@ -404,9 +431,13 @@ export class KnowledgeStore {
     return { total, items, matchOffsets: new Map<string, number>() };
   }
 
+  retrievalRelations(scope: string) {
+    return retrievalRelations(this.#database, scope);
+  }
+
   packageRelations(scope: string, ids: readonly string[]) {
     if (!ids.length) return [];
-    if (ids.length > 20) throw new Error("Too many relation seeds");
+    if (ids.length > 40) throw new Error("Too many relation seeds");
     const placeholders = ids.map(() => "?").join(",");
     return this.#database
       .prepare(
@@ -414,6 +445,15 @@ export class KnowledgeStore {
       )
       .all(scope, ...ids, ...ids)
       .map(decodeRelation);
+  }
+
+  #endpoint(id: string, scope: string) {
+    return (
+      this.find(id, scope) ??
+      this.#database
+        .prepare("SELECT id FROM sources WHERE id=? AND scope=?")
+        .get(id, scope)
+    );
   }
 
   relate(input: RelateKnowledgeInput): {
@@ -439,8 +479,8 @@ export class KnowledgeStore {
         return { relation: decodeRelation(row), duplicate: true };
       }
       if (
-        !this.find(request.fromId, request.scope) ||
-        !this.find(request.toId, request.scope)
+        !this.#endpoint(request.fromId, request.scope) ||
+        !this.#endpoint(request.toId, request.scope)
       ) {
         throw new KnowledgeNotFound("Knowledge unavailable");
       }

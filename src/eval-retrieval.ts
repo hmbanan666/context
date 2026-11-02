@@ -152,7 +152,7 @@ export async function retrieveForEval(
         for (const relation of result.relations) {
           check("relation", relation.id, relationInfo.get(relation.id));
           for (const id of [relation.fromId, relation.toId])
-            check("item", id, itemInfo.get(id));
+            check("endpoint", id, itemInfo.get(id) ?? sourceInfo.get(id));
           for (const id of relation.sourceIds)
             check("source", id, sourceInfo.get(id));
         }
