@@ -21,7 +21,9 @@ Replace `context.example` with your hostname. Forward that hostname to port 3000
 including `/mcp`, `/auth/*`, `/oauth/*` and `/.well-known/*`, preserving Host.
 Alternatively, set the same two variables and run
 `docker compose -f deploy/compose.yaml up -d --build`. Both keep the database and
-nightly local backups in one volume. [Hosting and recovery details](docs/deployment.md).
+nightly local backups in one volume. Behind Traefik (including Dokploy), add
+`-f deploy/dokploy.yaml`: it publishes no host port and preserves the separate
+backup volume. [Hosting, environment and recovery details](docs/deployment.md).
 
 Set your owner password (the terminal hides it):
 
@@ -109,12 +111,14 @@ Existing records are not retroactively rewritten.
 ## Settings
 
 Only `CONTEXT_PUBLIC_URL` is required for a hosted instance. Defaults handle the
-rest. Compose forwards the URL and areas; add optional settings under the service's
-`environment` in a private override (or use `docker run -e`).
+rest. Compose forwards the URL, areas, timezone and all backup settings below.
+Set them in your shell or a private `--env-file`. Other overrides belong in the
+service's `environment` (or use `docker run -e`).
 
 | Environment variable | Default / purpose |
 | --- | --- |
 | `CONTEXT_PUBLIC_URL` | Required HTTPS URL ending in `/mcp`; keep stable after connecting clients. |
+| `CONTEXT_HOST`, `CONTEXT_PROXY_NETWORK` | Required only for the Traefik overlay: public hostname and existing external proxy network. |
 | `CONTEXT_AREAS` | `personal`; comma-separated owner areas, at most eight. |
 | `CONTEXT_DB_PATH` | `./data/context.db` (`/app/data/context.db` in the image). |
 | `CONTEXT_PORT` | `3000`; usually change the host port mapping instead. |
@@ -133,7 +137,8 @@ rest. Compose forwards the URL and areas; add optional settings under the servic
 
 ## Development
 
-Node >=24.21 and npm 11.19.1: `npm ci && npm run check`. Tests cover auth, area
+Node >=24.21 and npm 11.19.1: `npm ci && npm run check`. The test runner pins UTC
+regardless of the machine timezone. Tests cover auth, area
 isolation, redaction, retries, restart and backup/restore. Docker/Compose checks
 run in CI. Public fixtures must be synthetic.
 

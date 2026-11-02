@@ -15,12 +15,56 @@ Retries of old secret-free requests are unchanged. A retry whose old stored
 fingerprint includes now-redacted secrets can conflict; this does not rewrite or
 remove the original. Do not blindly generate a new key for such a retry.
 
-The new Compose file is a portable **fresh-install example**, not a replacement
-for a configured production proxy stack. It binds to host loopback and contains
-no Traefik/Dokploy networks or labels. Keep the existing production Compose/proxy
-configuration when upgrading an image, including its source and backup volumes.
-The old `deploy/dokploy.yaml` overlay only repeated the base network and is removed.
-No automatic volume or network conversion is performed.
+The base `deploy/compose.yaml` is the generic one-volume setup with a loopback
+port. **Behind Traefik, e.g. Dokploy, also use `deploy/dokploy.yaml`** (Compose
+2.24.4+). The overlay removes all published ports, overrides the service network
+with the existing external proxy network, and restores the HTTPS/HTTP redirect,
+HSTS and rate-limit labels. Traefik connects to internal port 3000; no host port
+3000 is reserved. It adds `backups:/app/backups` and fixes
+`CONTEXT_BACKUP_DIR=/app/backups`. Base timezone and backup settings are inherited.
+
+Keep the existing `-p` project name: Compose uses it for the existing `_sources`
+and `_backups` volume names. Do not change that name or remove volumes on upgrade.
+The deployment command remains:
+
+```sh
+docker compose -p YOUR_EXISTING_PROJECT --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/dokploy.yaml up -d --build
+```
+
+The private `deploy/.env` for this overlay must contain your public MCP URL,
+hostname and proxy network. Example (fictional hostname/network):
+
+```dotenv
+CONTEXT_PUBLIC_URL=https://context.example/mcp
+CONTEXT_HOST=context.example
+CONTEXT_PROXY_NETWORK=existing-context-proxy
+CONTEXT_AREAS=personal,projects,inbox
+TZ=Europe/Berlin
+CONTEXT_BACKUP_AT=03:30
+CONTEXT_BACKUP_KEEP=7
+CONTEXT_BACKUP_TARGET=none
+```
+
+`CONTEXT_HOST` must match the URL's hostname. Keep the existing URL unchanged.
+The overlay supplies the backup directory; the image defaults the database to
+`/app/data/context.db`. No owner password or bearer token belongs in this file.
+No `CONTEXT_AUTH` setting is needed.
+
+For off-host copies, replace `none` with `s3` or `sftp` and set the matching
+`CONTEXT_BACKUP_S3_*` or `CONTEXT_BACKUP_SFTP_*` variables listed in the
+[README](../README.md#settings). Both Compose variants forward every supported
+target setting, including nonstandard SFTP ports and an empty S3 prefix. SFTP
+also needs its existing private read-only key-file mount retained in a private
+override; setting a path alone does not mount the key. Remove the obsolete
+`CONTEXT_BACKUP_TIMEZONE`, refresh-lifetime and upload-timeout tuning variables.
+
+Validate without contacting a daemon or starting containers:
+
+```sh
+docker compose -p YOUR_EXISTING_PROJECT --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/dokploy.yaml config --quiet
+```
 
 For an existing separate backup volume, keep `CONTEXT_BACKUP_DIR=/app/backups`
 and its mount. New installs put backups in `/app/data/backups` on the data volume.
@@ -163,8 +207,11 @@ CONTEXT_LOCAL_MCP=enabled npm start
 
 No-auth mode rejects bearer headers and cannot start in production. With neither
 URL nor local opt-in, development exposes health only. Run `npm run check` for
-lint, types and all tests. CI additionally builds Docker, checks Compose defaults
-and runs the one-volume container restart/restore smoke test.
+lint, types and all tests; the test runner pins UTC itself. CI additionally runs
+`node dist/test/validate-compose.js` against synthetic base/overlay configurations
+(no daemon), builds Docker and runs the one-volume restart/restore smoke test.
+The Compose check asserts no hosted port binding, stable volume names, proxy
+network/labels, timezone and local/S3/SFTP backup configuration.
 
 This refactor's tests cannot establish physical passkey compatibility, hosted
 inactivity/next-day refresh, real off-host recovery or a production resource

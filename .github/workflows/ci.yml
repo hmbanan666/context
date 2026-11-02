@@ -24,22 +24,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run eval:retrieval
-      - name: Validate Compose backup defaults
-        env:
-          CONTEXT_PUBLIC_URL: https://context.example/mcp
-        run: |
-          mkdir -p .output
-          docker compose -f deploy/compose.yaml config --format json > .output/compose.json
-          node --input-type=module <<'JS'
-          import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          import { readBackupConfig } from './dist/src/backup-config.js';
-          const env = JSON.parse(readFileSync('.output/compose.json', 'utf8')).services.context.environment;
-          const config = readBackupConfig(env);
-          assert.equal(config.directory, './data/backups');
-          assert.equal(config.at, '03:30');
-          assert.equal(config.keep, 7);
-          assert.equal(config.target.kind, 'none');
-          JS
+      - name: Validate base and Traefik Compose configurations (no daemon)
+        run: node dist/test/validate-compose.js
       - run: docker build -t context:ci .
       - run: npm run test:container

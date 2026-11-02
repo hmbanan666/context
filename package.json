@@ -14,7 +14,7 @@
     "start": "node dist/src/main.js",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test --test-concurrency=3 dist/test/*.test.js",
+    "test": "npm run build && TZ=UTC node --test --test-concurrency=3 dist/test/*.test.js",
     "database": "node dist/scripts/database.js",
     "memory:process": "node dist/scripts/process-memory.js",
     "test:container": "python3 scripts/container-smoke.py",

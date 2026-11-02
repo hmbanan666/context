@@ -1,0 +1,34 @@
+# Running behind Traefik, e.g. Dokploy. Requires Compose 2.24.4+.
+# Keep the existing project name (-p) to retain source/backup volume identities.
+services:
+  context:
+    ports: !reset []
+    networks: !override [dokploy]
+    environment:
+      CONTEXT_BACKUP_DIR: /app/backups
+    volumes:
+      - backups:/app/backups
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${CONTEXT_PROXY_NETWORK:?Set the isolated Context proxy network}
+      traefik.http.routers.context.rule: Host(`${CONTEXT_HOST:?Set the public Context hostname}`)
+      traefik.http.routers.context.priority: "10"
+      traefik.http.routers.context.entrypoints: websecure
+      traefik.http.routers.context.middlewares: context-security,context-rate
+      traefik.http.routers.context.tls.certresolver: letsencrypt
+      traefik.http.routers.context-http.rule: Host(`${CONTEXT_HOST:?Set the public Context hostname}`)
+      traefik.http.routers.context-http.entrypoints: web
+      traefik.http.routers.context-http.middlewares: context-https
+      traefik.http.middlewares.context-https.redirectscheme.scheme: https
+      traefik.http.middlewares.context-security.headers.stsseconds: "31536000"
+      traefik.http.middlewares.context-rate.ratelimit.average: "20"
+      traefik.http.middlewares.context-rate.ratelimit.burst: "40"
+      traefik.http.services.context.loadbalancer.server.port: "3000"
+
+networks:
+  dokploy:
+    external: true
+    name: ${CONTEXT_PROXY_NETWORK:?Set the isolated Context proxy network}
+
+volumes:
+  backups:
