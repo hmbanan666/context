@@ -1,6 +1,7 @@
 import { evalConfig } from "./eval-config.js";
 import { appendEvalRun, evalHistory } from "./eval-history.js";
-import { type EvalRun, evaluate } from "./eval-runner.js";
+import type { EvalRun } from "./eval-runner.js";
+import { evaluateWithLocalModel } from "./eval-search.js";
 
 export function evalExitCode(run: EvalRun) {
   return run.metrics.isolation_violations > 0
@@ -44,7 +45,7 @@ export async function evalCommand(args: string[], env: NodeJS.ProcessEnv) {
     else throw new Error("Invalid eval option");
   }
   if (action === "run") {
-    const run = await evaluate(config);
+    const run = await evaluateWithLocalModel(config);
     await appendEvalRun(config.directory, run);
     process.stdout.write(`${json ? JSON.stringify(run) : formatRun(run)}\n`);
     process.exitCode = evalExitCode(run);
@@ -56,6 +57,9 @@ export async function evalCommand(args: string[], env: NodeJS.ProcessEnv) {
   }
 }
 
-function formatRun(run: EvalRun) {
-  return `${run.timestamp} ${run.id} ${run.outcome}\n  ${JSON.stringify(run.metrics)}\n  ${run.questions.map((q) => `${q.id}:${q.pass === null ? "skip" : q.pass ? "pass" : "fail"}`).join(" ")}`;
+export function formatRun(run: EvalRun) {
+  const search = run.search
+    ? `search: ${run.search.mode}; semantic: ${run.search.semantic}; model: ${run.search.model}`
+    : "search: unrecorded (legacy row)";
+  return `${run.timestamp} ${run.id} ${run.outcome}\n  ${search}\n  ${JSON.stringify(run.diagnostics ?? {})}\n  ${JSON.stringify(run.metrics)}\n  ${run.questions.map((q) => `${q.id}:${q.pass === null ? "skip" : q.pass ? "pass" : "fail"}`).join(" ")}`;
 }

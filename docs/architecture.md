@@ -64,9 +64,12 @@ existing database; no startup cleanup drops or rewrites them.
 
 The [eval harness](evals.md) exercises the protected `context_package` handler
 with simulated read-only client grants over an in-process MCP transport. Search
-remains owned by the MCP implementation. Source and knowledge stores have explicit
+remains owned by the MCP implementation, with its embedding index attached.
+Nightly eval shares the server index/model; the standalone CLI opens a read-only
+index and loads one local model. History records actual semantic availability
+and a lexical-control comparison. Source and knowledge stores have explicit
 read-only opening modes; a separate metadata lookup audits the actual area of
-returned sources, items and relations. Results contain only numeric metrics and
+returned sources, items and relations. Results contain content-free metrics, search metadata and
 question IDs, appended to `evals/history.jsonl` beside the database.
 
 The existing nightly backup callback runs eval afterward if `evals/questions.yaml`

@@ -4,6 +4,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
+import type { EmbeddingIndex } from "./embedding-index.js";
 import type { EvalQuestion } from "./eval-questions.js";
 import { KnowledgeStore } from "./knowledge.js";
 import { createContextMcp } from "./mcp.js";
@@ -38,12 +39,15 @@ export async function retrieveForEval(
   databasePath: string,
   question: EvalQuestion,
   k: number,
+  embeddings?: EmbeddingIndex,
 ) {
   const sources = new SourceStore(databasePath, { readOnly: true });
   let knowledge: KnowledgeStore | undefined;
   let metadata: DatabaseSync | undefined;
   let handler: ReturnType<typeof createContextMcp> | undefined;
   const client = new Client({ name: "context-eval", version: "1" });
+  let semanticUsed = false;
+  let semanticUnavailable = false;
   try {
     knowledge = new KnowledgeStore(databasePath, { readOnly: true });
     metadata = new DatabaseSync(databasePath, {
@@ -52,6 +56,21 @@ export async function retrieveForEval(
     });
     handler = createContextMcp(sources, [], true, {
       knowledge,
+      ...(embeddings
+        ? {
+            embeddings: {
+              status: (scope?: string) => embeddings.status(scope),
+              search: async (input) => {
+                const hits = await embeddings.search(input);
+                if (question.areas.includes(input.scope)) {
+                  semanticUsed ||= hits.available;
+                  semanticUnavailable ||= !hits.available;
+                }
+                return hits;
+              },
+            },
+          }
+        : {}),
       clientGrants: {
         "context-eval": { read: question.read_areas, write: [], process: [] },
       },
@@ -169,7 +188,14 @@ export async function retrieveForEval(
           hits.push(hit);
       }
     }
-    return { hits, isolationViolations: violations.size, failed };
+    return {
+      hits,
+      isolationViolations: violations.size,
+      violationKeys: [...violations],
+      failed,
+      semanticUsed,
+      semanticUnavailable,
+    };
   } finally {
     await client.close();
     await handler?.close();

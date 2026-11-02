@@ -477,7 +477,7 @@ test("weak semantic neighbours do not fill a package with unrelated evidence", a
     version: "synthetic-v1",
     async embed(_text, purpose) {
       return Float32Array.from(
-        purpose === "query" ? [1, 0] : [0.79, Math.sqrt(1 - 0.79 ** 2)],
+        purpose === "query" ? [1, 0] : [0.75, Math.sqrt(1 - 0.75 ** 2)],
       );
     },
   });
