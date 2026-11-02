@@ -261,7 +261,8 @@ test("all legacy names remain callable while discovery advertises only four anno
         sources: "read",
         items: "read",
         relations: "read",
-        arguments: "scope=this scope, id=selected ID",
+        arguments:
+          "scope=this scope, id=source/knowledge ID; for relations use fromId or toId",
       },
     });
     assert.deepEqual([...called].filter((name) => name !== "read").sort(), [
