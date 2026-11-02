@@ -5,6 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 import { type CaptureInput, captureSchema } from "./contracts.js";
 import type { ImportProvenance } from "./import-format.js";
 import {
+  KnowledgeNotFound,
+  KnowledgeStore,
+  knowledgeCreatorSchema,
+  supersedesSchema,
+} from "./knowledge.js";
+import {
   type CaptureFileInput,
   type CaptureMaterialInput,
   captureFileSchema,
@@ -35,6 +41,11 @@ export interface Source extends SourceInput {
 }
 
 export class IdempotencyConflict extends Error {}
+
+interface CaptureSupersession {
+  ids: string[];
+  clientId: string;
+}
 
 interface StoredMaterial {
   readonly metadata: MaterialMetadata;
@@ -182,7 +193,10 @@ export class SourceStore {
     return this.#capture(request, fingerprint);
   }
 
-  captureMaterial(input: CaptureMaterialInput): {
+  captureMaterial(
+    input: CaptureMaterialInput,
+    supersession?: CaptureSupersession,
+  ): {
     material: Material;
     duplicate: boolean;
   } {
@@ -198,7 +212,13 @@ export class SourceStore {
       request,
       metadata,
     );
-    const saved = this.#capture(request, fingerprint, { metadata });
+    const saved = this.#capture(
+      request,
+      fingerprint,
+      { metadata },
+      undefined,
+      supersession,
+    );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
     return { material, duplicate: saved.duplicate };
@@ -233,7 +253,10 @@ export class SourceStore {
     return { ...saved, changed: saved.changed ?? false };
   }
 
-  captureFile(input: CaptureFileInput): {
+  captureFile(
+    input: CaptureFileInput,
+    supersession?: CaptureSupersession,
+  ): {
     material: Material;
     duplicate: boolean;
   } {
@@ -260,7 +283,13 @@ export class SourceStore {
       metadata,
       [file.filename, file.mediaType, request.contentBase64],
     );
-    const saved = this.#capture(sourceRequest, fingerprint, { metadata, file });
+    const saved = this.#capture(
+      sourceRequest,
+      fingerprint,
+      { metadata, file },
+      undefined,
+      supersession,
+    );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
     return { material, duplicate: saved.duplicate };
@@ -292,12 +321,35 @@ export class SourceStore {
 
   #capture(
     request: Pick<CaptureInput, "text" | "origin" | "scope" | "idempotencyKey">,
-    fingerprint: string,
+    captureFingerprint: string,
     material?: StoredMaterial,
     imported?: ImportProvenance,
+    supersession?: CaptureSupersession,
   ): { source: Source; duplicate: boolean; changed?: boolean } {
+    const replacing = supersession
+      ? {
+          ids: supersedesSchema.parse(supersession.ids).sort(),
+          creator: knowledgeCreatorSchema.parse({
+            kind: "user",
+            name: supersession.clientId,
+          }),
+        }
+      : undefined;
+    // Preserve old fingerprints when no supersession was requested.
+    const fingerprint = replacing
+      ? createHash("sha256")
+          .update(JSON.stringify([captureFingerprint, replacing]))
+          .digest("hex")
+      : captureFingerprint;
     this.#database.exec("BEGIN IMMEDIATE");
     try {
+      const knowledge = replacing
+        ? new KnowledgeStore(this.#database)
+        : undefined;
+      for (const id of replacing?.ids ?? []) {
+        if (!knowledge?.hasEndpoint(id, request.scope))
+          throw new KnowledgeNotFound("Replacement target unavailable");
+      }
       const existing = imported
         ? this.#database
             .prepare(
@@ -385,6 +437,21 @@ export class SourceStore {
         INSERT INTO capture_requests (scope, request_key, fingerprint, source_id) VALUES (?, ?, ?, ?)
       `)
           .run(request.scope, request.idempotencyKey, fingerprint, source.id);
+      if (replacing && knowledge)
+        for (const id of replacing.ids) {
+          knowledge.relate({
+            version: 1,
+            scope: request.scope,
+            idempotencyKey: `remember:${createHash("sha256")
+              .update(JSON.stringify([request.idempotencyKey, id]))
+              .digest("hex")}`,
+            kind: "supersedes",
+            fromId: source.id,
+            toId: id,
+            sourceRefs: [{ sourceId: source.id }],
+            creator: replacing.creator,
+          });
+        }
       this.#database.exec("COMMIT");
       return { source, duplicate: false, ...(imported ? { changed } : {}) };
     } catch (error) {

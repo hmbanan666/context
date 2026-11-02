@@ -12,6 +12,12 @@ import { retrievalRelations } from "./retrieval-relations.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { IdempotencyConflict } from "./store.js";
 
+export const supersedesSchema = z
+  .array(identifier)
+  .min(1)
+  .max(8)
+  .refine((ids) => new Set(ids).size === ids.length);
+
 export const knowledgeCreatorSchema = z.strictObject({
   kind: z.enum(["user", "model"]),
   name: text(128),
@@ -137,12 +143,22 @@ function validateLimit(scope: string, limit: number): void {
 
 export class KnowledgeStore {
   readonly #database: DatabaseSync;
+  readonly #ownsConnection: boolean;
 
-  constructor(path: string, options: { readOnly?: boolean } = {}) {
-    this.#database = new DatabaseSync(path, {
-      timeout: 5000,
-      readOnly: options.readOnly ?? false,
-    });
+  constructor(
+    path: string | DatabaseSync,
+    options: { readOnly?: boolean } = {},
+  ) {
+    this.#ownsConnection = typeof path === "string";
+    this.#database =
+      typeof path === "string"
+        ? new DatabaseSync(path, {
+            timeout: 5000,
+            readOnly: options.readOnly ?? false,
+          })
+        : path;
+    // Borrow an initialized writer connection to commit source and relations together.
+    if (!this.#ownsConnection) return;
     try {
       if (!options.readOnly)
         this.#database.exec(
@@ -255,6 +271,7 @@ export class KnowledgeStore {
   }
 
   #transaction<T>(operation: () => T): T {
+    if (this.#database.isTransaction) return operation();
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       const result = operation();
@@ -447,8 +464,9 @@ export class KnowledgeStore {
       .map(decodeRelation);
   }
 
-  #endpoint(id: string, scope: string) {
-    return (
+  hasEndpoint(id: string, scope: string) {
+    validateLookup(id, scope);
+    return !!(
       this.find(id, scope) ??
       this.#database
         .prepare("SELECT id FROM sources WHERE id=? AND scope=?")
@@ -479,8 +497,8 @@ export class KnowledgeStore {
         return { relation: decodeRelation(row), duplicate: true };
       }
       if (
-        !this.#endpoint(request.fromId, request.scope) ||
-        !this.#endpoint(request.toId, request.scope)
+        !this.hasEndpoint(request.fromId, request.scope) ||
+        !this.hasEndpoint(request.toId, request.scope)
       ) {
         throw new KnowledgeNotFound("Knowledge unavailable");
       }
@@ -525,6 +543,6 @@ export class KnowledgeStore {
   }
 
   close(): void {
-    this.#database.close();
+    if (this.#ownsConnection) this.#database.close();
   }
 }
