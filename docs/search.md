@@ -246,14 +246,15 @@ it does not load a second model. Exact NFKC/whitespace-normalized text equality
 (including identical checksums) needs no vectors. Near duplicates require cosine
 **≥ 0.97**, length ratio **≥ 0.95**, token-set overlap **≥ 0.95**, and unchanged
 numeric/negation tokens. Tidy uses the source creation date when present, otherwise
-the capture date, for direction, watermark windows and oldest-first canonical
-choice, with insertion order breaking canonical ties.
+the capture date, for direction and oldest-first canonical choice, with insertion
+order breaking canonical ties. Watermark windows use capture time so newly
+imported old notes are considered.
 These conservative guards keep `limit 3` / `limit 4` distinct even at cosine 1.
 Synthetic tests cover threshold boundaries and this numeric counterexample;
 private/real-model dedup precision has not been measured here.
 
 Model candidates are non-duplicate pairs with cosine ≥ 0.85, each at most 1,500
-characters, and at least one effective date since the last successful run (all on the
+characters, and at least one capture date since the last successful run (all on the
 first run). The model receives both texts and effective dates labelled a/b and
 returns `{"current":"a"|"b"|null}`; a choice more than one minute older than the
 other is skipped without failure, otherwise a non-null choice links current → other.

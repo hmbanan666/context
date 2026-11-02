@@ -29,6 +29,7 @@ interface TidySource {
   text: string;
   scope: string;
   effective_date: string;
+  captured_at: string;
   checksum: string;
 }
 export interface TidyOptions {
@@ -241,7 +242,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     for (const area of areas) {
       const sources = db
         .prepare(
-          `SELECT s.rowid AS row,s.id,s.text,s.scope,
+          `SELECT s.rowid AS row,s.id,s.text,s.scope,s.captured_at,
             COALESCE(m.created_at,s.captured_at) AS effective_date,s.checksum
            FROM sources s LEFT JOIN source_metadata m ON m.source_id=s.id
            WHERE s.scope=? ORDER BY s.rowid`,
@@ -295,8 +296,8 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           const a = laterRow,
             b = priorRow;
           const latestDate = Math.max(
-            Date.parse(a.effective_date),
-            Date.parse(b.effective_date),
+            Date.parse(a.captured_at),
+            Date.parse(b.captured_at),
           );
           if (
             [a, b].some(

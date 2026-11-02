@@ -156,7 +156,7 @@ for (const [name, aDate, bDate, choice, skipped] of [
   });
 }
 
-test("tidy filters both watermark bounds by effective date with capture-date fallback", async (t) => {
+test("tidy windows use capture time so newly imported old notes are considered", async (t) => {
   t.mock.timers.enable({
     apis: ["Date"],
     now: Date.parse("2026-01-02T00:00:00Z"),
@@ -191,13 +191,20 @@ test("tidy filters both watermark bounds by effective date with capture-date fal
     f.capture("Synthetic lunar agents limit 2", "2026-01-01T00:00:00Z");
     f.capture("Synthetic lunar agents limit 3", "2026-01-03T00:00:00Z");
     f.capture("Synthetic lunar agents limit 4", "2026-01-05T00:00:00Z");
+    f.add(
+      "future-capture",
+      "Synthetic lunar agents limit 5",
+      "personal",
+      "2026-01-05T00:00:00Z",
+    );
     while (await index.processOne()) {
       /* synthetic vector preparation */
     }
     const run = await runTidy(options);
-    // Only Jan 3 paired with either Jan 1 source lies inside the window.
-    assert.equal(run.pairs, 2);
-    assert.equal(calls, 2);
+    // All three imports arrived Jan 4, including the old and future authored notes.
+    // Their six pairs qualify; a future capture does not.
+    assert.equal(run.pairs, 6);
+    assert.equal(calls, 6);
     assert.equal(run.failures, 0);
     assert.equal(run.lastSuccessfulAt, "2026-01-04T00:00:00.000Z");
   } finally {
