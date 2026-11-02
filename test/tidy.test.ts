@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { EmbeddingIndex } from "../src/embedding-index.js";
 import { KnowledgeStore } from "../src/knowledge.js";
@@ -41,15 +42,169 @@ async function fixture() {
     },
   };
 }
+test("tidy preserves a duplicate decision when effective dates reverse on rerun", async () => {
+  const f = await fixture();
+  try {
+    const text =
+      "Synthetic lunar garden maintenance records describe watering schedules and seasonal observations.";
+    const first = f.capture(text, "2026-01-01T00:00:00Z");
+    const second = f.capture(
+      text.replace("lunar garden", "lunar  garden"),
+      "2026-01-02T00:00:00Z",
+    );
+    const options = { databasePath: f.path, areas: ["personal"] };
+    assert.equal((await runTidy(options)).duplicates, 1);
+    const before = f.knowledge.relations("personal");
+    const db = new DatabaseSync(f.path);
+    try {
+      db.prepare(
+        "UPDATE source_metadata SET created_at=? WHERE source_id=?",
+      ).run("2025-01-01T00:00:00Z", second.id);
+    } finally {
+      db.close();
+    }
+    assert.equal((await runTidy({ ...options, dryRun: true })).duplicates, 0);
+    assert.equal((await runTidy(options)).duplicates, 0);
+    assert.deepEqual(f.knowledge.relations("personal"), before);
+    assert.equal(
+      f.knowledge.retrievalRelations("personal").canonical(second.id),
+      first.id,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("tidy never closes an existing duplicate chain, including branches into cycles", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-02-01T00:00:00Z"),
+  });
+  const f = await fixture();
+  try {
+    const text =
+      "Synthetic lunar garden maintenance records describe watering schedules and seasonal observations.";
+    f.add("a", text);
+    f.add("b", "Different synthetic intermediary");
+    f.add("c", text, "personal", "2026-01-03T00:00:00Z");
+    for (const [fromId, toId] of [
+      ["a", "b"],
+      ["b", "c"],
+    ] as const) {
+      f.knowledge.relate({
+        version: 1,
+        scope: "personal",
+        idempotencyKey: fromId,
+        kind: "duplicates",
+        fromId,
+        toId,
+        sourceRefs: [{ sourceId: fromId }],
+        creator: { kind: "user", name: "fixture" },
+      });
+    }
+    const before = f.knowledge.relations("personal");
+    for (const dryRun of [true, false]) {
+      const run = await runTidy({
+        databasePath: f.path,
+        areas: ["personal"],
+        dryRun,
+      });
+      assert.equal(run.duplicates, 0);
+      assert.deepEqual(f.knowledge.relations("personal"), before);
+      assert.deepEqual(
+        f.sources.search("watering", "personal", 10).map((s) => s.id),
+        ["c"],
+      );
+    }
+    t.mock.timers.tick(1000);
+    f.add("d", text, "personal", "2026-01-04T00:00:00Z");
+    // Legacy cycle a -> b -> c -> a plus a later branch b -> d.
+    // d -> a would close another cycle even though canonical(a) is a.
+    for (const [fromId, toId] of [
+      ["c", "a"],
+      ["b", "d"],
+    ] as const) {
+      f.knowledge.relate({
+        version: 1,
+        scope: "personal",
+        idempotencyKey: `${fromId}:${toId}`,
+        kind: "duplicates",
+        fromId,
+        toId,
+        sourceRefs: [{ sourceId: fromId }],
+        creator: { kind: "user", name: "fixture" },
+      });
+    }
+    for (const dryRun of [true, false]) {
+      const run = await runTidy({
+        databasePath: f.path,
+        areas: ["personal"],
+        dryRun,
+      });
+      assert.equal(run.duplicates, 0);
+      assert.equal(f.knowledge.relations("personal").length, 4);
+      assert.deepEqual(
+        f.sources
+          .search("watering", "personal", 10)
+          .map((s) => s.id)
+          .sort(),
+        ["a", "d"],
+      );
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test("exact and vector dedup require 80 normalized characters on both sources", async () => {
+  for (const text of [
+    "fix: deploy",
+    "chore: some updates",
+    "x".repeat(79),
+    "x".repeat(80),
+  ]) {
+    for (const suffix of ["", "!"]) {
+      const f = await fixture();
+      const index = new EmbeddingIndex(f.path, {
+        version: "fixture",
+        async embed() {
+          return Float32Array.from([1, 0]);
+        },
+      });
+      try {
+        f.add("a", `  ${text}  `);
+        f.add("b", `${text}${suffix}`, "personal", "2026-01-02T00:00:00Z");
+        while (await index.processOne()) {
+          /* synthetic vectors */
+        }
+        const run = await runTidy({
+          databasePath: f.path,
+          areas: ["personal"],
+          embeddingModel: "fixture",
+        });
+        assert.equal(
+          run.duplicates,
+          text.length === 80 ? 1 : 0,
+          `${text.length} / ${suffix}`,
+        );
+        assert.equal(f.knowledge.relations("personal").length, run.duplicates);
+      } finally {
+        await index.close();
+        await f.close();
+      }
+    }
+  }
+});
+
 test("tidy without a key deduplicates within areas, preserves originals, and dry-run writes nothing", async () => {
   const f = await fixture();
   try {
     const copy = f.capture(
-      "  Synthetic   lunar garden note  ",
+      "  Synthetic   lunar garden note describing watering schedules with seasonal observations and routine maintenance.  ",
       "2026-01-02T00:00:00Z",
     );
     const original = f.capture(
-      "Synthetic lunar garden note",
+      "Synthetic lunar garden note describing watering schedules with seasonal observations and routine maintenance.",
       "2026-01-01T00:00:00Z",
     );
     f.add("foreign", original.text, "vault");
@@ -229,20 +384,27 @@ test("tidy uses vectors for conservative dedup and model updates, retries failur
     },
   });
   try {
-    f.add("old", "Synthetic lunar agents limit 3");
+    f.add(
+      "old",
+      "Synthetic lunar garden maintenance instructions specify the maximum simultaneous agents limit 3",
+    );
     f.add(
       "new",
-      "Synthetic lunar agents limit 4",
+      "Synthetic lunar garden maintenance instructions specify the maximum simultaneous agents limit 4",
       "personal",
       "2026-01-02T00:00:00Z",
     );
     f.add(
       "copy",
-      "Synthetic lunar agents limit 4!",
+      "Synthetic lunar garden maintenance instructions specify the maximum simultaneous agents limit 4!",
       "personal",
       "2026-01-03T00:00:00Z",
     );
-    f.add("foreign", "Synthetic lunar agents limit 8", "vault");
+    f.add(
+      "foreign",
+      "Synthetic lunar garden maintenance instructions specify the maximum simultaneous agents limit 8",
+      "vault",
+    );
     while (await index.processOne()) {
       /* synthetic vector preparation */
     }
@@ -387,8 +549,16 @@ test("tidy CLI dry-run reports synthetic counts without changing database bytes 
   const { spawnSync } = await import("node:child_process");
   const f = await fixture();
   try {
-    f.add("original", "Synthetic dry run note");
-    f.add("copy", "Synthetic dry run note", "personal", "2026-01-02T00:00:00Z");
+    f.add(
+      "original",
+      "Synthetic dry run note describing lunar garden watering schedules and seasonal observations.",
+    );
+    f.add(
+      "copy",
+      "Synthetic dry run note describing lunar garden watering schedules and seasonal observations.",
+      "personal",
+      "2026-01-02T00:00:00Z",
+    );
     const before = await readFile(f.path);
     const result = spawnSync(
       process.execPath,
@@ -489,17 +659,17 @@ test("near-duplicate cosine gate is conservative and concurrent reruns add one r
   try {
     f.add(
       "original",
-      "Synthetic lunar garden keeps a detailed daily maintenance journal",
+      "Synthetic lunar garden keeps a detailed daily maintenance journal about watering schedules and seasonal observations",
     );
     f.add(
       "below",
-      "Synthetic lunar garden keeps a detailed daily maintenance journal?",
+      "Synthetic lunar garden keeps a detailed daily maintenance journal about watering schedules and seasonal observations?",
       "personal",
       "2026-01-02T00:00:00Z",
     );
     f.add(
       "above",
-      "Synthetic lunar garden keeps a detailed daily maintenance journal!",
+      "Synthetic lunar garden keeps a detailed daily maintenance journal about watering schedules and seasonal observations!",
       "personal",
       "2026-01-03T00:00:00Z",
     );
@@ -531,11 +701,14 @@ for (const processor of ["codex", "openai"] as const) {
   test(`${processor} batches both jobs within 12 calls and resumes untouched work`, async () => {
     const { createLlm } = await import("../src/llm.js");
     const { fakeCodex } = await import("./fake-codex.js");
-    const fake = await fakeCodex(`
+    const fake = await fakeCodex(
+      `
 assert.ok(Array.isArray(data) && data.length <= 25);
 fs.appendFileSync(process.env.HOME + '/calls.jsonl', JSON.stringify(data) + '\\n');
 respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, confidence:0}));
-`);
+`,
+      `fs.appendFileSync(process.env.HOME + '/preflights', '1'); process.exit(0);`,
+    );
     const f = await fixture();
     const index = new EmbeddingIndex(f.path, {
       version: "fixture",
@@ -614,6 +787,11 @@ respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, 
               .split("\n")
               .map((line) => JSON.parse(line))
           : apiBatches;
+      if (processor === "codex")
+        assert.equal(
+          await readFile(join(fake.directory, "preflights"), "utf8"),
+          "11",
+        );
       assert.equal(batches.length, 14);
       assert.ok(batches.every((batch) => batch.length <= 25));
       assert.equal(batches.flat().length, 320);
@@ -642,13 +820,19 @@ for (const [name, body] of [
     "console.error('synthetic-private-diagnostic'); process.exit(1);",
   ],
   ["timeout", "setInterval(() => {}, 1000);"],
+  ["login timeout", "setInterval(() => {}, 1000);"],
   ["oversized output", "console.log('x'.repeat(256 * 1024));"],
   ["missing binary", ""],
 ]) {
   test(`Codex ${name} falls back to dedup without exposing diagnostics or changing sources`, async () => {
     const { createCodexLlm } = await import("../src/codex-llm.js");
     const { fakeCodex } = await import("./fake-codex.js");
-    const fake = await fakeCodex(body ?? "");
+    const preflightFails = [
+      "not logged in",
+      "login timeout",
+      "missing binary",
+    ].includes(name ?? "");
+    const fake = await fakeCodex(body ?? "", preflightFails ? body : undefined);
     const f = await fixture();
     const index = new EmbeddingIndex(f.path, {
       version: "fixture",
@@ -660,8 +844,16 @@ for (const [name, body] of [
       if (name === "missing binary") await rm(join(fake.directory, "codex"));
       const old = f.add("old", "Synthetic limit 1");
       const newer = f.add("new", "Synthetic limit 2");
-      f.add("duplicate-a", "Synthetic repeated note", "vault");
-      f.add("duplicate-b", "Synthetic repeated note", "vault");
+      f.add(
+        "duplicate-a",
+        "Synthetic repeated note describing lunar garden watering schedules and seasonal observations.",
+        "vault",
+      );
+      f.add(
+        "duplicate-b",
+        "Synthetic repeated note describing lunar garden watering schedules and seasonal observations.",
+        "vault",
+      );
       while (await index.processOne()) {
         /* synthetic vector preparation */
       }
@@ -673,12 +865,12 @@ for (const [name, body] of [
         llm: createCodexLlm(
           fake.env,
           "fixture",
-          name === "timeout" ? 200 : 5000,
+          name?.includes("timeout") ? 200 : 5000,
         ),
       });
       assert.ok(performance.now() - started < 5000);
       assert.equal(run.llm, "unavailable");
-      assert.equal(run.llmCalls, 1);
+      assert.equal(run.llmCalls, preflightFails ? 0 : 1);
       assert.equal(run.failures, 1);
       assert.equal(run.duplicates, 1);
       assert.equal(run.supersedes, 0);

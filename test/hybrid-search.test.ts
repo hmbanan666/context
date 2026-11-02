@@ -531,6 +531,60 @@ test("weak semantic neighbours do not fill a package with unrelated evidence", a
   }
 });
 
+test("duplicate cycles and incoming chains resolve to one visible, deterministic source", async () => {
+  const dir = await mkdtemp(join(process.cwd(), ".output-tidy-cycle-"));
+  const f = await openPackageFixture(join(dir, "db"));
+  try {
+    const client = await f.connect();
+    for (const size of [2, 3]) {
+      const ids =
+        size === 2 ? ["amber", "bronze"] : ["cobalt", "denim", "emerald"];
+      const tail = size === 2 ? "saffron" : "violet";
+      for (const id of [...ids, tail])
+        f.store.insert({
+          id,
+          text: `Synthetic ${id} garden archive`,
+          scope: "personal",
+          origin: "fixture",
+          capturedAt: "2026-01-01T00:00:00Z",
+        });
+      for (const [i, fromId] of [...ids, tail].entries()) {
+        const toId = ids[(i + 1) % size] as string;
+        f.knowledge.relate({
+          version: 1,
+          scope: "personal",
+          idempotencyKey: fromId,
+          kind: "duplicates",
+          fromId,
+          toId,
+          sourceRefs: [{ sourceId: fromId }],
+          creator: { kind: "user", name: "fixture" },
+        });
+      }
+      for (const id of [...ids, tail]) {
+        assert.deepEqual(
+          f.store.search(id, "personal", 10).map((s) => s.id),
+          [ids[0]],
+        );
+        const result = await client.callTool({
+          name: "search",
+          arguments: { query: id },
+        });
+        assert.ok(!result.isError);
+        assert.deepEqual(
+          (
+            result.structuredContent as { sources: { id: string }[] }
+          ).sources.map((s) => s.id),
+          [ids[0]],
+        );
+      }
+    }
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("current sources outrank history and duplicate-only matches return one readable canonical", async () => {
   const dir = await mkdtemp(join(process.cwd(), ".output-tidy-search-"));
   const f = await openPackageFixture(join(dir, "db"));

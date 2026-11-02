@@ -45,6 +45,22 @@ export function createCodexLlm(
   return {
     processor: "codex",
     model,
+    async preflight() {
+      await new Promise<void>((resolve, reject) => {
+        const unavailable = () =>
+          reject(new ModelUnavailableError("model_unavailable"));
+        const child = spawn("codex", ["login", "status"], {
+          cwd: "/tmp",
+          env: childEnv,
+          stdio: "ignore",
+          shell: false,
+          timeout: Math.min(timeoutMs, 5000),
+          killSignal: "SIGKILL",
+        });
+        child.on("error", unavailable);
+        child.on("close", (code) => (code === 0 ? resolve() : unavailable()));
+      });
+    },
     async ask(instruction, data) {
       const directory = await mkdtemp("/tmp/context-codex-");
       try {

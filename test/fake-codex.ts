@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // Synthetic CLI boundary: never uses the host's Codex login or network.
-export async function fakeCodex(body: string) {
+export async function fakeCodex(body: string, loginBody = "process.exit(0);") {
   const directory = await mkdtemp(join(process.cwd(), ".output-codex-"));
   await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
   await writeFile(
@@ -11,6 +11,11 @@ export async function fakeCodex(body: string) {
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+if (args[0] === 'login') {
+  assert.deepEqual(args, ['login', 'status']);
+  ${loginBody}
+  return;
+}
 const prompt = fs.readFileSync(0, 'utf8');
 const data = JSON.parse(prompt.trim().split('\\n').at(-1));
 function respond(value) {

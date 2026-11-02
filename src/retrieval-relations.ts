@@ -26,19 +26,24 @@ export function retrievalRelations(db: DatabaseSync, scope: string) {
       ORDER BY r.created_at,r.id`)
       .all(scope, scope, scope);
     for (const row of rows) {
-      if (row.kind === "duplicates")
-        duplicates.set(String(row.from_id), String(row.to_id));
-      else superseded.set(String(row.to_id), String(row.from_id));
+      if (row.kind === "duplicates") {
+        // Retain the earliest recorded decision if a source has multiple links.
+        if (!duplicates.has(String(row.from_id)))
+          duplicates.set(String(row.from_id), String(row.to_id));
+      } else superseded.set(String(row.to_id), String(row.from_id));
     }
   }
   return {
     superseded,
     canonical(id: string) {
-      const seen = new Set<string>();
+      const seen = new Map<string, number>();
       let current = id;
       while (duplicates.has(current)) {
-        if (seen.has(current)) return id; // Malformed cycles never hide evidence.
-        seen.add(current);
+        const cycleStart = seen.get(current);
+        // Every entry into a cycle must choose the same member, including tails.
+        if (cycleStart !== undefined)
+          return [...seen.keys()].slice(cycleStart).sort()[0] ?? current;
+        seen.set(current, seen.size);
         current = duplicates.get(current) ?? current;
       }
       return current;
