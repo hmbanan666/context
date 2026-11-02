@@ -184,3 +184,43 @@ test("readiness means graceful shutdown is already installed", {
     await rm(f.directory, { recursive: true, force: true });
   }
 });
+
+test("backup configuration failure leaves health available and emits only a safe outcome", {
+  timeout: 10000,
+}, async () => {
+  const f = await fixture();
+  const child = spawn(process.execPath, [main], {
+    env: { ...f.env, CONTEXT_BACKUP_TARGET: "s3" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const exited = once(child, "exit");
+  let output = "";
+  let errors = "";
+  child.stdout.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    errors += chunk.toString();
+  });
+  try {
+    for (let i = 0; i < 200 && !output.includes("\n"); i++) await delay(20);
+    const event = JSON.parse(output.trim());
+    assert.equal(event.event, "listening");
+    assert.deepEqual(
+      await (await fetch(`http://127.0.0.1:${event.port}/health`)).json(),
+      { status: "ok" },
+    );
+    assert.deepEqual(JSON.parse(errors.trim()), {
+      event: "backup",
+      outcome: "failed",
+      stage: "configuration",
+    });
+  } finally {
+    child.kill("SIGTERM");
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+    const [code] = await exited;
+    clearTimeout(timeout);
+    await rm(f.directory, { recursive: true, force: true });
+    assert.equal(code, 0);
+  }
+});

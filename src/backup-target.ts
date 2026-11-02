@@ -7,6 +7,6 @@ export interface BackupFile {
 
 export interface BackupTarget {
   readonly kind: "none" | "s3" | "sftp";
-  // Resolve only once the complete file is published; retries use the same name.
+  // Resolve only once the complete file is published at its supplied name.
   upload(file: BackupFile): Promise<void>;
 }

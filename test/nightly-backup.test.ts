@@ -259,3 +259,21 @@ test("a later run removes abandoned verification copies after a process crash", 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a damaged lock is reported as failure, not another active backup", async () => {
+  const directory = await mkdtemp(join(process.cwd(), ".output/backup-test-"));
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(directory, ".backup-lock.db"),
+      "fictional damaged lock",
+    );
+    const runner = new BackupRunner(
+      { databasePath: join(directory, "unused.db"), directory, keep: 1 },
+      { kind: "none", async upload() {} },
+    );
+    assert.equal((await runner.run()).outcome, "failed");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -110,7 +110,9 @@ export class BackupRunner {
       lock = new DatabaseSync(lockPath);
       try {
         lock.exec("BEGIN EXCLUSIVE");
-      } catch {
+      } catch (error) {
+        const code = (error as { errcode?: number }).errcode;
+        if (code !== 5 && code !== 6) throw error;
         status.outcome = "busy";
         return status;
       }
