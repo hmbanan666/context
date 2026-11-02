@@ -17,3 +17,5 @@ secrets/
 .DS_Store
 
 .tools/
+
+/models/

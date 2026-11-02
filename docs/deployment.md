@@ -270,3 +270,22 @@ migration is claimed. See [spec acceptance](spec.md#testing-decisions); discover
 and fixture tests do not replace actual-client journeys. Protocol references:
 [MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization)
 and [WebAuthn verification](https://simplewebauthn.dev/docs/packages/server).
+
+## Search model and memory
+
+The image bakes in quantized multilingual E5 at build time. Runtime model access
+is local only; no new environment variables, credentials or volumes are needed.
+Startup and capture/import automatically queue backfill. Missing/unavailable
+models log a safe failure and search falls back to exact plus RU/EN stemmed FTS.
+
+Base Compose now uses `mem_limit: 1g`: local synthetic measurements reached
+671 MiB RSS, so the previous 512 MiB limit is too small. Image build needs network
+access to fetch the pinned public model; runtime does not. Run
+`context index rebuild` inside the container only when derived indexes need repair;
+it rebuilds lexical data and queues vectors without loading another model. Read
+area-scoped progress via MCP `processing_status`. See [search](search.md) for
+measurements, retry behavior, bounded coverage and local development instructions.
+
+No migration of the production container was performed. Before release, verify
+the image build and the normal authenticated save → reopen → ask journey; merge
+and deployment still require separate owner approval.

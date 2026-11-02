@@ -11,13 +11,18 @@ import {
 import { protectMcp } from "./auth.js";
 import { AuthStore } from "./auth-store.js";
 import type { Config } from "./config.js";
+import { EmbeddingIndex } from "./embedding-index.js";
+import { type Embedder, localEmbedder } from "./embedding-model.js";
 import { JobStore } from "./jobs.js";
 import { KnowledgeStore } from "./knowledge.js";
 import { createContextMcp } from "./mcp.js";
 import { AuthorizationServer } from "./oauth.js";
 import { SourceStore } from "./store.js";
 
-export async function startService(config: Config) {
+export async function startService(
+  config: Config,
+  embedder: Embedder = localEmbedder(),
+) {
   const store = new SourceStore(config.databasePath);
   let knowledge: KnowledgeStore;
   let jobs: JobStore;
@@ -33,6 +38,9 @@ export async function startService(config: Config) {
     store.close();
     throw error;
   }
+  const embeddings = new EmbeddingIndex(config.databasePath, embedder);
+  embeddings.backfill();
+  embeddings.start();
   const auth = config.oauth
     ? new AuthStore(config.databasePath, config.oauth.areas)
     : undefined;
@@ -62,6 +70,7 @@ export async function startService(config: Config) {
       ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth, {
           knowledge,
           jobs,
+          embeddings,
           ...(auth ? { auth } : {}),
         })
       : undefined;
@@ -145,6 +154,7 @@ export async function startService(config: Config) {
     });
   } catch (error) {
     await mcp?.close();
+    await embeddings.close();
     auth?.close();
     jobs.close();
     knowledge.close();
@@ -162,6 +172,7 @@ export async function startService(config: Config) {
         });
       } finally {
         await mcp?.close();
+        await embeddings.close();
         auth?.close();
         jobs.close();
         knowledge.close();

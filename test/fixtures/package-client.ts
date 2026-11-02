@@ -4,6 +4,8 @@ import {
 } from "@modelcontextprotocol/client";
 import type { ClientGrants } from "../../src/access.js";
 import { protectMcp } from "../../src/auth.js";
+import { EmbeddingIndex } from "../../src/embedding-index.js";
+import type { Embedder } from "../../src/embedding-model.js";
 import { KnowledgeStore } from "../../src/knowledge.js";
 import { createContextMcp } from "../../src/mcp.js";
 import { SourceStore } from "../../src/store.js";
@@ -16,19 +18,22 @@ const grants: ClientGrants = {
   "context-codex": { read: [scope], write: [], process: [] },
 };
 
-export async function openPackageFixture(path: string) {
+export async function openPackageFixture(path: string, embedder?: Embedder) {
   const store = new SourceStore(path);
   const auth = fixtureAuth(grants, resource, path);
   const knowledge = new KnowledgeStore(path);
+  const embeddings = embedder ? new EmbeddingIndex(path, embedder) : undefined;
   const mcp = createContextMcp(store, [], true, {
     knowledge,
     auth: auth.store,
+    ...(embeddings ? { embeddings } : {}),
   });
   const handler = protectMcp(mcp, auth.config, auth.store);
   const clients: Client[] = [];
   return {
     store,
     knowledge,
+    embeddings,
     handler,
     async connect(
       clientId = "context-chatgpt",
@@ -52,6 +57,7 @@ export async function openPackageFixture(path: string) {
     async close() {
       for (const client of clients) await client.close();
       await mcp.close();
+      await embeddings?.close();
       knowledge.close();
       auth.store.close();
       store.close();

@@ -11,7 +11,7 @@ import {
 import { z } from "zod";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import { readConfig } from "../src/config.js";
-import { startService } from "../src/server.js";
+import { startTestService as startService } from "./fixtures/search-service.js";
 
 const tables = [
   "sources",
@@ -151,9 +151,13 @@ test("pre-cleanup database keeps every domain row, original bytes, retry and leg
         );
         const packageResult = await client.callTool({
           name: "context_package",
-          arguments: { scope, question: "violet" },
+          arguments: { scope, question: "lamps" },
         });
         assert.ok(!packageResult.isError);
+        assert.ok(
+          (packageResult.structuredContent as { sources: unknown[] }).sources
+            .length > 0,
+        );
         assert.ok(
           !JSON.stringify(packageResult.structuredContent).includes(
             '"status":"rejected"',

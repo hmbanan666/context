@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { SemanticHits } from "./embedding-index.js";
 import type {
   KnowledgeItem,
   KnowledgeRelation,
@@ -83,6 +84,7 @@ export function buildContextPackage(
   sources: SourceStore,
   knowledge: KnowledgeStore,
   input: z.input<typeof contextPackageSchema>,
+  semantic?: SemanticHits,
 ): ContextPackage {
   const request = contextPackageSchema.parse(input);
   const terms =
@@ -94,9 +96,12 @@ export function buildContextPackage(
     ...(request.from ? { from: request.from } : {}),
     ...(request.until ? { until: request.until } : {}),
   };
-  const original = sources.packageCandidates(selection);
+  const original = sources.packageCandidates({
+    ...selection,
+    ...(semantic ? { vectors: semantic.sources } : {}),
+  });
   const derived = knowledge.packageCandidates(
-    selection,
+    { ...selection, ...(semantic ? { vectors: semantic.items } : {}) },
     original.materials.slice(0, 100).map((m) => m.source.id),
   );
   let result: ContextPackage = {
@@ -123,7 +128,7 @@ export function buildContextPackage(
         "version=1, scope=this scope, id=selected ID (relations: list by scope)",
     },
   };
-  const reasons = new Set<string>();
+  const reasons = new Set<string>(semantic?.reasons);
   if (original.total > 100 || derived.total > 100)
     reasons.add("candidate_limit");
   if (request.mode === "timeline" && original.total > 100)
@@ -217,6 +222,9 @@ export function buildContextPackage(
           "entry_limit",
           "byte_limit",
           "relation_limit",
+          "embeddings_pending",
+          "embeddings_unavailable",
+          "vector_scan_limit",
         ],
       },
     };
@@ -249,7 +257,7 @@ export function buildContextPackage(
     const refs = references(item.sourceRefs);
     if (refs) add(refs, [item]);
   }
-  // Expand only the included lexical/timeline seeds, never recursively traverse the graph.
+  // Expand only the included search/timeline seeds, never recursively traverse the graph.
   const links = knowledge.packageRelations(
     request.scope,
     result.items.map((k) => k.id),

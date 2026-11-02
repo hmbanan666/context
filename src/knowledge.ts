@@ -2,11 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { scopeSchema } from "./contracts.js";
-import {
-  ftsMatchOffset,
-  ftsTerms,
-  type PackageSelection,
-} from "./package-query.js";
+import type { PackageSelection } from "./package-query.js";
+import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { IdempotencyConflict } from "./store.js";
 
 const identifier = z
@@ -234,6 +231,7 @@ export class KnowledgeStore {
           INSERT INTO knowledge_items_fts(knowledge_items_fts) VALUES('rebuild');`);
       }
       this.#database.exec("COMMIT;");
+      installSearchIndex(this.#database, "knowledge_items");
     } catch (error) {
       if (this.#database.isTransaction) this.#database.exec("ROLLBACK");
       this.#database.close();
@@ -378,45 +376,42 @@ export class KnowledgeStore {
     conditions.push(
       `NOT EXISTS (SELECT 1 FROM json_each(k.source_refs) ref LEFT JOIN sources s ON s.id=json_extract(ref.value,'$.sourceId') AND s.scope=k.scope LEFT JOIN source_metadata m ON m.source_id=s.id WHERE ${invalid.join(" OR ")})`,
     );
-    const match = input.terms.length > 0;
-    if (match) {
-      conditions.push("knowledge_items_fts MATCH ?");
-      params.push(ftsTerms(input.terms));
-    } else {
-      conditions.push(
-        `EXISTS (SELECT 1 FROM json_each(k.source_refs) ref WHERE json_extract(ref.value,'$.sourceId') IN (${sourceIds.map(() => "?").join(",")}))`,
+    if (input.terms.length) {
+      const found = lexicalCandidates(
+        this.#database,
+        "knowledge_items",
+        `${itemSelection.replace("SELECT k.id", "SELECT k.rowid,k.id")} WHERE ${conditions.join(" AND ")}`,
+        params,
+        input.terms,
+        input.limit,
+        input.vectors,
       );
-      params.push(...sourceIds);
+      return {
+        ...found,
+        items: found.ids.map((id) => {
+          const item = this.find(id, input.scope);
+          if (!item) throw new Error("Missing knowledge candidate");
+          return item;
+        }),
+      };
     }
-    const selection =
-      itemSelection +
-      (match
-        ? " JOIN knowledge_items_fts ON knowledge_items_fts.rowid = k.rowid"
-        : "");
+    conditions.push(
+      `EXISTS (SELECT 1 FROM json_each(k.source_refs) ref WHERE json_extract(ref.value,'$.sourceId') IN (${sourceIds.map(() => "?").join(",")}))`,
+    );
+    params.push(...sourceIds);
     const where = conditions.join(" AND ");
     const total = Number(
       this.#database
-        .prepare(`SELECT count(*) n FROM (${selection} WHERE ${where})`)
+        .prepare(`SELECT count(*) n FROM (${itemSelection} WHERE ${where})`)
         .get(...params)?.n,
     );
-    const matchOffsets = new Map<string, number>();
-    const rankedSelection = match
-      ? selection.replace(
-          "SELECT ",
-          "SELECT highlight(knowledge_items_fts,0,' ','') AS highlighted, ",
-        )
-      : selection;
     const items = this.#database
       .prepare(
-        `${rankedSelection} WHERE ${where} ORDER BY ${match ? "knowledge_items_fts.rank," : ""} k.created_at DESC, k.id LIMIT ?`,
+        `${itemSelection} WHERE ${where} ORDER BY k.created_at DESC,k.id LIMIT ?`,
       )
       .all(...params, input.limit)
-      .map(({ highlighted, ...row }) => {
-        const item = decodeItem(row);
-        matchOffsets.set(item.id, ftsMatchOffset(item.text, highlighted));
-        return item;
-      });
-    return { total, items, matchOffsets };
+      .map(decodeItem);
+    return { total, items, matchOffsets: new Map<string, number>() };
   }
 
   packageRelations(scope: string, ids: readonly string[]) {

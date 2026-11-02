@@ -64,16 +64,20 @@ The primary memory tools are:
 
 | Tool | Current behavior |
 | --- | --- |
-| `remember` | Saves text and optional metadata in an authorized area (protected default: credential's default write area; local default: `personal`), records authenticated-client origin and returns stable identity on unchanged retries. Does not enqueue processing. |
+| `remember` | Saves text and optional metadata in an authorized area (protected default: credential's default write area; local default: `personal`), records authenticated-client origin and returns stable identity on unchanged retries. Enqueues background embeddings; does not enqueue understanding processing. |
 | `memory_context` | Pages originals by source date (capture date if absent), with optional any-keyword FTS, continuation and explicit oversized-source reporting. |
-| `context_package` | Returns bounded lexical/timeline evidence from originals and stored knowledge, with excerpts, provenance, status and at most one hop of stored relations. |
+| `context_package` | Returns bounded hybrid-search/timeline evidence from originals and stored knowledge, with excerpts, provenance, status and at most one hop of stored relations. |
 | `read_material` / `read_knowledge` | Retrieves a referenced original or derived item under fresh authorization checks. |
 
 `remember`, `memory_context` and `context_package` accept an authorized `scope`,
 defaulting to `personal` except protected `remember` as described above. Clients
 supply explicit date boundaries and inspect coverage/truncation. A package is not
 an exhaustive archive scan; paged original retrieval handles full periods.
-Current FTS has no Russian/English morphological pipeline or semantic embeddings.
+Search now combines exact and Snowball RU/EN stemmed FTS with local E5 vectors.
+The model is baked into the image; a durable background queue backfills on startup
+and after writes, with automatic lexical fallback on model failure. Area/date and
+knowledge eligibility filters precede fusion. See [search](search.md) for bounds,
+rebuild, status and measured resources. No hosted deployment is implied.
 Derived knowledge is source-grounded but is not yet the approved automatically
 maintained understanding layer with deduplication and superseding.
 
@@ -120,5 +124,6 @@ are preserved. See [deployment](deployment.md) for compatibility and recovery.
 Stage 1b preserves source/knowledge rows and adds only auth tables. Existing
 ChatGPT/Codex and other Keycloak connections must reconnect to the built-in
 issuer; no migration or deployment was performed here. Later stages add
-imports/evals, morphology/local embeddings, pluggable understanding and owner controls. An inferred topic never grants area access.
+imports/evals, pluggable understanding and owner controls. Stage 3 search is
+implemented in this branch. An inferred topic never grants area access.
 Consult the [glossary](../CONTEXT.md) when naming these concepts.

@@ -20,7 +20,11 @@ export type PackageRequest = z.infer<typeof contextPackageSchema>;
 export type PackageSelection = Pick<
   PackageRequest,
   "scope" | "from" | "until"
-> & { terms: readonly string[]; limit: number };
+> & {
+  terms: readonly string[];
+  limit: number;
+  vectors?: readonly import("./search-lexical.js").VectorHit[];
+};
 // Small explicit question-word list, not a language model, stemmer or synonym map.
 const stop = new Set(
   "a an the what which who why how did does do was were is are of in on at to for and or my me about happened suitable что какие какой как почему кто где когда это у я мои моих меня в на для и или о об по из происходило подходит подходят известно".split(

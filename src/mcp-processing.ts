@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { scopeSchema } from "./contracts.js";
+import type { EmbeddingIndex } from "./embedding-index.js";
 import {
   enqueueProcessingSchema,
   type JobStore,
@@ -19,6 +20,7 @@ export function registerProcessingTools(
   jobs: JobStore,
   authorize: AuthorizeTool,
   protectedMode = false,
+  embeddings?: EmbeddingIndex,
 ) {
   server.registerTool(
     "queue_processing",
@@ -56,7 +58,7 @@ export function registerProcessingTools(
     "processing_status",
     {
       description:
-        "Read bounded processing job status in one authorized scope. Lease credentials and raw model output are never returned.",
+        "Read bounded processing job status in one authorized scope. Includes automatic search-index progress. Failed embeddings retry automatically up to three times, or use the owner CLI context index rebuild. Lease credentials and raw model output are never returned.",
       ...oauthMetadata(protectedMode, ["context:read"]),
       inputSchema: z.strictObject({
         version: z.literal(1),
@@ -76,7 +78,10 @@ export function registerProcessingTools(
             ? toolResult({ jobs: [job] })
             : toolResult({ error: "not_found" }, true);
         }
-        return toolResult({ jobs: jobs.list(input.scope, input.limit) });
+        return toolResult({
+          jobs: jobs.list(input.scope, input.limit),
+          ...(embeddings ? { embeddings: embeddings.status(input.scope) } : {}),
+        });
       } catch (error) {
         return storageError(error);
       }

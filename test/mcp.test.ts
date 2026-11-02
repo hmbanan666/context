@@ -9,7 +9,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import { startService } from "../src/server.js";
+import { startTestService as startService } from "./fixtures/search-service.js";
 
 function payload(result: { structuredContent?: unknown }) {
   return z.record(z.string(), z.unknown()).parse(result.structuredContent);
