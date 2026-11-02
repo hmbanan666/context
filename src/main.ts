@@ -5,7 +5,12 @@ import { startService } from "./server.js";
 try {
   const config = readConfig(process.env);
   const service = await startService(config);
-  const backups = await startAutomaticBackups(config.databasePath, process.env);
+  const backups = await startAutomaticBackups(
+    config.databasePath,
+    process.env,
+    undefined,
+    service.embeddings,
+  );
   let stopping = false;
   const shutdown = () => {
     if (stopping) return;

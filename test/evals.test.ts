@@ -66,6 +66,8 @@ test("eval CLI measures synthetic retrieval, keeps content out of history, and l
     const result = run("run", "--json");
     assert.equal(result.status, 0, result.stderr);
     const summary = JSON.parse(result.stdout);
+    assert.equal(summary.search.mode, "lexical");
+    assert.equal(summary.search.semantic, "unavailable");
     assert.equal(summary.metrics.hit_at_1, 1);
     assert.equal(summary.metrics.hit_at_k, 2 / 3);
     assert.equal(summary.metrics.mrr, 1);

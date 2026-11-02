@@ -164,6 +164,7 @@ export async function startService(
   const address = server.address() as AddressInfo;
   return {
     address,
+    embeddings,
     async close() {
       try {
         await new Promise<void>((resolve, reject) => {

@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import type { EmbeddingIndex } from "./embedding-index.js";
+import { E5_VERSION } from "./embedding-model.js";
 import { type EvalQuestion, readEvalQuestions } from "./eval-questions.js";
 import { type EvalHit, retrieveForEval } from "./eval-retrieval.js";
 
@@ -24,7 +26,17 @@ export interface EvalQuestionResult {
   latency_ms: number | null;
 }
 export interface EvalRun {
-  schema_version: 1;
+  schema_version: 2;
+  search: {
+    mode: "lexical" | "hybrid";
+    model: string;
+    semantic: "available" | "unavailable" | "partial";
+  };
+  diagnostics: {
+    compared_questions: number;
+    vector_only_questions: number;
+    lexical_only_questions: number;
+  };
   id: string;
   timestamp: string;
   git_sha: string | null;
@@ -79,9 +91,24 @@ export function scoreEval(question: EvalQuestion, hits: EvalHit[]) {
     mrr: ranks.length ? (found.length ? 1 / Math.min(...found) : 0) : null,
   };
 }
-export async function evaluate(options: EvalOptions): Promise<EvalRun> {
+export async function evaluate(
+  options: EvalOptions,
+  embeddings?: EmbeddingIndex,
+): Promise<EvalRun> {
+  let semanticUsed = false;
+  let semanticUnavailable = false;
   const run: EvalRun = {
-    schema_version: 1,
+    schema_version: 2,
+    search: {
+      mode: "lexical",
+      model: embeddings?.model ?? E5_VERSION,
+      semantic: "unavailable",
+    },
+    diagnostics: {
+      compared_questions: 0,
+      vector_only_questions: 0,
+      lexical_only_questions: 0,
+    },
     id: randomUUID(),
     timestamp: new Date().toISOString(),
     ...version(),
@@ -122,14 +149,24 @@ export async function evaluate(options: EvalOptions): Promise<EvalRun> {
       };
       run.questions.push(result);
       if (q.placeholder) continue;
+      let violationKeys: string[] = [];
+      let hybridScores: (number | null)[] = [];
       const start = performance.now();
       try {
         const retrieved = await retrieveForEval(
           options.databasePath,
           q,
           options.k,
+          embeddings,
         );
+        semanticUsed ||= retrieved.semanticUsed;
+        semanticUnavailable ||= retrieved.semanticUnavailable;
         Object.assign(result, scoreEval(q, retrieved.hits));
+        hybridScores = q.expected.map(
+          (expected) =>
+            scoreEval({ ...q, expected: [expected] }, retrieved.hits).hit_at_k,
+        );
+        violationKeys = retrieved.violationKeys;
         result.isolation_violations = retrieved.isolationViolations;
         result.status = retrieved.failed ? "failed" : "completed";
         if (retrieved.failed) run.outcome = "failed";
@@ -145,6 +182,46 @@ export async function evaluate(options: EvalOptions): Promise<EvalRun> {
           Object.assign(result, { hit_at_1: 0, hit_at_k: 0, mrr: 0 });
       }
       result.latency_ms = performance.now() - start;
+      // The control uses the identical protected MCP path without vector candidates.
+      // Keep its work out of the primary retrieval latency and quality metrics.
+      if (embeddings && q.expected.length && result.status === "completed") {
+        try {
+          const lexical = await retrieveForEval(
+            options.databasePath,
+            q,
+            options.k,
+          );
+          result.isolation_violations = new Set([
+            ...violationKeys,
+            ...lexical.violationKeys,
+          ]).size;
+          if (lexical.isolationViolations) result.pass = false;
+          if (lexical.failed) throw new Error("Lexical control failed");
+          // Compare each expected matcher, so a question with several sources can
+          // contribute even when another expected source is found on both paths.
+          const controlScores = q.expected.map(
+            (expected) =>
+              scoreEval({ ...q, expected: [expected] }, lexical.hits).hit_at_k,
+          );
+          run.diagnostics.compared_questions++;
+          if (
+            hybridScores.some(
+              (found, i) => found === 1 && controlScores[i] === 0,
+            )
+          )
+            run.diagnostics.vector_only_questions++;
+          if (
+            controlScores.some(
+              (found, i) => found === 1 && hybridScores[i] === 0,
+            )
+          )
+            run.diagnostics.lexical_only_questions++;
+        } catch {
+          run.outcome = "failed";
+          result.status = "failed";
+          result.pass = false;
+        }
+      }
     }
   } catch {
     run.outcome = "failed";
@@ -173,5 +250,11 @@ export async function evaluate(options: EvalOptions): Promise<EvalRun> {
     latency_p50_ms: percentile(0.5),
     latency_p95_ms: percentile(0.95),
   };
+  run.search.mode = semanticUsed ? "hybrid" : "lexical";
+  run.search.semantic = semanticUsed
+    ? semanticUnavailable
+      ? "partial"
+      : "available"
+    : "unavailable";
   return run;
 }

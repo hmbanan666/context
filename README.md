@@ -11,7 +11,7 @@ Build the image from this checkout, then run it behind your HTTPS reverse proxy:
 
 ```sh
 docker build -t context .
-docker run -d --name context --restart unless-stopped --memory 1g \
+docker run -d --name context --restart unless-stopped --memory 1536m \
   -p 127.0.0.1:3000:3000 -v context-data:/app/data \
   -e CONTEXT_PUBLIC_URL=https://context.example/mcp \
   -e CONTEXT_AREAS=personal,projects,inbox context

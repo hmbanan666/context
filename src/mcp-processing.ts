@@ -20,7 +20,7 @@ export function registerProcessingTools(
   jobs: JobStore,
   authorize: AuthorizeTool,
   protectedMode = false,
-  embeddings?: EmbeddingIndex,
+  embeddings?: Pick<EmbeddingIndex, "search" | "status">,
 ) {
   server.registerTool(
     "queue_processing",

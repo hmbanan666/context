@@ -26,7 +26,7 @@ export interface McpStores {
   readonly knowledge?: KnowledgeStore;
   readonly jobs?: JobStore;
   readonly auth?: AuthStore;
-  readonly embeddings?: EmbeddingIndex;
+  readonly embeddings?: Pick<EmbeddingIndex, "search" | "status">;
   // Owner-local read-only eval only; the HTTP server always supplies auth.
   readonly clientGrants?: Readonly<Record<string, Grants>>;
 }

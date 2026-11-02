@@ -181,7 +181,9 @@ Private questions live at `/app/data/evals/questions.yaml`; numeric results and
 question IDs append to `/app/data/evals/history.jsonl`. When questions exist, eval
 runs after scheduled backup attempts, sharing the same schedule and restart
 behavior. No extra settings or volumes are required. The SQLite backup does not
-include these separate files; preserve them privately if needed. See [evals](evals.md).
+include these separate files; preserve them privately if needed. Nightly eval
+reuses the server's index/model; standalone eval loads one local model and reports
+semantic availability and its contribution against lexical search. See [evals](evals.md).
 
 ## Search model and memory
 
@@ -190,11 +192,14 @@ no model credentials, environment settings or additional volume are needed.
 Startup and writes backfill automatically. `context index rebuild` repairs derived
 FTS/vectors from preserved originals. Capture does not wait for embeddings.
 
-The merged search implementation recommends **1 GiB**, retained in Compose and the
-README: its synthetic measurements reached roughly 661–671 MiB RSS. Do not reuse the earlier
-512 MiB limit for that workload. The owner confirms search is deployed; this task
-has not inspected its current limits. This refactor adds no memory requirement. See [search](search.md)
-for measured bounds; live concurrency and capacity remain unverified.
+Compose uses **1536m** for the server plus one standalone eval CLI. The CLI's
+measured peak was **646.4 MiB** over 14,550 repeated synthetic chunks. Adding the
+owner-reported server RSS (~505 MiB) exceeds the prior 1 GiB limit; 1536m leaves
+about 385 MiB headroom, or 218 MiB against the earlier 671 MiB server benchmark
+peak. Nightly eval reuses the server model without a second allocation. Run one
+standalone model-loading CLI at a time. No new environment variables or volumes
+are needed. See [search](search.md#eval-hybrid-calibration) for measurements;
+hosted cgroup usage and concurrent workload capacity remain unverified.
 
 ## Development and verification
 

@@ -72,12 +72,14 @@ inflections; it is not full lemmatization and cannot resolve every word form.
   embedding waits at most two seconds before lexical fallback. Retry claims and
   rebuild invalidation support concurrent service/CLI use without duplicate vectors.
 - Storage is capped at 50,000 chunks. Cosine search streams 256-row batches, keeps
-  at most 101 distinct records per source/knowledge list and yields between batches.
+  at most ten distinct vector records per source/knowledge list and yields between batches.
   Exact, stemmed and vector lists each apply area/date filters before ranking and
   fusion; knowledge also checks source-area provenance and rejected status.
-  E5 candidates below cosine 0.8 are omitted to avoid its high unrelated-text
-  similarity baseline; exact/stemmed matches remain eligible regardless. This
-  fixed model-specific cutoff favors precision and can miss weak paraphrases.
+  E5 candidates must reach cosine 0.78 and fall within 0.01 of the best eligible
+  score in their source/knowledge list, capped at ten records per list. These
+  model-specific bounds admit weaker cross-language paraphrases while suppressing
+  distant neighbours; exact/stemmed matches remain eligible regardless. See the
+  calibration below for measured benefits and remaining misses.
   Reciprocal rank fusion uses `1 / (60 + rank)` across those three lists. Packages
   still interleave source and knowledge candidates and expand only one relation hop.
 - `skipLibCheck` skips upstream declaration-file validation because Transformers.js
@@ -101,8 +103,9 @@ These are synthetic process measurements, not production load acceptance.
 | Vector scan, 50,000 repeated synthetic chunks, 5 queries | mean 749 ms, p95 828 ms |
 | Peak process RSS through scan | 661.4 MiB (671.3 MiB in an earlier run) |
 
-Compose now recommends **1 GiB** (`mem_limit: 1g`); 512 MiB is insufficient even
-for the measured workload. No additional volume is needed. Monitor hosted RSS and latency
+These earlier server-only measurements motivated 1 GiB. Compose now recommends
+**1.5 GiB** (`mem_limit: 1536m`) for the server plus one standalone eval CLI; see
+the CLI measurements below. No additional volume is needed. Monitor hosted RSS and latency
 under actual authentication, capture, backup and retrieval concurrency before
 calling production capacity verified. The scan fixture repeats real embeddings
 to measure SQLite/vector cost; it is not a 50,000-item relevance benchmark.
@@ -155,10 +158,74 @@ The rebased search branch reports **0.666667** each. Both runs complete with
 inflection cases now pass; the two paraphrase cases remain misses. The denied-area
 case passes and the placeholder is skipped in both runs.
 
-This command seeds no vectors and the read-only eval MCP handler does not attach
-an embedder. These numbers measure exact/stemmed retrieval and isolation, not E5
-paraphrase quality. The real-model measurements above are separate. The PR records
+The historical runs seeded no vectors and did not attach an embedder to eval.
+Those numbers measure exact/stemmed retrieval and isolation, not E5 paraphrase
+quality. Eval now attaches the same index as MCP, while the public CI corpus
+still has no E5 vectors and explicitly reports semantic unavailable. The
+real-model measurements above are separate. The PR records
 the exact evaluated head, question-file hash and observed latency for both runs.
 
 Private eval questions, actual hosted OAuth save/reopen/ask after inactivity and
 Docker execution were not verified locally; container checks run in GitHub CI.
+
+## Eval hybrid calibration
+
+The eval wiring regression is confirmed with a fake-model protected MCP test:
+MCP returned a vector-only source, while the old eval adapter returned no hits.
+Both nightly and standalone eval now use that same index search path. Nightly
+borrows the service's model; standalone eval opens the index read-only and warms
+its own model before measuring queries. History includes search mode/model,
+semantic availability and vector-only versus lexical-only question counts.
+
+A separate **real-model** calibration on Node 24.21.0 used the pinned q8 E5 model,
+12 fictional short Russian questions against English passages of 191–211
+characters, plus six unrelated Russian questions. Runtime fetch was disabled.
+The expected-passage cosines were 0.79964, 0.82382, 0.78673, 0.80160, 0.82003,
+0.78001, 0.78965, 0.79411, 0.79709, 0.80171, 0.80158 and 0.76239. Eleven expected
+passages ranked first; the last ranked second. Unrelated queries' best scores
+ranged from **0.67577 to 0.74782**.
+
+| Rule | Expected passages admitted / 12 | Irrelevant passages admitted | Unrelated queries with hits / 6 |
+| --- | ---: | ---: | ---: |
+| Previous floor 0.80 | 5 | 0 | 0 |
+| Floor 0.76, within 0.02 of best, cap 10 | 12 | 2 | 0 |
+| **Chosen: floor 0.78, within 0.01 of best, cap 10** | **11** | **0** | **0** |
+
+The last pair remains a miss; the model is not universally cross-lingual. These
+small synthetic calibration numbers are not a guarantee of private-corpus
+precision. Replaying the older ten-question package corpus with the real model
+preserved **8/10 complete evidence answers**, expected-source recall **0.857**,
+and the empty absent-evidence answer. Mean precision fell **0.900 → 0.833**:
+one boundary question gained two irrelevant source cards via derived evidence.
+The looser 0.76 rule added noise to several questions and was rejected. Broad
+“Who overcame adversity?” still misses its expected source.
+
+For resource measurement, repeat the twelve synthetic vectors to **14,550 stored
+chunks**, leaving source text unchanged, then launch the actual CLI as a separate
+process while the parent keeps its model loaded. This measures scan/memory cost,
+not the relevance of 14,550 distinct passages. The CLI's kernel high-water RSS
+was **646.4 MiB**, with parent RSS **569.1 MiB** at launch. Its full protected MCP
+eval reported hit@1 / recall@10 / MRR **0.9167**, zero isolation violations,
+**11 vector-only questions**, zero lexical-only questions, and latency p50
+**216 ms**, p95 **374 ms**. The lexical control found none of these English
+sources for Russian queries. Load/control time is excluded from query latency.
+
+The owner-reported server RSS (~505 MiB) plus this CLI peak exceeds 1 GiB;
+Compose therefore uses **1536m**, with no new environment variables or volumes.
+Actual hosted cgroup usage, concurrent backup/capture and private quality remain
+unverified. Nightly eval has no second model allocation.
+
+Reproduce offline after downloading the public model once:
+
+```sh
+npm run build
+node dist/scripts/download-search-model.js models
+node dist/scripts/benchmark-eval.js
+```
+
+The script uses only [synthetic calibration pairs](../fixtures/evals/cross-language.ts),
+prints scores/aggregate metrics/RSS and removes its temporary database/history.
+It is deliberately separate from `npm run check`; tests use fake embedders.
+Keep downloaded weights outside the default `models/` directory when running
+model-free checks: process-start tests launch the real service and otherwise
+load those optional weights.

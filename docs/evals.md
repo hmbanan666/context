@@ -3,7 +3,9 @@
 `context eval run` measures retrieval quality and area isolation against the live
 SQLite database, opened read-only. It never creates sources or updates indexes,
 authentication state or database schema. Run it inside the container as the
-owner; no bearer token, model provider or network connection is needed.
+owner; no bearer token, external model provider or network connection is needed.
+The CLI loads the same baked-in local E5 model as the server when current vectors
+exist. It warms the model before timed queries and closes it after the run.
 
 Place the private question file at **`/app/data/evals/questions.yaml`**. Results
 append to **`/app/data/evals/history.jsonl`**, on the existing data volume. In local
@@ -80,8 +82,12 @@ These rules are fixed across search implementations.
 
 The harness calls `context_package` through the real protected MCP handler and
 SDK, with explicit read-only client grants. The transport is in-process and has
-no listener. It does not implement its own search or rank by SQL. A future search
-change used by MCP is automatically used by the eval. Separate read-only metadata
+no listener. It does not implement its own search or rank by SQL. Both CLI and
+nightly eval attach the server's `EmbeddingIndex` search implementation, including
+the same model version,
+filters, vector selection and reciprocal rank fusion. Nightly eval borrows the
+running server's index and inference queue; it never loads or closes a second
+model. Separate read-only metadata
 lookups resolve returned IDs for matching and audit their actual areas; they do
 not select or rank candidates.
 
@@ -116,6 +122,35 @@ Violations take precedence if a later search also fails.
 
 ## History and nightly runs
 
+New rows use `schema_version: 2`. Every row records `search.mode` (`lexical` or
+`hybrid`), `search.model` (the pinned model/revision/quantization/chunking ID), and
+`search.semantic` (`available`, `unavailable`, or `partial`). Hybrid means at least
+one authorized primary search actually ran vector inference and scanning, even if
+no candidate cleared the ranking rule. Unavailable means none did: for example,
+the model failed, the queue timed out, or the searched areas have no current-model
+vectors. Partial means some primary searches used vectors and others fell back.
+The text output explicitly says **`semantic: unavailable`** on fallback. A
+completed lexical fallback still exits 0; inspect search status before comparing
+quality. Skipped or denied-only runs cannot establish semantic availability.
+
+Each run also records content-free `diagnostics`:
+
+- `compared_questions`: completed questions with expected matchers compared with
+  a second, lexical-only call through the same protected MCP path and grants.
+- `vector_only_questions`: questions with at least one expected matcher found in
+  hybrid top k but absent from lexical top k.
+- `lexical_only_questions`: questions with at least one expected matcher found in
+  lexical top k but absent from hybrid top k (possible ranking displacement).
+
+These count questions, not sources. They use the existing source-ID, external-ID
+and excerpt matcher rules, so substring matches can reflect excerpt differences.
+They measure the contribution of adding vectors to the final package, not raw
+vector candidate membership. Each question counts at most once in each category;
+a multi-source question can count in both. Control time is excluded from primary
+latency; isolation audits cover both paths without counting the same breach twice.
+No source IDs, text or raw scores are persisted. Concurrent writes can affect the
+sequential comparison; this is a diagnostic, not a frozen database snapshot.
+
 Each JSONL row contains the timestamp, run ID, package version and git SHA when
 available, SHA-256 of the exact question-file bytes, k, outcome, aggregate metrics
 and per-question IDs, pass/fail/skipped states and metrics. It contains no
@@ -126,7 +161,10 @@ when package versions alone do not distinguish images.
 
 `history` shows metric differences from the immediately preceding run only when
 question-file hash, k and result schema match and both runs completed. Otherwise
-`delta_previous` is null. Positive quality deltas are improvements; positive
+`delta_previous` is null. Older schema-1 rows remain readable and are labelled
+`search: unrecorded (legacy row)`; no delta bridges the schema change. Mode/model
+changes remain visible alongside within-schema deltas. Positive quality deltas
+are improvements; positive
 latency or violation deltas are regressions. It reads history as a stream and
 retains only the display window. New history files use mode `0600`, new containing
 directories `0700`. History is append-only with no automatic retention. A malformed
@@ -164,7 +202,12 @@ rewriting expectations. The initial lexical scores are 1/3 for hit@1, recall@10
 and MRR, with zero isolation violations.
 
 Execution is sequential, with one bounded question file, bounded MCP packages and
-no corpus copy, embeddings, model calls or worker pool. Read-only SQLite
+no corpus copy or worker pool. CLI runs use one local model per process; nightly
+runs reuse the server model. The CI corpus has no E5 vectors, so it remains
+lexical and explicitly reports semantic unavailable. Regression tests supply
+fake embedders and never download or load model weights. For optional real-model
+calibration and CLI peak RSS, see [search measurements](search.md#eval-hybrid-calibration).
+Read-only SQLite
 connections may still require the live WAL/SHM files to be accessible. This is
 retrieval evaluation, not answer-generation grading or proof of HTTP OAuth,
 refresh/revocation, real-client inactivity, hosted performance or private quality.

@@ -9,9 +9,12 @@ import {
 } from "./search-lexical.js";
 
 const MAX_CHUNKS = 50_000;
-// E5 gives unrelated text a high positive baseline; admit only stronger
-// semantic evidence. Lexical hits never depend on this model-specific floor.
-const MIN_COSINE = 0.8;
+// Measured with the pinned E5 model: RU/EN paraphrases can fall below 0.8.
+// Keep a noise floor and only close neighbours of the best eligible record.
+// Lexical hits never depend on these model-specific bounds (see docs/search.md).
+const MIN_COSINE = 0.78;
+const MAX_SCORE_GAP = 0.01;
+const MAX_VECTOR_CANDIDATES = 10;
 const LEASE_MS = 600_000;
 export interface SemanticSelection {
   scope: string;
@@ -20,6 +23,7 @@ export interface SemanticSelection {
   until?: string | undefined;
 }
 export interface SemanticHits {
+  available: boolean;
   sources: VectorHit[];
   items: VectorHit[];
   reasons: string[];
@@ -34,8 +38,15 @@ export class EmbeddingIndex {
   #active: Promise<unknown> | undefined;
   #stopping = false;
 
-  constructor(path: string, embedder: Embedder) {
-    this.#db = new DatabaseSync(path, { timeout: 5000 });
+  constructor(
+    path: string,
+    embedder: Embedder,
+    options: { readOnly?: boolean } = {},
+  ) {
+    this.#db = new DatabaseSync(path, {
+      timeout: 5000,
+      readOnly: options.readOnly ?? false,
+    });
     this.#db.function("source_timestamp", { deterministic: true }, (value) =>
       typeof value === "string" ? Date.parse(value) : null,
     );
@@ -43,6 +54,22 @@ export class EmbeddingIndex {
       stemText(String(value)),
     );
     this.#embedder = embedder;
+  }
+
+  get model() {
+    return this.#embedder.version;
+  }
+
+  hasVectors(scope?: string) {
+    return !!this.#db
+      .prepare(
+        `SELECT 1 FROM embedding_chunks WHERE model=?${scope === undefined ? "" : " AND scope=?"} LIMIT 1`,
+      )
+      .get(this.model, ...(scope === undefined ? [] : [scope]));
+  }
+
+  async load() {
+    await this.#embedder.load?.();
   }
 
   #embed(text: string, purpose: "query" | "passage") {
@@ -250,21 +277,18 @@ export class EmbeddingIndex {
   }
 
   async search(input: SemanticSelection): Promise<SemanticHits> {
-    const empty: SemanticHits = { sources: [], items: [], reasons: [] };
+    const empty: SemanticHits = {
+      sources: [],
+      items: [],
+      reasons: [],
+      available: false,
+    };
     const status = this.status(input.scope);
     if (status.queued || status.running)
       empty.reasons.push("embeddings_pending");
     if (status.failed) empty.reasons.push("embeddings_unavailable");
     // Do not load the model when this authorized area has no vectors yet.
-    if (
-      !this.#db
-        .prepare(
-          "SELECT 1 FROM embedding_chunks WHERE scope=? AND model=? LIMIT 1",
-        )
-        .get(input.scope, this.#embedder.version)
-    ) {
-      return empty;
-    }
+    if (!this.hasVectors(input.scope)) return empty;
     let timeout: NodeJS.Timeout | undefined;
     try {
       const query = await Promise.race([
@@ -279,6 +303,7 @@ export class EmbeddingIndex {
       const sources = await this.#nearest("sources", input, query);
       const items = await this.#nearest("knowledge_items", input, query);
       return {
+        available: true,
         sources: sources.hits,
         items: items.hits,
         reasons: [
@@ -368,7 +393,7 @@ export class EmbeddingIndex {
         const id = String(row.record_id);
         if (score > (top.get(id)?.score ?? -Infinity))
           top.set(id, { id, offset: Number(row.offset), score });
-        if (top.size > 101) {
+        if (top.size > MAX_VECTOR_CANDIDATES) {
           const last = [...top.values()]
             .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
             .at(-1);
@@ -377,9 +402,13 @@ export class EmbeddingIndex {
       }
       await yieldEventLoop();
     }
+    const ranked = [...top.values()].sort(
+      (a, b) => b.score - a.score || a.id.localeCompare(b.id),
+    );
+    const best = ranked[0]?.score ?? 1;
     return {
-      hits: [...top.values()]
-        .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+      hits: ranked
+        .filter((hit) => hit.score >= best - MAX_SCORE_GAP)
         .map(({ id, offset }) => ({ id, offset })),
       reasons: scanned === MAX_CHUNKS ? ["vector_scan_limit"] : [],
     };
