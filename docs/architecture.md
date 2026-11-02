@@ -1,289 +1,73 @@
-# Architecture hypothesis
+# Current architecture
 
-## Context Package MVP
+As recorded on **2 November 2026**, the protected pilot runs the implementation
+released in [PR #19](https://github.com/hmbanan666/context/pull/19). This document
+describes repository behavior and recorded release status, not a new inspection
+of the live service. The [spec](spec.md) and [ADRs](adr/) define the approved target.
 
-The owner approved this bounded retrieval implementation on 28 October 2026.
-It supplements the existing personal timeline without changing capture, grants,
-OAuth or signed work evidence. It is a prepared branch, not a live release.
+## Runtime and access
 
-`context_package` authorizes one scope before any search or counts. SQLite FTS5
-retrieves up to 100 ranked originals and 100 derived items, applying scope,
-source-date and rejected-status filters before candidate limits. It uses the
-existing original index and one external-content `knowledge_items_fts` index.
-First open transactionally backfills existing knowledge; an insert trigger
-keeps append-only additions indexed. No original text is rewritten.
+The core is a Node/TypeScript service using the MCP SDK with Streamable HTTP at
+`/mcp`, a separate `/health` endpoint and SQLite persistence. The container runs
+as a non-root user with persistent data storage.
 
-The package interleaves the independently ranked lists (raw BM25 scores from
-different indexes are not comparable), validates quoted provenance, and includes
-compact verbatim excerpts anchored to the same FTS token matches, preserving
-original UTF-16 offsets. Timeline mode selects source dates newest first and
-only considers knowledge attached to the bounded source candidates. From the
-included knowledge seeds it inspects up to 50 stored relations, adds at most one
-hop, and requires both endpoints and every cited original in the same scope and
-period. It does not infer a new relationship from word similarity.
+**Keycloak is still the authorization server**, backed by its dedicated
+PostgreSQL database. Context is the resource server: it verifies signed tokens,
+issuer, audience, expiry, owner and the two recognized pilot client identities.
+Operation/data OAuth scopes intersect with independent server grants. Missing or
+invalid authentication is rejected; data requests cannot grant access.
 
-Each addition is atomic: an item/relation fits with all its source cards, or the
-whole addition is omitted. The response reserves space for omission flags before
-accepting a bundle. Entry and UTF-8 JSON budgets bound the client payload; no
-model runs on this path. Internal SQL counts may scan more rows than returned,
-and large-archive latency/backfill time have not been benchmarked. Exact source
-reads remain separately authorized; originals and file BLOBs are immutable.
+Protected configuration currently pins the pilot resource and issuer URLs; this
+is not yet a generic one-command installation. Personal memory is explicitly
+enabled with `CONTEXT_PERSONAL_MEMORY=enabled` and matching read/write grants for
+`private:personal`. That fixed existing protocol scope is not the new owner-defined
+area model. Local no-auth MCP is an explicit loopback-only synthetic test mode,
+rejected for production/private use.
 
-The package is a ranked evidence sample, not an exhaustive answer. Short excerpts
-can omit needed facts; one-hop expansion can miss remote connections; mixed-period
-knowledge is conservatively excluded. Literal FTS lacks translation, synonyms and
-Russian stemming. See [contract](../README.md#context-package-mvp--current-approved-development)
-and [measured comparison](context-package-evaluation.md). SQLite's
-[FTS5 documentation](https://www.sqlite.org/fts5.html) defines rank ordering and
-external-content rebuild behavior used here. No embeddings or new framework are
-justified by this small experiment.
+## Sources and retrieval
 
-## Current personal text pilot
+Sources, material metadata, original text-file bytes, checksums and retry identity
+are stored in SQLite. Capture is transactional and preserves input before optional
+interpretation. Today's capture does **not** implement the approved secret-redaction
+pipeline or hard-delete contract; do not infer those protections from the target spec.
 
-The owner approved the personal text pilot on 28 October 2026. Earlier stop
-statements describe the end of Sprint 4, not a prohibition on this milestone.
-The primary path is authenticated `remember` → immutable source/material →
-`memory_context` → synthesis by the calling AI client. Signed decisions and
-work evidence remain independent of everyday memory.
+The primary protected personal tools are:
 
-One explicitly enabled inbox, `private:personal`, is an access boundary, not a
-topic. Both signed OAuth consent and configured per-client operation grants
-are mandatory. It is unavailable to the local no-auth test mode and cannot be
-enabled simply by changing a tool argument. Existing synthetic grants stay
-separate. No automatic disclosure to a new client or project is implied.
+| Tool | Current behavior |
+| --- | --- |
+| `remember` | Saves text and optional metadata in the fixed personal inbox, records authenticated-client origin and returns stable identity on unchanged retries. Does not enqueue processing. |
+| `memory_context` | Pages originals by source date (capture date if absent), with optional any-keyword FTS, continuation and explicit oversized-source reporting. |
+| `context_package` | Returns bounded lexical/timeline evidence from originals and stored knowledge, with excerpts, provenance, status and at most one hop of stored relations. |
+| `read_material` / `read_knowledge` | Retrieves a referenced original or derived item under fresh authorization checks. |
 
-For the existing owner-controlled ChatGPT app, its immutable OAuth request can
-remain `context:read context:write context:process`. An opt-in provider profile
-assigns its already approved data scopes and bounded offline access as default
-client scopes. These scopes still appear in signed tokens and every read/write
-still intersects them with independent server grants. Defaults do not add
-operation scopes: a read-only authorization remains unable to write. This is
-an explicit grant to one dedicated client, not automatic consent for every
-future client or inferred topic. New memory tools within this inbox should use
-the stable operation/data contract instead of requiring a new scope per feature.
-The generic realm import and the Codex client stay unchanged; the profile needs
-its own activation and actual-client acceptance.
+Clients supply explicit date boundaries and inspect coverage/truncation. A package
+is not an exhaustive archive scan; paged original retrieval handles full periods.
+Current FTS has no Russian/English morphological pipeline or semantic embeddings.
+Derived knowledge is source-grounded but is not yet the approved automatically
+maintained understanding layer with deduplication and superseding.
 
-The new projection is chronological and pageable over originals, with optional
-any-keyword FTS. It distinguishes authored source dates from capture dates,
-handles timezone offsets, pins an insertion watermark across pages, and reports
-incomplete/oversized evidence. It does not invent interpretations or event dates.
-The client cites the source IDs and performs the answer synthesis. Models are
-not on the capture path. SQLite remains the durable original store, including
-text-file BLOBs; no new storage service or filesystem mirror is needed here.
+## Processing and legacy interfaces
 
-The complete tool contract is in README. Activation and actual ChatGPT
-acceptance are tracked in deployment.md; tests and a merge do not establish
-that the owner's connection has been upgraded or that next-day refresh works.
+A durable processing queue supports leases, retries and replay of saved validated
+output. An operator-launched local Codex CLI extraction path exists for synthetic
+experiments. The runtime image contains neither Codex nor subscription credentials;
+unattended hosted processing and its credential lifecycle remain unverified.
+Capture and retrieval do not require an inference provider.
 
-**Status:** Local source persistence and synthetic MCP capture/recall are
-implemented (see README for the tested contract). The protected synthetic pilot
-is deployed with Keycloak; hosted OAuth and actual Codex CLI login are verified.
-The owner reports a completed ChatGPT write-to-Codex roundtrip; a connected Codex
-tool independently retrieved that synthetic record on 27 October 2026. Its
-approved live redeploy and isolated offline restore passed, closing Sprint 2
-synthetic acceptance. Exact operational evidence is recorded in deployment.md.
-Sprint 3 source materials, grounded knowledge, local subscription processing and
-project context were reviewed, tested and merged in PRs #6–#9. Hosted synthetic
-acceptance for `ff9fd9a`, including project isolation, queued-job restore and
-actual Codex OAuth refresh after expiry, passed. The Codex-only provider fix
-was separately approved in PR #10. Exact evidence is in deployment.md.
-Sprint 4 implementation is merged in PR #12 (`d2c570a`); its release record
-reports deployed Context 0.4.0. Its work-permission/evidence slice does not
-execute tasks autonomously. Human-confirmation end-to-end acceptance remains
-unverified. The owner stopped manual signing and further technical development
-to evaluate the existing core; see deployment.md. A simpler confirmation through
-a trusted authenticated environment is a product requirement, not an implemented
-replacement for the current protection.
+Ed25519 owner-review receipts, work evidence (`work_context`, GitHub evidence),
+synthetic scopes and `project_context` still exist in code. Stage 1a removes these
+experiments and obsolete dependencies while preserving retained memory and access
+checks. Synthetic test data remains required after that removal. GitHub PR import
+in stage 2 is a separate source-ingestion feature.
 
-## Purpose
+## Recovery and transition
 
-Context preserves continuity from a raw thought to an approved decision and a
-verified result. The original source material and the current interpretation
-must be separately retrievable.
+SQLite online backup and offline restore commands exist; they include sources,
+derived records, jobs, indexes and retry state. Automated nightly off-host delivery
+is not implemented. See [deployment](deployment.md) for current commands and limits.
 
-```text
-ChatGPT plugin       Codex MCP client      Future capture sources
-      \                    |                    /
-       \                   |                   /
-        +------ Authenticated MCP API --------+
-                          |
-                    Context service
-                          |
-              Source store + metadata
-                 SQLite + blob volume
-                          |
-               Derived search / views
-                 FTS first, vectors later
-                          |
-           Optional enrichment / planning
-                          |
-              GitHub evidence adapters
-```
-
-Dokploy hosts the service; it does not authenticate MCP users or own personal
-memory. Auth is implemented by Context or a compatible independent OAuth
-provider. A public HTTPS endpoint is not a public data permission.
-
-## Product direction after core validation
-
-**Owner-approved intent (27 October 2026), not an implemented feature set:**
-Context is a headless, client-agnostic Personal Context Engine. Its usefulness
-should not depend on a particular input application, model vendor, storage
-backend or hosting platform. Existing ChatGPT/Codex, SQLite and
-Dokploy/Keycloak paths are concrete pilot integrations, not mandatory future
-deployments. Keep persistence and retrieval working when no inference worker
-is available.
-
-**Separate security scopes from meaning.** Today's scope protects who can
-read a source; it is not the source's topic or single project assignment. In a
-future low-friction inbox, the user should be able to capture a note without
-manual tagging. Inferred topics and multi-project associations must not grant
-new access, promote private material to shared context or imply disclosure
-approval. Keep source bytes and approval evidence independent of model output.
-
-**Post-core evidence:** In a local 60-note / six-month synthetic evaluation,
-source retrieval produced 10/12 complete grounded answers both before and
-after processing. The worker generated 90 suggested knowledge items but no
-stored relationships and no measured retrieval lift in that single comparison.
-An answering model performed thematic synthesis from original snippets. This
-motivates testing retrieval over derived knowledge and longitudinal
-consolidation **as hypotheses**, not implementing a graph/RAG stack by default.
-See [roadmap post-core validation](roadmap.md#post-core-product-validation--findings-and-candidate-experiments)
-for limits and candidate acceptance.
-
-**Usability risks are independent of memory quality:** reported recurrent
-ChatGPT reauthorization and platform-blocked bulk write calls need diagnosis
-with real client evidence. A locally successful Codex OAuth refresh or memory
-worker job does not prove the end-user ChatGPT flow. Do not weaken existing
-authorization to hide these symptoms.
-
-## Data model, introduced incrementally
-
-- `source`: original content, immutable ID, type, origin, timestamps,
-  checksum, scope, provenance and optional private blob reference.
-- `observation`: extracted or suggested interpretation, source links,
-  extractor/version and explicit unverified/reviewed status.
-- `decision`: human-approved intention, decision evidence, supersession,
-  effective dates and related project references.
-- `relation`: an explainable association, user-created or inferred,
-  including source references.
-- `execution`: externally verifiable issue, PR, checks, merge and deployment
-  evidence, recorded as separate states.
-
-Do not create all tables up front. Begin with source storage and essential
-metadata. An optional vector index is a *derived search index*, not a source
-of authority. Query filters and authorization must be applied before returning
-data to any model.
-
-## Implemented Sprint 3 boundaries
-
-Source metadata and bounded UTF-8 originals live in additive SQLite tables.
-Original file bytes, sources, FTS and retry keys commit together; online
-snapshots contain the complete material. The v1 source shape remains unchanged.
-
-Knowledge items and relations cite existing same-scope sources. Exact quotes
-are checked against immutable originals. Creation attribution is untrusted;
-items begin as suggested, and a suggested supersedes relation cannot change
-decision status. Owner review requires an Ed25519 receipt verified against an
-independently selected trusted key outside MCP. Append-only events retain the
-signed receipt, reviewer key fingerprint and server timestamp.
-
-Processing jobs use bounded retries and exclusive expiring leases. Validated
-model output is saved before knowledge writes; retries replay it with stable
-per-item keys. Sources remain available after failed processing. The actual
-subscription experiment uses an explicit local Codex CLI worker. HTTP requests
-only queue jobs, and the deployed runtime has no model credentials or automatic
-paid fallback. Hosted subscription processing remains unverified.
-
-Project context reads one authorized scope, includes full original evidence for
-each derived item/link, and has an explicit UTF-8 payload budget. Unavailable or
-oversized grounding omits a whole entry with a truncation indicator. Every MCP
-operation intersects signed token operation/data scopes with operator-configured
-client grants; project arguments never grant access. This remains one owner with
-the two existing clients, rather than a multi-tenant permission model.
-
-## Sprint 4 work-evidence boundary
-
-An immutable work authorization binds an existing same-scope decision proposal
-to its exact current signed approval, public GitHub repository and source/base
-branches, required CI names and explicit dispatch/disclosure permission. It is
-independently signed with the same trusted owner key and a different protocol
-domain. The operator imports it locally; MCP can only read the resulting chain.
-Approval revocation or replacement disables the old authorization.
-
-Explicit operator refresh reads public GitHub REST with no credentials, fixed
-API origin, bounded time/bytes/counts, no redirects and no source-text disclosure.
-It verifies repository, branches, exact head SHA and stable PR facts across the
-read. Immutable observations separate PR state, check results, merge and unknown
-deployment. An open or failed PR cannot verify a result, nor can an old merged
-PR complete a newly authorized intent. Failed refresh is itself an observation,
-so stale success cannot silently stand in for current verification.
-
-`work_context` returns one exact authorized work chain with complete originals,
-signed review and authorization, latest observation and bounded older evidence.
-Its UTF-8 budget drops whole older observations only; missing room for the
-complete rationale/latest fact returns an error. It is sufficient for a fresh
-planner without other projects or personal history. Tables are additive and
-included in existing SQLite backup/restore. No hosted model, dispatch engine,
-GitHub write or live deployment verifier is introduced.
-
-## Initial MCP contract
-
-Provide two versioned, intentionally narrow tools:
-
-- `capture`: insert a short synthetic text item, with origin descriptor,
-  scope, request ID/idempotency key and conservative status. Return ID,
-  stored timestamp and stored status. A user-requested status is **not by
-  itself** proof of human approval.
-- `recall`: retrieve a known ID or search stored synthetic text, constrained
-  by verified caller scopes. Return source/provenance and explicit status.
-
-Prefer the official MCP TypeScript SDK with Streamable HTTP transport and
-SQLite FTS. Use MCP Inspector and a second client to validate the contract.
-Keep API mechanics and persistence behind simple interfaces.
-
-## Authentication options
-
-ChatGPT Plugins currently support no-auth, OAuth, and mixed authentication
-for compatible MCP connections. For **real private memory** use OAuth 2.1 or
-an equally supported authenticated path; use authorization-code flow,
-supported client registration (CIMD/DCR as applicable), token scopes, audience
-validation and revocation/expiry behavior.
-
-- Dokploy does not supply an OAuth identity provider just by hosting an app.
-- During local testing, no-auth may be enabled **only for synthetic isolated
-  fixtures** in a nonpublic environment.
-- Before any hosted personal-data pilot, independently validate that the
-  configured OAuth provider and ChatGPT linking actually work end to end.
-- Do not embed bearer tokens in URLs or source code; do not bypass browser
-  login by treating arbitrary request text as approval.
-- A Secure MCP Tunnel may be explored for private connectivity, but it does
-  not replace user authorization or by itself host a login provider.
-- Expose health separately from private MCP data.
-
-ChatGPT write functionality must be demonstrated with an actual plugin
-invocation; discovered tools alone are not enough. Codex must use appropriately
-limited credentials rather than inheriting all personal memory.
-
-## Future layers, conditional on earlier proof
-
-1. Files/voice/images: original bytes, reproducible derived text, job queue.
-2. Memory: reviewable observations, links, eventual semantic search.
-3. Project projection: least-privilege context package for one project.
-4. Planning: human-approved sprint, GitHub task and traceable results.
-
-Mastra may be evaluated as a workflow/memory implementation detail **after**
-the simple MCP capture/recall experiment works. Do not introduce it solely
-because it has memory or orchestration features.
-
-## Open questions
-
-- How can consequential actions receive simple user confirmation in an existing
-  trusted authenticated environment, without manual keys or JSON? Investigation
-  and implementation are not currently authorized.
-- Can a hosted subscription worker be supported with independently verified
-  credential refresh, quota handling and outbound source permissions?
-- What off-host backup/recovery arrangement should be separately authorized?
-- Which retrieval benchmark would justify vectors over the current FTS and
-  structured scoped context?
+Stage 1b replaces Keycloak and its PostgreSQL DB with core OAuth 2.1 AS, DCR, PKCE,
+password + WebAuthn passkey login and CLI tokens; existing ChatGPT/Codex connections
+must reconnect. Later stages add imports/evals, morphology/local embeddings,
+pluggable understanding and owner controls. An inferred topic never grants area
+access. Consult the [glossary](../CONTEXT.md) when naming these new concepts.

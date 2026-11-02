@@ -1,10 +1,13 @@
 # Instructions for agents
 
-Context is a headless Personal Context Engine: capture originals, preserve
-them, and give authorized AI clients useful, source-grounded context.
+Context is an MIT, single-owner, self-hosted personal context engine: preserve
+sources and give authorized clients useful, source-grounded context through MCP.
 
-Before implementation read README.md, docs/architecture.md, docs/roadmap.md
-and docs/deployment.md. Inspect the actual repository state and current PRs.
+Before implementation read CONTEXT.md, docs/spec.md, README.md,
+docs/architecture.md, docs/roadmap.md and docs/deployment.md; consult the relevant
+accepted decisions in docs/adr/. Inspect the actual repository state and current
+PRs. The owner-approved direction dated 2026-11-02 supersedes older stop statements;
+the spec describes the target, while architecture/deployment describe current truth.
 
 ## Boundaries
 
@@ -17,11 +20,14 @@ and docs/deployment.md. Inspect the actual repository state and current PRs.
   without separate explicit owner approval.**
 - Routine memory capture and retrieval within an authorized connection need
   no per-record signature or technical choices from the user. Save requested
-  originals before interpretation; expose clear success, failure and retry
-  results. Keep access scopes separate from inferred topics.
+  sources after secret redaction and before interpretation; expose clear success,
+  failure and retry results. Use area for the access boundary, separate from
+  topics; retain scope for OAuth and existing protocol fields.
 - Keep consequential actions and external disclosure separately authorized.
-  Signed work-evidence tools are a separate legacy workflow, not a prerequisite
-  for using memory. Preserve their checks while they remain available.
+  Stage 1a removes Ed25519 signatures/review receipts, work evidence, synthetic
+  scopes and project_context. Remove obsolete interfaces and dependencies
+  together; preserve authorization on retained operations. Until removal ships,
+  do not bypass existing checks or claim the experiments are gone.
 - Follow current implementation and tested behavior over design assumptions.
   Treat partial implementation, tested PR, merge and live deployment as
   different states.
@@ -35,14 +41,20 @@ and docs/deployment.md. Inspect the actual repository state and current PRs.
 
 - Public repository: **synthetic fixtures only**. Do not commit real memory,
   private strategy, raw chat text, book excerpts, uploaded media, credentials
-  or any production database contents.
+  or any production database contents. This applies to code, tests, docs and PR
+  text. Keep the real 20–30-question eval set, its inputs, expected answers and
+  outputs private; use synthetic equivalents in public CI. Removing synthetic
+  product scopes does not relax this rule.
 - Selected real notes may enter the owner-approved private pilot only after
   protected capture/read and backup/restore are verified for its activation.
   A private namespace in a test still contains synthetic fixtures only.
-- Persist immutable source input before attempting interpretation. Never
-  infer owner approval from similarity search or LLM output.
-- Carry source provenance, decision status, scope and timestamps. Enforce
-  access scope on reads and writes; reject missing/invalid authentication.
+- The target ingest pipeline redacts tokens, keys and passwords before storage,
+  then persists immutable sources with provenance before interpretation. Report
+  unimplemented protections honestly. Never infer owner approval from similarity
+  search or LLM output.
+- Carry source provenance, decision status, area and timestamps. Enforce area
+  read/write rights; reject missing/invalid authentication. Inbox fallback and
+  automatic sorting must not bypass owner-authorized access/disclosure policy.
 - No public anonymous capture or recall for private data. An explicitly
   isolated local/test-only no-auth mode may use synthetic data and must fail
   closed in deployed/production configurations.
