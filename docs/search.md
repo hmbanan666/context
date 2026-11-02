@@ -1,6 +1,7 @@
 # Local hybrid search
 
-Stage 3 adds search in the repository; this is not a deployment claim. No new
+Stage 3 search is merged in #28 and owner-confirmed deployed on 2 November 2026.
+The simplicity audit did not inspect production or repeat hosted acceptance. No new
 service, environment variable or model credential is required. The image includes
 quantized `Xenova/multilingual-e5-small`; startup automatically backfills existing
 sources and knowledge, and new captures/imports enqueue their stored text. Capture

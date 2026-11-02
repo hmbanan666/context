@@ -2,8 +2,8 @@
 
 The [README](../README.md) is the installation guide and single environment-variable
 reference. Context needs one container behind HTTPS and persistent SQLite storage.
-The owner reports built-in OAuth and a live ChatGPT connection on 2 November 2026;
-this refactor has not accessed or changed that deployment.
+On 2 November 2026 the owner confirms built-in OAuth/ChatGPT, eval #27 and hybrid
+search #28 are deployed. This refactor has not accessed or changed production.
 
 ## Existing installations
 
@@ -147,9 +147,9 @@ Startup and writes backfill automatically. `context index rebuild` repairs deriv
 FTS/vectors from preserved originals. Capture does not wait for embeddings.
 
 The merged search implementation recommends **1 GiB**, retained in Compose and the
-README: its synthetic measurements reached roughly 661–671 MiB RSS. The existing
-512 MiB production limit needs a separately approved adjustment before deploying
-that image. This refactor adds no further memory requirement. See [search](search.md)
+README: its synthetic measurements reached roughly 661–671 MiB RSS. Do not reuse the earlier
+512 MiB limit for that workload. The owner confirms search is deployed; this task
+has not inspected its current limits. This refactor adds no memory requirement. See [search](search.md)
 for measured bounds; live concurrency and capacity remain unverified.
 
 ## Development and verification

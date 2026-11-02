@@ -39,7 +39,7 @@ async function fixture() {
     CONTEXT_DB_PATH: databasePath,
     CONTEXT_BACKUP_DIR: backups,
     CONTEXT_BACKUP_AT: "00:00",
-    CONTEXT_BACKUP_TIMEZONE: "UTC",
+    TZ: "UTC",
   };
   return { directory, databasePath, backups, env, saved };
 }

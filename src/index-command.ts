@@ -9,8 +9,7 @@ export async function runIndexCommand(
   action: string | undefined,
   env: NodeJS.ProcessEnv,
 ) {
-  if (!action || action !== "rebuild")
-    throw new Error("Usage: context index rebuild");
+  if (action !== "rebuild") throw new Error("Usage: context index rebuild");
   const path = env.CONTEXT_DB_PATH ?? "./data/context.db";
   const sources = new SourceStore(path);
   const knowledge = new KnowledgeStore(path);

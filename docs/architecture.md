@@ -7,7 +7,8 @@ The [spec](spec.md) and [ADRs](adr/) describe the target beyond today's behavior
 
 As of 2 November 2026, cleanup, built-in auth, nightly backups, JSONL imports,
 retrieval evals and hybrid search are merged. The owner reports ChatGPT connected
-live. Repository implementation and live deployment remain distinct states.
+live and confirms eval #27 and hybrid search #28 are deployed. This is owner-
+reported status; the simplicity refactor has not accessed production.
 
 ## Access
 
