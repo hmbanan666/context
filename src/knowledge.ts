@@ -1,10 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { identifierSchema as identifier, scopeSchema, nonblankText as text } from "./contracts.js";
+import {
+  identifierSchema as identifier,
+  scopeSchema,
+  nonblankText as text,
+} from "./contracts.js";
 import type { PackageSelection } from "./package-query.js";
-import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { redactFields } from "./redaction.js";
+import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { IdempotencyConflict } from "./store.js";
 
 export const knowledgeCreatorSchema = z.strictObject({

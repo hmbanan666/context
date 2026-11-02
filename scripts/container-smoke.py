@@ -11,9 +11,8 @@ def main():
     image = sys.argv[1] if len(sys.argv) > 1 else "context:ci"
     suffix = uuid.uuid4().hex[:10]
     container = "context-runtime-proof-" + suffix
-    volumes = ["context-data-proof-" + suffix, "context-backup-proof-" + suffix]
-    mounts = ["--mount", f"type=volume,src={volumes[0]},dst=/app/data",
-              "--mount", f"type=volume,src={volumes[1]},dst=/app/backups"]
+    volumes = ["context-data-proof-" + suffix]
+    mounts = ["--mount", f"type=volume,src={volumes[0]},dst=/app/data"]
 
     def run(args):
         return subprocess.run(args, check=True, capture_output=True, text=True)
@@ -24,7 +23,7 @@ def main():
     try:
         args = ["docker", "run", "--detach", "--name", container, "--read-only", "--tmpfs", "/tmp",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--publish", "127.0.0.1::3000", *mounts]
-        for value in ["CONTEXT_AUTH=oauth", "CONTEXT_PUBLIC_URL=https://context.example/mcp",
+        for value in ["CONTEXT_PUBLIC_URL=https://context.example/mcp",
                       "CONTEXT_AREAS=sandbox", "CONTEXT_DB_PATH=/app/data/context.db"]:
             args += ["--env", value]
         run(args + [image])
@@ -78,7 +77,7 @@ jobs.close();knowledge.close();store.close();"""
         saved = json.loads(run(["docker", "exec", container, "node", "--input-type=module", "-e", insert]).stdout)
         assert saved["duplicates"] == [False, False, False, False]
         run(["docker", "exec", container, "node", "dist/scripts/database.js", "backup",
-             "/app/data/context.db", "/app/backups/snapshot.db"])
+             "/app/data/context.db", "/app/data/backups/snapshot.db"])
         run(["docker", "restart", container])
         # Docker can allocate a new random host port when restarting a container.
         port = current_port()
@@ -89,7 +88,7 @@ jobs.close();knowledge.close();store.close();"""
         assert repeated["duplicates"] == [True, True, True, True]
         run(["docker", "stop", container])
         run(["docker", "run", "--rm", "--read-only", *mounts, image, "node", "dist/scripts/database.js",
-             "restore", "/app/backups/snapshot.db", "/app/data/restored.db"])
+             "restore", "/app/data/backups/snapshot.db", "/app/data/restored.db"])
         read = read.replace("/app/data/context.db", "/app/data/restored.db")
         restored = json.loads(run(["docker", "run", "--rm", "--read-only", *mounts, image,
                                   "node", "--input-type=module", "-e", read]).stdout)

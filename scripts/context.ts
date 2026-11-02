@@ -67,8 +67,7 @@ async function main() {
     return;
   }
   const config = readConfig(process.env);
-  if (!config.oauth)
-    throw new Error("CLI requires CONTEXT_AUTH=oauth and CONTEXT_PUBLIC_URL");
+  if (!config.oauth) throw new Error("CLI requires CONTEXT_PUBLIC_URL");
   const store = new AuthStore(config.databasePath, config.oauth.areas);
   try {
     if (kind === "owner" && action === "init" && !name) {

@@ -1,85 +1,63 @@
 # Current architecture
 
-As recorded on **2 November 2026**, the protected pilot runs the implementation
-released in [PR #19](https://github.com/hmbanan666/context/pull/19). This document
-describes repository behavior and recorded release status, not a new inspection
-of the live service. Stages 1a and 1b are merged; stage 1c backups are prepared in
-PR #21, not yet merged or deployed. The [spec](spec.md) and [ADRs](adr/) define
-the approved target; this backup slice does not claim the later capabilities.
+Context is a single Node/TypeScript process serving MCP Streamable HTTP at `/mcp`,
+built-in OAuth and `/health`, backed by SQLite. One non-root container and one data
+volume suffice; a separate backup volume remains supported for existing installs.
+The [spec](spec.md) and [ADRs](adr/) describe the target beyond today's behavior.
 
-## Runtime and access
+As of 2 November 2026, cleanup, built-in auth, nightly backups, JSONL imports,
+retrieval evals and hybrid search are merged. The owner reports ChatGPT connected
+live. Repository implementation and live deployment remain distinct states.
 
-The core is a Node/TypeScript service using the MCP SDK with Streamable HTTP at
-`/mcp`, a separate `/health` endpoint and SQLite persistence. The container runs
-as a non-root user with persistent data storage.
+## Access
 
-**The core is now the authorization server and resource server.** Keycloak and
-its dedicated PostgreSQL services/configuration are removed from the repository.
-The configured public HTTPS `/mcp` URL is the exact audience; its origin is the
-issuer. RFC 9728/8414 discovery, DCR, authorization code + mandatory S256 PKCE,
-owner password/passkey login, narrowable consent and revocation are built in.
-DCR supports public (`none`) and confidential (`client_secret_basic` /
-`client_secret_post`) clients; new registrations default to Basic, while existing
-public entries stay public. Secrets are returned once and stored only as hashes
-in `auth_client_secrets`, separately from listings. Token/refresh/revocation
-requests enforce the registered method; unknown optional DCR metadata is ignored.
-HTTPS, IP-loopback HTTP and hierarchical private-use callbacks are exact-matched;
-executable/file schemes, fragments and userinfo are rejected.
+The core is both authorization and resource server: DCR, S256 PKCE, owner password
+and WebAuthn passkey login, bounded consent, CLI tokens and immediate revocation.
+The public MCP URL is the exact audience; its origin is the issuer. OAuth and CLI
+credentials use random opaque values with only hashes persisted. Each MCP call
+checks credential scopes and area/operation pairs intersected with the current
+client registry. There is no owner-configured static-grants registry. The read-only
+eval harness supplies simulated grants in-process, without a network listener.
 
-The SQLite registry records clients, rights, redirects, default write area,
-creation/last-use and revocation. Public and confidential clients begin with no
-rights. OAuth and CLI bearer credentials are random 256-bit opaque values stored
-only as SHA-256 hashes; each request intersects their own approved area/operation
-pairs with current client grants. Revocation takes effect on the next request.
-Access lasts five minutes; rotating refresh families have configurable absolute
-normal/offline deadlines. Replaying a consumed code or refresh token revokes all
-family descendants. Consumption/rotation use SQLite transactions.
+`auth-store.ts` owns the unchanged auth tables and credential lifecycle;
+`oauth.ts` and `passkeys.ts` handle protocol/browser flows; `auth.ts` protects MCP.
+Owner sessions are bounded, Secure/HttpOnly/SameSite=Lax, CSRF/Origin checked.
+Resource URLs and client/token storage formats remain stable in this refactor.
+See [deployment](deployment.md#authentication) for expiry and recovery details.
 
-`context owner init` sets the password using Node scrypt (N=32768, r=8, p=3).
-First password login requires passkey enrollment; later logins require both.
-SimpleWebAuthn verifies challenge, origin, RP ID, signature and user verification.
-Ten-minute owner sessions use Secure/HttpOnly/SameSite=Lax host-only cookies,
-CSRF and exact Origin checks. Auth bodies and request rates are bounded.
-
-`CONTEXT_AREAS` defines 1–8 areas, defaulting to `personal`. The wire field remains
-`scope`; default routing grants no access. Protected `remember` uses the
-credential's default write area; inbox sorting remains future work. Local no-auth
-MCP uses `CONTEXT_LOCAL_MCP=enabled`, is loopback-only for fictional development/
-test data, and is rejected in production. See [deployment](deployment.md) for
-client authentication methods, callback validation and CLI configuration.
+Areas are independent of topics. `CONTEXT_AREAS` defines up to eight; wire fields
+remain `scope`. `remember` defaults to the credential's write area, which grants
+no extra rights. Loopback no-auth mode is explicit and forbidden in production.
 
 ## Sources and retrieval
 
-Sources, material metadata, original text-file bytes, checksums and retry identity
-are stored in SQLite. Capture is transactional and preserves input before optional
-interpretation. Today's capture does **not** implement the approved secret-redaction
-pipeline or hard-delete contract; do not infer those protections from the target spec.
-The owner-local [JSONL import path](imports.md) adds deterministic redaction for
-imports and both collectors, preserving source attribution in `source_imports`.
-Each changed external item becomes a new immutable source linked by source name
-and external ID; exact version retries reuse the retained source. Imports share
-the existing source/search tables and area-checked retrieval.
+`store.ts` stores sources, metadata, text-file bytes, checksums and retry identity
+transactionally. `redaction.ts` provides the shared deterministic filter for MCP,
+imports and collectors. All content/provenance strings are redacted before
+checksums, fingerprints, FTS or durable writes; decoded file bytes receive the
+same filter. Invalid redacted identities are rejected. Existing sources are not
+rewritten. Pattern matching cannot identify every unlabeled secret.
 
-The primary memory tools are:
+[Imports](imports.md) stream bounded JSONL, preserve attribution in `source_imports`
+and retain changed external items as immutable revisions. Source and import
+identity commit together. Unchanged revisions skip safely on retries.
 
-| Tool | Current behavior |
-| --- | --- |
-| `remember` | Saves text and optional metadata in an authorized area (protected default: credential's default write area; local default: `personal`), records authenticated-client origin and returns stable identity on unchanged retries. Enqueues background embeddings; does not enqueue understanding processing. |
-| `memory_context` | Pages originals by source date (capture date if absent), with optional any-keyword FTS, continuation and explicit oversized-source reporting. |
-| `context_package` | Returns bounded hybrid-search/timeline evidence from originals and stored knowledge, with excerpts, provenance, status and at most one hop of stored relations. |
-| `read_material` / `read_knowledge` | Retrieves a referenced original or derived item under fresh authorization checks. |
+The recommended MCP journey is `remember`, `context_package`, `read_material`.
+All 15 wire names remain: explicit-origin capture wrappers share store writers;
+legacy retrieval keeps exact-ID, phrase and cursor contracts. The
+[README tool table](../README.md#mcp-tools) lists the complete interface.
+`memory.ts` pages original evidence; `context-package.ts` builds bounded evidence
+from sources/knowledge and one-hop relations. Both enforce area restrictions.
+Search combines exact and RU/EN stemmed FTS with local E5 embeddings. The image
+includes the model; startup and writes backfill derived vectors in the background,
+with lexical fallback on model failure. Area/date filters precede fusion.
+See [search](search.md) for bounds, rebuild and measured resources. This refactor
+preserves those search internals.
 
-`remember`, `memory_context` and `context_package` accept an authorized `scope`,
-defaulting to `personal` except protected `remember` as described above. Clients
-supply explicit date boundaries and inspect coverage/truncation. A package is not
-an exhaustive archive scan; paged original retrieval handles full periods.
-Search now combines exact and Snowball RU/EN stemmed FTS with local E5 vectors.
-The model is baked into the image; a durable background queue backfills on startup
-and after writes, with automatic lexical fallback on model failure. Area/date and
-knowledge eligibility filters precede fusion. See [search](search.md) for bounds,
-rebuild, status and measured resources. No hosted deployment is implied.
-Derived knowledge is source-grounded but is not yet the approved automatically
-maintained understanding layer with deduplication and superseding.
+`knowledge.ts` stores source-grounded suggestions and relations, redacting their
+text/provenance before persistence. Historical review rows remain readable; there
+is no review/signature writer. Old experimental tables may remain unused in an
+existing database; no startup cleanup drops or rewrites them.
 
 ## Retrieval measurement
 
@@ -95,35 +73,21 @@ exists. No independent timer, settings, worker or job store is added. This deliv
 retrieval measurement and that narrow automation step; it does not claim private
 question-set acceptance, answer grading or the remaining stage 4 capabilities.
 
-## Processing and legacy interfaces
+## Processing and recovery
 
-A durable processing queue supports leases, retries and replay of saved validated
-output. An operator-launched local Codex CLI extraction path exists for synthetic
-experiments. The runtime image contains neither Codex nor subscription credentials;
-unattended hosted processing and its credential lifecycle remain unverified.
-Capture and retrieval do not require an inference provider.
+`jobs.ts` retains processing leases, retries and durable validated/redacted output.
+`processor.ts` coordinates interpretation after source capture. The optional
+operator-run `memory:process` command uses the existing restricted Codex adapter;
+the runtime image has no Codex installation or subscription credentials. Unattended
+understanding, sorting, superseding and hard delete remain future work. Capture
+and source retrieval need no model.
 
-Stage 1a removes Ed25519 review/signature and work/GitHub evidence code,
-`knowledge_history`, `work_context` and `project_context`, plus their scripts and
-fixtures. Synthetic test data remains required. The retained 15 tools include
-`capture`/`recall` for existing retry contracts and exact-ID/phrase lookup alongside
-the material, memory, knowledge and processing tools. GitHub PR import in stage 2
-is a separate source-ingestion feature.
+Backups run in-process. The scheduler handles calendar dates; the runner verifies
+snapshots, coordinates CLI/scheduled locking and retains local files; transports
+stream optional S3/SFTP copies. These boundaries support actual failure/restore
+checks and are retained. All ten runtime dependencies serve active MCP, WebAuthn,
+validation, search, eval or backup paths; none is removed merely to reduce the count.
 
-## Recovery and transition
-
-SQLite online backup and offline restore commands exist; they include sources,
-derived records, jobs, indexes, retry state and auth state. PR #21 adds in-process
-nightly snapshots, local retention, verified separate-file restore and optional
-S3/SFTP delivery; actual hosted off-host recovery is unverified. No startup
-migration drops or rewrites existing rows. Old work tables remain unused;
-historical review rows still supply knowledge status, including
-rejection filtering, without a review writer. Existing area names and retry keys
-are preserved. See [deployment](deployment.md) for compatibility and recovery.
-
-Stage 1b preserves source/knowledge rows and adds only auth tables. Existing
-ChatGPT/Codex and other Keycloak connections must reconnect to the built-in
-issuer; no migration or deployment was performed here. Later stages add
-imports/evals, pluggable understanding and owner controls. Stage 3 search is
-implemented in this branch. An inferred topic never grants area access.
-Consult the [glossary](../CONTEXT.md) when naming these concepts.
+[Recovery](deployment.md#backups) includes the complete SQLite state and preserves
+rights/retry identity. Off-host recovery and live save/reopen/ask require separate
+operational evidence. No merge or deployment is implied by passing local tests.

@@ -1,4 +1,0 @@
-# Apply after isolated-deployment network conversion. Requires Compose 2.24.4+.
-services:
-  context:
-    networks: !override [dokploy]

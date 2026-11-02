@@ -23,20 +23,13 @@ test("defaults to a persistent local database and validates configuration", () =
     assert.throws(() => readConfig({ CONTEXT_DB_PATH }));
 });
 
-test("protected mode requires a portable HTTPS resource and rejects legacy auth and local bypass", () => {
+test("protected mode requires a portable HTTPS resource and rejects invalid auth and local bypass", () => {
   assert.equal(readConfig(oauth).oauth?.issuer, "https://context.example");
   for (const change of [
-    { CONTEXT_OWNER_SUBJECT: "" },
     { CONTEXT_PUBLIC_URL: "http://context.kosarev.space/mcp" },
-    { CONTEXT_OAUTH_ISSUER: "https://untrusted.example" },
     { CONTEXT_AUTH: "none" },
-    { CONTEXT_CLIENT_GRANTS: "{}" },
     { CONTEXT_PUBLIC_URL: "https://context.example/mcp?token=bad" },
-    { CONTEXT_REFRESH_SECONDS: "0" },
-    { CONTEXT_OFFLINE_SECONDS: "999999999" },
     { CONTEXT_LOCAL_MCP: "enabled" },
-    { CONTEXT_LOCAL_SCOPES: "garden" },
-    { CONTEXT_PERSONAL_MEMORY: "enabled" },
   ])
     assert.throws(() => readConfig({ ...oauth, ...change }));
 });
@@ -69,36 +62,10 @@ test("area configuration rejects malformed, duplicate, reserved and excessive ar
   );
 });
 
-test("legacy environment grants are rejected in every auth mode", () => {
-  for (const CONTEXT_CLIENT_GRANTS of [
-    "",
-    "null",
-    "[]",
-    "{}",
-    "{",
-    "x".repeat(16385),
-    JSON.stringify({ client: { read: [], write: [] } }),
-    JSON.stringify({ client: { read: ["unknown"], write: [], process: [] } }),
-  ]) {
-    assert.throws(() => readConfig({ ...oauth, CONTEXT_CLIENT_GRANTS }));
-  }
-  for (const local of [{}, { CONTEXT_LOCAL_MCP: "enabled" }]) {
-    assert.throws(() => readConfig({ ...local, CONTEXT_CLIENT_GRANTS: "{}" }));
-  }
-});
-
-test("refresh lifetimes are configurable and bounded in production", () => {
-  const configured = readConfig({
-    ...oauth,
-    CONTEXT_REFRESH_SECONDS: "600",
-    CONTEXT_OFFLINE_SECONDS: "1200",
-  });
-  assert.equal(configured.oauth?.refreshSeconds, 600);
-  assert.equal(configured.oauth?.offlineSeconds, 1200);
-  for (const change of [
-    { CONTEXT_REFRESH_SECONDS: "2592001" },
-    { CONTEXT_OFFLINE_SECONDS: "299" },
-    { CONTEXT_REFRESH_SECONDS: "1200", CONTEXT_OFFLINE_SECONDS: "600" },
-  ])
-    assert.throws(() => readConfig({ ...oauth, ...change }));
+test("public URL enables OAuth with fixed lifetimes and accepts the old explicit selector", () => {
+  const { CONTEXT_AUTH: _unused, ...env } = oauth;
+  const configured = readConfig(env);
+  assert.deepEqual(configured, readConfig(oauth));
+  assert.equal(configured.oauth?.refreshSeconds, 86400);
+  assert.equal(configured.oauth?.offlineSeconds, 30 * 86400);
 });

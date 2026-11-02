@@ -2,8 +2,9 @@
 
 Owner-approved direction: **Nick, 2 November 2026**. This spec supersedes older
 README/roadmap direction and development-stop statements. It records the target,
-not a claim that it is implemented. The protected pilot is running; stage 1 is
-in progress. This documentation change implements none of the stages.
+not a claim that every capability is implemented. Stage 1, imports, retrieval evals and hybrid search are
+merged; see architecture/roadmap for current status and live evidence. The owner's
+simplicity direction preserves existing built-in OAuth connections during cleanup.
 
 Use the [glossary](../CONTEXT.md) for product language and the [ADRs](adr/) for
 accepted decisions. [Architecture](architecture.md) and [deployment](deployment.md)
@@ -80,7 +81,8 @@ are also possible through authorized agents via MCP.
   client rights, processing choice and backup target; ongoing routine work is automatic.
 - Build OAuth 2.1 AS, DCR, PKCE, password + WebAuthn passkey login, CLI bearer
   tokens and revocable client rights into the core. Remove Keycloak and its
-  PostgreSQL database in stage 1b. Existing ChatGPT/Codex connections **must reconnect**.
+  PostgreSQL database in stage 1b. That historical issuer switch required reconnecting. Subsequent simplification
+  preserves built-in client/token formats and public URLs, requiring no reconnect.
 - Support any conforming authorized MCP agent. Demonstrate interoperability with
   ChatGPT, Claude and Cursor, and the server Codex/headless token path; listing
   tools alone is insufficient evidence of save/reopen/ask behavior.
@@ -144,7 +146,8 @@ are also possible through authorized agents via MCP.
   access isolation against a recorded baseline. Report regressions and unrun checks.
 - Nightly backup includes a configurable off-host copy over SFTP or S3-compatible
   storage. Report snapshot and delivery status independently, retry safely and
-  verify restoration from that copy. Backup contents and credentials remain private.
+  verify restoration from that copy. Backups are plain SQLite over SSH/TLS;
+  client-side encryption is explicitly out of scope. Contents and credentials remain private.
 - Provide core owner UI for search, inbox decisions, deletion and clients/tokens,
   with corresponding authorized MCP operations. Owner login needed by stage 1b
   precedes the full management UI in stage 5.
@@ -176,7 +179,7 @@ Private eval evidence remains private; public summaries contain only safe aggreg
 Stages describe the approved sequence. Each implementation is a small, testable
 PR; every merge and deployment still needs separate explicit owner approval.
 
-### Stage 1 — Cleanup and self-contained operation (in progress)
+### Stage 1 — Cleanup and self-contained operation (merged; live acceptance tracked separately)
 
 **1a — Remove experiments (one PR-sized slice).** Remove Ed25519 owner signatures/
 review receipts, work evidence including `work_context` and GitHub evidence,
@@ -214,7 +217,7 @@ Restore into an isolated instance preserves sources, provenance and access
 policy. Document target setup, retention and recovery; expose the last success
 and failures without leaking credentials or records.
 
-### Stage 2 — Clients, imports and eval set (planned)
+### Stage 2 — Clients, imports and eval set (in progress)
 
 Connect Grok Bot and server Codex as clients. Import Grok Bot transcripts, Codex
 sessions and GitHub PRs. Establish the 20–30-question private eval set and public
@@ -228,7 +231,7 @@ storage. The private baseline stays private; public CI runs synthetic equivalent
 and records baseline quality and known misses. Nightly eval automation follows
 in stage 4, not a claim about the current CI.
 
-### Stage 3 — Morphology and local semantic search (planned)
+### Stage 3 — Morphology and local semantic search (merged; live acceptance tracked separately)
 
 Add Russian/English morphological FTS and small local-model embeddings on the
 server, retaining SQLite.

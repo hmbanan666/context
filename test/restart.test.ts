@@ -88,7 +88,7 @@ async function waitForPort(child: ChildProcess): Promise<number> {
   });
 }
 
-test("synthetic source survives two real service processes and a repeated seed", {
+test("synthetic source survives two real service processes and retries", {
   timeout: 20000,
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-restart-"));
@@ -96,13 +96,10 @@ test("synthetic source survives two real service processes and a repeated seed",
   const env = childEnvironment(databasePath);
   let capturedSource: Record<string, unknown> | undefined;
   try {
+    const initial = new SourceStore(databasePath);
+    initial.insert(syntheticSource);
+    initial.close();
     for (let restart = 0; restart < 2; restart++) {
-      const seed = run(
-        new URL("../scripts/seed-synthetic.js", import.meta.url),
-        env,
-      );
-      const [seedCode] = await once(seed, "exit");
-      assert.equal(seedCode, 0);
       const child = run(new URL("../src/main.js", import.meta.url), env);
       try {
         const port = await waitForPort(child);

@@ -1,5 +1,6 @@
-import type { ClientGrants } from "../../src/access.js";
-import { AuthStore, secret } from "../../src/auth-store.js";
+import { AuthStore, type Grants, secret } from "../../src/auth-store.js";
+
+export type ClientGrants = Record<string, Grants>;
 export function fixtureAuth(
   grants: ClientGrants,
   resource: string,

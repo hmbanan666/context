@@ -16,8 +16,8 @@ import {
   type MaterialMetadata,
 } from "./materials.js";
 import type { PackageSelection } from "./package-query.js";
-import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { redact, redactFields } from "./redaction.js";
+import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 
 export interface SourceInput {
   readonly id: string;

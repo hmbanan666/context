@@ -7,12 +7,12 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import type { ClientGrants } from "../src/access.js";
 import { protectMcp } from "../src/auth.js";
 import { JobStore } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
+import type { ClientGrants } from "./fixtures/auth.js";
 import { fixtureAuth } from "./fixtures/auth.js";
 
 test("protected MCP applies area and operation grants to every read, write, processing and context tool", async () => {

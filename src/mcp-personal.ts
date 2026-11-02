@@ -59,7 +59,7 @@ export function registerPersonalTools(
     "remember",
     {
       description:
-        "Save the user's requested note verbatim in an authorized area (scope defaults to the client’s default write area). Generate one idempotencyKey per note and reuse it only for identical retries. Preserve supplied source dates in metadata.createdAt; never invent dates. A saved note is not approval for an action. Confirm saving only after success.",
+        "Save the user's requested note after secret redaction in an authorized area (scope defaults to the client’s default write area). Generate one idempotencyKey per note and reuse it only for identical retries. Preserve supplied source dates in metadata.createdAt; never invent dates. A saved note is not approval for an action. Confirm saving only after success.",
       inputSchema: rememberSchema.extend({
         scope: scopeSchema.default(defaultWrite),
       }),

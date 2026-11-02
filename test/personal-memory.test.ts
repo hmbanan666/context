@@ -8,11 +8,11 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
-import type { ClientGrants } from "../src/access.js";
 import { protectMcp } from "../src/auth.js";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
+import type { ClientGrants } from "./fixtures/auth.js";
 import { fixtureAuth } from "./fixtures/auth.js";
 
 const scope = "personal";

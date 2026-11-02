@@ -1,7 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { ZodError } from "zod";
-import type { OperationScope } from "./access.js";
-import type { personalDataScope } from "./contracts.js";
+import type { OperationScope, personalDataScope } from "./contracts.js";
 import { IdempotencyConflict } from "./store.js";
 
 export type AuthorizeTool = (
