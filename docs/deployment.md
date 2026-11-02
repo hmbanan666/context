@@ -3,7 +3,8 @@
 **Pilot running; stage 1 in progress (2 November 2026).** Current status comes
 from repository configuration and the [PR #19 release record](https://github.com/hmbanan666/context/pull/19),
 not a new live inspection. Every merge, deployment or live configuration change
-requires separate explicit owner approval. This docs-only change authorizes none.
+requires its applicable explicit owner approval. Stage 1a is done in this PR;
+the cleanup is not yet merged or deployed.
 
 ## Current protected setup
 
@@ -18,8 +19,6 @@ The repository's deployment files remain the current configuration reference:
 
 - [Base Compose](../deploy/compose.yaml): Context, Keycloak, identity database and
   dedicated volumes; [bootstrap](../deploy/bootstrap.yaml) is for initial identity setup.
-- [Project grants](../deploy/projects.yaml) and [personal mode](../deploy/personal.yaml):
-  explicit server policy and protected personal-tool opt-in.
 - [Hosting overlay](../deploy/dokploy.yaml): Context-specific network isolation.
 - [Keycloak configuration](../deploy/keycloak/) and the existing ChatGPT compatibility
   profile: pre-registered clients and the approved default-scope behavior.
@@ -30,15 +29,31 @@ Protected application settings require `CONTEXT_AUTH=oauth`,
 `CONTEXT_PUBLIC_URL=https://context.kosarev.space/mcp`,
 `CONTEXT_OAUTH_ISSUER=https://context.kosarev.space/auth/realms/context` and the
 configured `CONTEXT_OWNER_SUBJECT`. These URLs are pinned in current validation.
-Personal mode additionally requires `CONTEXT_PERSONAL_MEMORY=enabled` and explicit
-`CONTEXT_CLIENT_GRANTS` read/write entries for `private:personal`. Retain existing
-approved grants when changing a map. Never publish actual owner IDs or credentials.
+`CONTEXT_AREAS` defines 1–8 areas (default `personal`); explicit
+`CONTEXT_CLIENT_GRANTS` read/write/process arrays must use those areas. There is
+no implicit pilot grant. Base Compose passes both settings; the redundant project
+and personal overlays are removed. Retain approved grants when changing a map.
+Never publish actual owner IDs or credentials.
+
+For existing installations, remove `CONTEXT_PERSONAL_MEMORY`, replace local
+`CONTEXT_LOCAL_SCOPES` with `CONTEXT_AREAS`, and use `CONTEXT_LOCAL_MCP=enabled`
+for test/development only; legacy settings fail startup. Memory tools now default
+to `personal`, but existing rows stay in their original areas. Explicitly retain
+legacy names such as `private:personal` in the area list, token scopes and grants,
+and supply the original `scope` for reads/retries. No rows are renamed or moved.
+
+Refresh tool discovery: `knowledge_history`, `work_context` and `project_context`
+are removed, along with npm scripts `knowledge:review`, `work` and `work:probe`.
+Use `memory_context`/`context_package`; `capture`/`recall` remain compatible.
+Old work tables remain unused; review rows retain historical knowledge status.
+No destructive startup migration is introduced.
 
 Current owner login is handled by Keycloak with its existing password/MFA setup;
 pre-registered ChatGPT/Codex clients use their configured callbacks and grants.
 The approved built-in password + passkey login, DCR and CLI tokens are stage 1b
 work. Existing connections **must reconnect** when that replacement ships.
-A realm bootstrap import does not update an existing realm.
+The bootstrap realm/profile now uses fictional area examples; a realm bootstrap
+import does not update an existing realm or authorize new grants.
 
 The resource server rejects absent/invalid credentials and intersects signed
 OAuth scopes with server grants. Revoking a provider session or refresh grant
@@ -80,7 +95,9 @@ so a recovered copy cannot silently reintroduce owner-deleted content.
 ## Verification and limits
 
 Run the pinned Node/npm versions with `npm ci` and `npm run check`. The latter
-runs Biome, type checks, compilation and tests. Biome excludes Markdown, so docs
+runs Biome, type checks, compilation and tests, including pre-cleanup database
+reopen/restore with unchanged source, file, retry and knowledge rows. Biome
+excludes Markdown, so docs
 also need link and consistency review. GitHub CI additionally builds the image,
 runs `npm run test:container` and `npm run test:oauth-provider` with disposable
 synthetic data. The two smoke suites require Docker and Python 3. When Docker is
