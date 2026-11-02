@@ -470,3 +470,50 @@ test("owner rebuild CLI preserves originals and startup backfills automatically 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("weak semantic neighbours do not fill a package with unrelated evidence", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hybrid-relevance-"));
+  const f = await openPackageFixture(join(dir, "db"), {
+    version: "synthetic-v1",
+    async embed(_text, purpose) {
+      return Float32Array.from(
+        purpose === "query" ? [1, 0] : [0.79, Math.sqrt(1 - 0.79 ** 2)],
+      );
+    },
+  });
+  try {
+    f.store.capture({
+      version: 1,
+      scope: "personal",
+      text: "A fictional garden contains violet flowers.",
+      origin: "fixture",
+      idempotencyKey: "unrelated",
+    });
+    assert.ok(f.embeddings);
+    while (await f.embeddings.processOne()) {
+      /* drain */
+    }
+    const client = await f.connect();
+    const r = await client.callTool({
+      name: "context_package",
+      arguments: { question: "Restore lost observations" },
+    });
+    const data = r.structuredContent as {
+      sources: unknown[];
+      coverage: { sourceMatches: number };
+    };
+    assert.deepEqual(data.sources, []);
+    assert.equal(data.coverage.sourceMatches, 0);
+    const lexical = await client.callTool({
+      name: "context_package",
+      arguments: { question: "flower" },
+    });
+    assert.equal(
+      (lexical.structuredContent as { sources: unknown[] }).sources.length,
+      1,
+    );
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

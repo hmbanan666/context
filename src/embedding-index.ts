@@ -9,6 +9,9 @@ import {
 } from "./search-lexical.js";
 
 const MAX_CHUNKS = 50_000;
+// E5 gives unrelated text a high positive baseline; admit only stronger
+// semantic evidence. Lexical hits never depend on this model-specific floor.
+const MIN_COSINE = 0.8;
 const LEASE_MS = 600_000;
 export interface SemanticSelection {
   scope: string;
@@ -236,7 +239,14 @@ export class EmbeddingIndex {
             this.#timer = setTimeout(tick, didWork ? 10 : 1000).unref();
         });
     };
-    this.#timer = setTimeout(tick, 0).unref();
+    // Warm the baked-in model in the background even when backfill is complete,
+    // so the first question after a restart does not pay the load cost.
+    this.#active = Promise.resolve()
+      .then(() => this.#embedder.load?.())
+      .catch(() => {})
+      .then(() => {
+        if (!this.#stopping) this.#timer = setTimeout(tick, 0).unref();
+      });
   }
 
   async search(input: SemanticSelection): Promise<SemanticHits> {
@@ -354,7 +364,7 @@ export class EmbeddingIndex {
         let score = 0;
         for (let i = 0; i < query.length; i++)
           score += (query[i] ?? 0) * blob.readFloatLE(i * 4);
-        if (!Number.isFinite(score) || score <= 0) continue;
+        if (!Number.isFinite(score) || score < MIN_COSINE) continue;
         const id = String(row.record_id);
         if (score > (top.get(id)?.score ?? -Infinity))
           top.set(id, { id, offset: Number(row.offset), score });
