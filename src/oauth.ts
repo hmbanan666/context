@@ -3,6 +3,8 @@ import { operationScopes } from "./access.js";
 import {
   type AuthStore,
   type BrowserSession,
+  type ClientAuthMethod,
+  clientAuthMethods,
   digest,
   equal,
   type Grants,
@@ -21,21 +23,53 @@ export interface OAuthConfig {
 const registration = z.object({
   client_name: z.string().trim().min(1).max(128).default("MCP client"),
   redirect_uris: z.array(z.string().max(2048).url()).min(1).max(8),
-  token_endpoint_auth_method: z.literal("none").default("none"),
+  token_endpoint_auth_method: z
+    .enum(clientAuthMethods)
+    .default("client_secret_basic"),
   grant_types: z
     .array(z.enum(["authorization_code", "refresh_token"]))
     .default(["authorization_code"]),
   response_types: z.array(z.literal("code")).default(["code"]),
 });
+// Private-use callbacks must be hierarchical app URIs, never browser executable,
+// file, wrapper, or ordinary network schemes. Both RFC 8252 single-slash and
+// native-app authority forms (such as cursor://...) retain exact matching.
+const unsafeNativeSchemes = new Set([
+  "javascript:",
+  "data:",
+  "file:",
+  "vbscript:",
+  "blob:",
+  "about:",
+  "intent:",
+  "view-source:",
+  "ftp:",
+  "ftps:",
+  "ws:",
+  "wss:",
+  "mailto:",
+  "tel:",
+  "sms:",
+  "urn:",
+]);
 export function validRedirect(value: string) {
   const url = new URL(value);
+  if (
+    url.username ||
+    url.password ||
+    value.includes("#") ||
+    Array.from(value).some(
+      (c) => c.charCodeAt(0) <= 32 || c.charCodeAt(0) === 127,
+    )
+  )
+    return false;
+  if (url.protocol === "https:") return true;
+  if (url.protocol === "http:")
+    return ["127.0.0.1", "[::1]"].includes(url.hostname);
   return (
-    !url.username &&
-    !url.password &&
-    !url.hash &&
-    (url.protocol === "https:" ||
-      (url.protocol === "http:" &&
-        ["127.0.0.1", "[::1]"].includes(url.hostname)))
+    !unsafeNativeSchemes.has(url.protocol) &&
+    /^[a-z][a-z0-9+.-]*:\//i.test(value) &&
+    !!(url.hostname || url.pathname.startsWith("/"))
   );
 }
 export class OAuthFailure extends Error {
@@ -117,8 +151,8 @@ export class AuthorizationServer {
           revocation_endpoint: `${this.config.issuer}/oauth/revoke`,
           response_types_supported: ["code"],
           grant_types_supported: ["authorization_code", "refresh_token"],
-          token_endpoint_auth_methods_supported: ["none"],
-          revocation_endpoint_auth_methods_supported: ["none"],
+          token_endpoint_auth_methods_supported: clientAuthMethods,
+          revocation_endpoint_auth_methods_supported: clientAuthMethods,
           code_challenge_methods_supported: ["S256"],
           scopes_supported: [
             ...operationScopes,
@@ -154,31 +188,37 @@ export class AuthorizationServer {
           input.response_types.length !== 1
         )
           throw new OAuthFailure("invalid_client_metadata");
-        const client = this.store.register(
+        const { client, clientSecret } = this.store.register(
           input.client_name,
           input.redirect_uris,
           input.grant_types.includes("refresh_token"),
+          input.token_endpoint_auth_method,
         );
         return json(
           {
             ...input,
             client_id: client.id,
             client_id_issued_at: client.created,
+            ...(clientSecret
+              ? { client_secret: clientSecret, client_secret_expires_at: 0 }
+              : {}),
           },
           201,
         );
       }
       if (request.method === "POST" && path === "/oauth/token") {
         this.limit("token", 120);
-        return this.exchange(await this.form(request));
+        const form = await this.form(request);
+        const client = this.authenticateClient(request, form);
+        return this.exchange(form, client.id);
       }
       if (request.method === "POST" && path === "/oauth/revoke") {
         this.limit("revoke", 60);
         const form = await this.form(request);
+        const client = this.authenticateClient(request, form);
         try {
           const t = this.store.token(form.get("token") ?? "");
-          if (t.clientId === form.get("client_id"))
-            this.store.revokeFamily(t.family);
+          if (t.clientId === client.id) this.store.revokeFamily(t.family);
         } catch {
           /* RFC 7009: unknown tokens succeed. */
         }
@@ -320,6 +360,8 @@ export class AuthorizationServer {
         { error: code },
         error instanceof OAuthFailure ? error.status : 400,
       );
+      if (code === "invalid_client" && request.headers.has("authorization"))
+        response.headers.set("www-authenticate", 'Basic realm="Context"');
       if (response.status === 429) response.headers.set("retry-after", "60");
       return response;
     }
@@ -343,6 +385,43 @@ export class AuthorizationServer {
     this.unique(form, consent);
     return form;
   }
+  private authenticateClient(request: Request, form: URLSearchParams) {
+    try {
+      const header = request.headers.get("authorization");
+      let id = form.get("client_id") ?? "",
+        clientSecret = form.get("client_secret") ?? undefined;
+      let method: ClientAuthMethod = form.has("client_secret")
+        ? "client_secret_post"
+        : "none";
+      if (header !== null) {
+        if (form.has("client_secret"))
+          throw new OAuthFailure("invalid_request");
+        const encoded = /^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(header)?.[1];
+        if (!encoded) throw new Error("Invalid Basic authentication");
+        const bytes = Buffer.from(encoded, "base64");
+        if (
+          bytes.toString("base64").replace(/=+$/, "") !==
+          encoded.replace(/=+$/, "")
+        )
+          throw new Error("Invalid base64");
+        const credentials = bytes.toString("utf8"),
+          colon = credentials.indexOf(":");
+        if (colon < 0) throw new Error("Missing credentials");
+        const decode = (value: string) =>
+          decodeURIComponent(value.replace(/\+/g, " "));
+        const basicId = decode(credentials.slice(0, colon));
+        if (form.has("client_id") && id !== basicId)
+          throw new OAuthFailure("invalid_request");
+        id = basicId;
+        clientSecret = decode(credentials.slice(colon + 1));
+        method = "client_secret_basic";
+      }
+      return this.store.authenticateClient(id, method, clientSecret);
+    } catch (error) {
+      if (error instanceof OAuthFailure) throw error;
+      throw new OAuthFailure("invalid_client", 401);
+    }
+  }
   private scopes(value: string) {
     const scopes = [...new Set(value.split(" ").filter(Boolean))];
     if (
@@ -358,7 +437,7 @@ export class AuthorizationServer {
       throw new OAuthFailure("invalid_scope");
     return scopes;
   }
-  private exchange(form: URLSearchParams) {
+  private exchange(form: URLSearchParams, clientId: string) {
     if (form.get("resource") !== this.config.resource)
       throw new OAuthFailure("invalid_target");
     const grant = form.get("grant_type");
@@ -374,7 +453,7 @@ export class AuthorizationServer {
       throw new OAuthFailure("invalid_grant");
     }
     if (
-      token.clientId !== form.get("client_id") ||
+      token.clientId !== clientId ||
       token.kind !== (grant === "authorization_code" ? "code" : "refresh") ||
       token.resource !== this.config.resource
     )

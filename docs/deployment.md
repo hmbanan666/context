@@ -44,9 +44,24 @@ removing the memory database.
   and `/.well-known/*` to Context with the public Host header. Prevent direct
   public HTTP access to the backend. Do not log Authorization/Cookie headers,
   request bodies or callback queries containing codes; Context logs no credentials.
-- DCR grants no memory access. Owner consent shows the self-declared client name,
-  callback and requested area/operation pairs; the owner narrows rights and
-  selects a default write area. S256 PKCE and exact resource binding are required.
+- DCR supports `none`, `client_secret_basic` and `client_secret_post`; omitted
+  method defaults to Basic per RFC 7591. Public/native clients should request
+  `none`; existing public registry entries stay public. Unknown optional metadata
+  is ignored. Confidential secrets are returned once, valid until revocation
+  (`client_secret_expires_at: 0`); only hashes persist, separately from listings.
+  Lost secrets require new registration and revocation of the old client.
+- Token exchange, refresh and revocation enforce the registered method. Basic
+  credentials use form encoding before Base64; POST secrets belong in the form
+  body, never the URL. Missing/wrong credentials or method downgrades fail with
+  `invalid_client`; mixed authentication methods are rejected. S256 PKCE and exact
+  resource binding remain mandatory for every client.
+- Callbacks must exactly match registered HTTPS, IP-loopback HTTP or hierarchical
+  private-use app URIs, including `cursor://anysphere.cursor-mcp/oauth/callback`
+  and `com.example.fictional:/oauth/callback`. No wildcards, fragments, userinfo,
+  executable/file schemes (`javascript:`, `data:`, `file:`) or arbitrary HTTP.
+  Consent shows the self-declared name, callback and requested area/operation
+  pairs; the owner narrows rights and selects a default write area. Registration
+  and possession of a client secret do not grant memory access.
 - Access tokens last five minutes. `CONTEXT_REFRESH_SECONDS` defaults to 86400
   (range 300–2592000). Separately consented `CONTEXT_OFFLINE_SECONDS` defaults to
   2592000 (up to 31536000 and at least the normal lifetime). Refresh rotates once;
@@ -113,7 +128,8 @@ npm run database -- restore ./backups/context-snapshot.db ./data/restored.db
 ```
 
 Online backup includes committed WAL pages, sources, derived records, jobs,
-indexes, retries, owner password hash, passkey public keys and token hashes.
+indexes, retries, owner password hash, passkey public keys, client secret hashes
+and token hashes.
 Commands check integrity and refuse to overwrite destinations. Restore offline
 to an absent file without WAL/SHM sidecars; stop the service before switching
 `CONTEXT_DB_PATH`. Verify source IDs/checksums, provenance, retries, search and
@@ -134,8 +150,9 @@ private off-host copy and test isolated restore.
 
 Run `npm ci` and `npm run check` with pinned Node/npm. Checks cover source/knowledge
 preservation, auth/CLI, software-authenticator passkeys, official SDK OAuth/MCP,
-expiry, replay/revocation, HTTP limits and backup/restore. `npm run test:oauth`
-replaces the removed Keycloak provider smoke test. GitHub CI also builds the image
+confidential clients, exact native callbacks, expiry, replay/revocation, HTTP
+limits and backup/restore. `npm run test:oauth` replaces the removed Keycloak
+provider smoke test. GitHub CI also builds the image
 and runs `npm run test:container` with disposable synthetic data. Docker is not
 available in this work environment and was not invoked locally; use CI evidence.
 Review Markdown links and current/target consistency separately from Biome.

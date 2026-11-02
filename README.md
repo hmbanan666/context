@@ -46,8 +46,9 @@ Defaults: port `3000`, SQLite `./data/context.db`, area `personal`. Configure ar
 with `CONTEXT_AREAS`. Protected mode uses `CONTEXT_AUTH=oauth` and a public HTTPS
 `CONTEXT_PUBLIC_URL` ending in `/mcp`; client grants live in SQLite. Initialize
 with `npm run context -- owner init`, then connect through standard MCP OAuth or
-issue a CLI token. Protected `remember` uses the credential's default write area.
-Export variables in the shell; [`.env.example`](.env.example) is reference, not an
+issue a CLI token. Public/confidential clients and exact native-app callbacks are
+supported; S256 is mandatory. Protected `remember` uses the credential's default
+write area. Export variables in the shell; [`.env.example`](.env.example) is reference, not an
 auto-loaded file. See [deployment](docs/deployment.md#current-protected-setup) for
 setup, supported clients, token management and the reconnect migration.
 

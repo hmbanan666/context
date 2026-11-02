@@ -18,6 +18,13 @@ its dedicated PostgreSQL services/configuration are removed from the repository.
 The configured public HTTPS `/mcp` URL is the exact audience; its origin is the
 issuer. RFC 9728/8414 discovery, DCR, authorization code + mandatory S256 PKCE,
 owner password/passkey login, narrowable consent and revocation are built in.
+DCR supports public (`none`) and confidential (`client_secret_basic` /
+`client_secret_post`) clients; new registrations default to Basic, while existing
+public entries stay public. Secrets are returned once and stored only as hashes
+in `auth_client_secrets`, separately from listings. Token/refresh/revocation
+requests enforce the registered method; unknown optional DCR metadata is ignored.
+HTTPS, IP-loopback HTTP and hierarchical private-use callbacks are exact-matched;
+executable/file schemes, fragments and userinfo are rejected.
 
 The SQLite registry records clients, rights, redirects, default write area,
 creation/last-use and revocation. Public and confidential clients begin with no
@@ -59,9 +66,8 @@ The primary memory tools are:
 
 `remember`, `memory_context` and `context_package` accept an authorized `scope`,
 defaulting to `personal` except protected `remember` as described above. Clients
-supply explicit date boundaries and inspect
-coverage/truncation. A package
-is not an exhaustive archive scan; paged original retrieval handles full periods.
+supply explicit date boundaries and inspect coverage/truncation. A package is not
+an exhaustive archive scan; paged original retrieval handles full periods.
 Current FTS has no Russian/English morphological pipeline or semantic embeddings.
 Derived knowledge is source-grounded but is not yet the approved automatically
 maintained understanding layer with deduplication and superseding.
@@ -84,8 +90,8 @@ is a separate source-ingestion feature.
 ## Recovery and transition
 
 SQLite online backup and offline restore commands exist; they include sources,
-derived records, jobs, indexes, retry state and auth state. Automated nightly off-host delivery
-is not implemented. No startup migration drops or rewrites existing rows. Old work
+derived records, jobs, indexes, retry state and auth state. Automated nightly
+off-host delivery is not implemented. No startup migration drops or rewrites existing rows. Old work
 tables remain unused; historical review rows still supply knowledge status, including
 rejection filtering, without a review writer. Existing area names and retry keys
 are preserved. See [deployment](deployment.md) for compatibility and recovery.

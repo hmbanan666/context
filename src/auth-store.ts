@@ -26,6 +26,12 @@ export const grantsSchema = z.strictObject({
   process: z.array(scopeSchema).max(8),
 });
 export type Grants = z.infer<typeof grantsSchema>;
+export const clientAuthMethods = [
+  "none",
+  "client_secret_basic",
+  "client_secret_post",
+] as const;
+export type ClientAuthMethod = (typeof clientAuthMethods)[number];
 export interface RegisteredClient {
   id: string;
   name: string;
@@ -37,6 +43,7 @@ export interface RegisteredClient {
   revoked: boolean;
   kind: "oauth" | "cli";
   refresh: boolean;
+  authMethod?: ClientAuthMethod;
 }
 export interface TokenRecord {
   id: string;
@@ -87,6 +94,7 @@ export class AuthStore {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS auth_clients(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS auth_client_secrets(client_id TEXT PRIMARY KEY, hash TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS auth_tokens(hash TEXT PRIMARY KEY, id TEXT UNIQUE NOT NULL, family TEXT NOT NULL, expires INTEGER NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auth_token_family ON auth_tokens(family);
       CREATE INDEX IF NOT EXISTS auth_token_expiry ON auth_tokens(expires);
@@ -149,22 +157,53 @@ export class AuthStore {
     name: string,
     redirects: string[],
     refresh: boolean,
-  ): RegisteredClient {
-    if (this.listClients().filter((c) => !c.revoked).length >= 256)
-      throw new Error("Client limit");
-    const client: RegisteredClient = {
-      id: secret(),
-      name,
-      redirects,
-      refresh,
-      grants: { read: [], write: [], process: [] },
-      defaultWrite: null,
-      created: this.now(),
-      lastUsed: null,
-      revoked: false,
-      kind: "oauth",
-    };
-    this.saveClient(client);
+    authMethod: ClientAuthMethod,
+  ) {
+    return this.transaction(() => {
+      if (this.listClients().filter((c) => !c.revoked).length >= 256)
+        throw new Error("Client limit");
+      const client: RegisteredClient = {
+        id: secret(),
+        name,
+        redirects,
+        refresh,
+        authMethod,
+        grants: { read: [], write: [], process: [] },
+        defaultWrite: null,
+        created: this.now(),
+        lastUsed: null,
+        revoked: false,
+        kind: "oauth",
+      };
+      const clientSecret = authMethod === "none" ? undefined : secret();
+      this.saveClient(client);
+      if (clientSecret)
+        this.db
+          .prepare("INSERT INTO auth_client_secrets VALUES (?,?)")
+          .run(client.id, digest(clientSecret));
+      return { client, clientSecret };
+    });
+  }
+  authenticateClient(
+    id: string,
+    method: ClientAuthMethod,
+    suppliedSecret?: string,
+  ) {
+    const client = this.client(id);
+    // Clients registered before confidential-client support remain public.
+    if (client.kind !== "oauth" || (client.authMethod ?? "none") !== method)
+      throw new Error("Invalid client");
+    if (method !== "none") {
+      const row = this.db
+        .prepare("SELECT hash FROM auth_client_secrets WHERE client_id=?")
+        .get(id);
+      if (
+        !suppliedSecret ||
+        !row ||
+        !equal(digest(suppliedSecret), row.hash as string)
+      )
+        throw new Error("Invalid client");
+    }
     return client;
   }
   revokeClient(id: string) {

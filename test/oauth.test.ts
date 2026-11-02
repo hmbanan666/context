@@ -691,7 +691,7 @@ test("code reuse and concurrent refresh revoke the whole token family without af
           refresh_token: tokens.refresh_token,
         })
       ).status,
-      400,
+      401,
     );
     assert.ok(store.access(tokens.access_token, resource));
     const replies = await Promise.all(
@@ -820,5 +820,622 @@ test("owner passkey, refresh lineage and narrowed consent survive reopen and pri
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function clientPost(
+  auth: AuthorizationServer,
+  path: string,
+  data: Record<string, string>,
+  clientId: string,
+  clientSecret: string,
+  method: "client_secret_basic" | "client_secret_post",
+) {
+  const body = new URLSearchParams(data),
+    headers: Record<string, string> = {
+      "content-type": "application/x-www-form-urlencoded",
+    };
+  if (method === "client_secret_basic")
+    headers.authorization = `Basic ${Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`).toString("base64")}`;
+  else {
+    body.set("client_id", clientId);
+    body.set("client_secret", clientSecret);
+  }
+  return auth.fetch(
+    new Request(config.issuer + path, { method: "POST", headers, body }),
+  );
+}
+
+for (const method of ["client_secret_basic", "client_secret_post"] as const) {
+  test(`confidential ${method} registration requires its secret for exchange, refresh and revocation, with S256 still mandatory`, async () => {
+    const store = new AuthStore(":memory:", config.areas),
+      auth = new AuthorizationServer(store, config),
+      browser = new Browser(auth);
+    try {
+      const registered = await auth.fetch(
+        new Request(`${config.issuer}/oauth/register`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            client_name: "Fictional hosted connector",
+            redirect_uris: ["https://connector.example/callback"],
+            token_endpoint_auth_method: method,
+            grant_types: ["authorization_code", "refresh_token"],
+            optional_future_metadata: { unknown: true },
+            logo_uri: "https://connector.example/logo.png",
+          }),
+        }),
+      );
+      assert.equal(registered.status, 201);
+      const client = await registered.json();
+      assert.match(client.client_secret, /^[A-Za-z0-9_-]{43}$/);
+      assert.equal(client.client_secret_expires_at, 0);
+      assert.equal(client.token_endpoint_auth_method, method);
+      assert.ok(
+        !JSON.stringify(store.listClients()).includes(client.client_secret),
+      );
+      const fetchFn: typeof fetch = async (input, init) =>
+        auth.fetch(new Request(input, init));
+      const metadata = await discoverOAuthMetadata(config.issuer, {}, fetchFn);
+      assert.ok(metadata);
+      assert.deepEqual(metadata.token_endpoint_auth_methods_supported, [
+        "none",
+        "client_secret_basic",
+        "client_secret_post",
+      ]);
+      assert.deepEqual(metadata.revocation_endpoint_auth_methods_supported, [
+        "none",
+        "client_secret_basic",
+        "client_secret_post",
+      ]);
+      await store.initOwner(password);
+      const verifier = secret(),
+        redirect = "https://connector.example/callback";
+      assert.equal(
+        (
+          await browser.request(
+            authorization(client.client_id, verifier, {
+              redirect_uri: redirect,
+              code_challenge_method: "plain",
+            }),
+          )
+        ).status,
+        400,
+      );
+      await browser.login(
+        new SoftwareAuthenticator(),
+        authorization(client.client_id, verifier, { redirect_uri: redirect }),
+      );
+      const consent = await browser.request(
+        "/oauth/consent",
+        new URLSearchParams({
+          csrf: browser.csrf,
+          read: "garden",
+          decision: "allow",
+        }),
+      );
+      assert.equal(consent.status, 303);
+      const callback = new URL(consent.headers.get("location") ?? ""),
+        code = callback.searchParams.get("code") ?? "";
+      const data = {
+        grant_type: "authorization_code",
+        code,
+        resource,
+        redirect_uri: redirect,
+        code_verifier: verifier,
+      };
+      const wrong = await clientPost(
+        auth,
+        "/oauth/token",
+        data,
+        client.client_id,
+        "wrong-secret",
+        method,
+      );
+      assert.equal(wrong.status, 401);
+      assert.deepEqual(await wrong.json(), { error: "invalid_client" });
+      if (method === "client_secret_basic")
+        assert.match(wrong.headers.get("www-authenticate") ?? "", /^Basic /);
+      assert.equal(
+        (
+          await post(auth, "/oauth/token", {
+            ...data,
+            client_id: client.client_id,
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await clientPost(
+            auth,
+            "/oauth/token",
+            data,
+            client.client_id,
+            client.client_secret,
+            method === "client_secret_basic"
+              ? "client_secret_post"
+              : "client_secret_basic",
+          )
+        ).status,
+        401,
+      );
+      const badPkce = await clientPost(
+        auth,
+        "/oauth/token",
+        { ...data, code_verifier: secret() },
+        client.client_id,
+        client.client_secret,
+        method,
+      );
+      assert.equal(badPkce.status, 400);
+      assert.deepEqual(await badPkce.json(), { error: "invalid_grant" });
+      const tokens = await exchangeAuthorization(config.issuer, {
+        metadata,
+        clientInformation: client,
+        authorizationCode: code,
+        iss: config.issuer,
+        codeVerifier: verifier,
+        redirectUri: redirect,
+        resource,
+        fetchFn,
+      });
+      assert.ok(tokens.refresh_token);
+      const refreshData = {
+        grant_type: "refresh_token",
+        resource,
+        refresh_token: tokens.refresh_token,
+      };
+      assert.equal(
+        (
+          await clientPost(
+            auth,
+            "/oauth/token",
+            refreshData,
+            client.client_id,
+            "wrong-secret",
+            method,
+          )
+        ).status,
+        401,
+      );
+      const rotated = await refreshAuthorization(config.issuer, {
+        metadata,
+        clientInformation: client,
+        refreshToken: tokens.refresh_token,
+        resource,
+        fetchFn,
+      });
+      assert.ok(rotated.refresh_token);
+      const revoke = { token: rotated.refresh_token };
+      assert.equal(
+        (
+          await clientPost(
+            auth,
+            "/oauth/revoke",
+            revoke,
+            client.client_id,
+            "wrong-secret",
+            method,
+          )
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await post(auth, "/oauth/revoke", {
+            ...revoke,
+            client_id: client.client_id,
+          })
+        ).status,
+        401,
+      );
+      assert.ok(store.access(rotated.access_token, resource));
+      const other = await register(auth);
+      await post(auth, "/oauth/revoke", { ...revoke, client_id: other });
+      assert.ok(store.access(rotated.access_token, resource));
+      assert.equal(
+        (
+          await clientPost(
+            auth,
+            "/oauth/revoke",
+            revoke,
+            client.client_id,
+            client.client_secret,
+            method,
+          )
+        ).status,
+        200,
+      );
+      assert.throws(() => store.access(rotated.access_token, resource));
+      assert.equal(
+        (
+          await clientPost(
+            auth,
+            "/oauth/revoke",
+            { token: "unknown" },
+            client.client_id,
+            client.client_secret,
+            method,
+          )
+        ).status,
+        200,
+      );
+    } finally {
+      store.close();
+    }
+  });
+}
+
+for (const redirect of [
+  "cursor://anysphere.cursor-mcp/oauth/callback",
+  "com.example.fictional:/oauth/callback",
+]) {
+  test(`native callback ${redirect} completes S256 authorization and must match exactly`, async () => {
+    const store = new AuthStore(":memory:", config.areas),
+      auth = new AuthorizationServer(store, config),
+      browser = new Browser(auth);
+    try {
+      const fetchFn: typeof fetch = async (input, init) =>
+        auth.fetch(new Request(input, init));
+      const metadata = await discoverOAuthMetadata(config.issuer, {}, fetchFn);
+      assert.ok(metadata);
+      const client = await registerClient(config.issuer, {
+        metadata,
+        clientMetadata: {
+          client_name: "Fictional native client",
+          redirect_uris: [redirect],
+          token_endpoint_auth_method: "none",
+        },
+        fetchFn,
+      });
+      assert.equal(client.client_secret, undefined);
+      const verifier = secret();
+      for (const changed of [
+        `${redirect}/`,
+        `${redirect}?extra=value`,
+        redirect.replace("callback", "other"),
+      ]) {
+        const denied = await browser.request(
+          authorization(client.client_id, verifier, { redirect_uri: changed }),
+        );
+        assert.equal(denied.status, 400);
+        assert.equal(denied.headers.get("location"), null);
+      }
+      assert.equal(
+        (
+          await browser.request(
+            authorization(client.client_id, verifier, {
+              redirect_uri: redirect,
+              code_challenge_method: "plain",
+            }),
+          )
+        ).status,
+        400,
+      );
+      await store.initOwner(password);
+      const html = await browser.login(
+        new SoftwareAuthenticator(),
+        authorization(client.client_id, verifier, { redirect_uri: redirect }),
+      );
+      assert.ok(html.includes(redirect));
+      const consent = await browser.request(
+        "/oauth/consent",
+        new URLSearchParams({
+          csrf: browser.csrf,
+          decision: "allow",
+          read: "garden",
+        }),
+      );
+      assert.equal(consent.status, 303);
+      const callback = new URL(consent.headers.get("location") ?? "");
+      assert.equal(callback.protocol, new URL(redirect).protocol);
+      assert.equal(callback.pathname, new URL(redirect).pathname);
+      const code = callback.searchParams.get("code") ?? "";
+      assert.equal(
+        (
+          await post(auth, "/oauth/token", {
+            client_id: client.client_id,
+            grant_type: "authorization_code",
+            code,
+            code_verifier: verifier,
+            resource,
+            redirect_uri: `${redirect}/`,
+          })
+        ).status,
+        400,
+      );
+      const tokens = await exchangeAuthorization(config.issuer, {
+        metadata,
+        clientInformation: client,
+        authorizationCode: code,
+        iss: config.issuer,
+        codeVerifier: verifier,
+        redirectUri: redirect,
+        resource,
+        fetchFn,
+      });
+      assert.ok(store.access(tokens.access_token, resource));
+    } finally {
+      store.close();
+    }
+  });
+}
+
+test("native callback support does not accept executable, local-file, non-loopback HTTP or fragment redirects", async () => {
+  for (const redirect of [
+    "javascript:alert(1)",
+    "JAVASCRIPT://example/callback",
+    "data:text/html,example",
+    "data://example/callback",
+    "file:///tmp/callback",
+    "blob:https://client.example/callback",
+    "about:/callback",
+    "vbscript:/callback",
+    "intent://callback",
+    "http://client.example/callback",
+    "cursor://callback/path#fragment",
+    "cursor://callback/path#",
+    "https://client.example/callback#",
+    "cursor://user:password@callback/path",
+  ]) {
+    const store = new AuthStore(":memory:", config.areas),
+      auth = new AuthorizationServer(store, config);
+    try {
+      const response = await auth.fetch(
+        new Request(`${config.issuer}/oauth/register`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            redirect_uris: [redirect],
+            token_endpoint_auth_method: "none",
+          }),
+        }),
+      );
+      assert.equal(response.status, 400, redirect);
+    } finally {
+      store.close();
+    }
+  }
+});
+
+test("DCR defaults to Basic and stores no plaintext secret; authentication survives reopen and backup", async () => {
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { backupDatabase, restoreDatabase } = await import("../src/backup.js");
+  const directory = await mkdtemp(
+      join(process.cwd(), ".output-client-secret-"),
+    ),
+    path = join(directory, "context.db"),
+    snapshot = join(directory, "snapshot.db"),
+    restored = join(directory, "restored.db");
+  const sources = new SourceStore(path);
+  sources.close();
+  let store = new AuthStore(path, config.areas);
+  try {
+    const registered = await new AuthorizationServer(store, config).fetch(
+      new Request(`${config.issuer}/oauth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          redirect_uris: ["https://connector.example/callback"],
+          client_secret: "ignored-weak-secret",
+          future_optional_field: true,
+        }),
+      }),
+    );
+    assert.equal(registered.status, 201);
+    const client = await registered.json();
+    assert.equal(client.token_endpoint_auth_method, "client_secret_basic");
+    assert.match(client.client_secret, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(client.client_secret_expires_at, 0);
+    assert.ok(
+      !JSON.stringify(store.listClients()).includes(client.client_secret),
+    );
+    assert.ok(
+      !JSON.stringify(store.listClients()).includes(
+        digest(client.client_secret),
+      ),
+    );
+    await backupDatabase(path, snapshot);
+    assert.equal(
+      (await readFile(snapshot)).includes(Buffer.from(client.client_secret)),
+      false,
+    );
+    await restoreDatabase(snapshot, restored);
+    store.close();
+    store = new AuthStore(restored, config.areas);
+    const auth = new AuthorizationServer(store, config);
+    assert.equal(
+      (
+        await clientPost(
+          auth,
+          "/oauth/revoke",
+          { token: "unknown" },
+          client.client_id,
+          client.client_secret,
+          "client_secret_basic",
+        )
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await clientPost(
+          auth,
+          "/oauth/revoke",
+          { token: "unknown" },
+          client.client_id,
+          "wrong",
+          "client_secret_basic",
+        )
+      ).status,
+      401,
+    );
+    store.revokeClient(client.client_id);
+    assert.equal(
+      (
+        await clientPost(
+          auth,
+          "/oauth/revoke",
+          { token: "unknown" },
+          client.client_id,
+          client.client_secret,
+          "client_secret_basic",
+        )
+      ).status,
+      401,
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("client authentication rejects malformed, conflicting and mixed credentials and preserves legacy public clients", async () => {
+  const store = new AuthStore(":memory:", config.areas),
+    auth = new AuthorizationServer(store, config);
+  try {
+    const fetchFn: typeof fetch = async (input, init) =>
+      auth.fetch(new Request(input, init));
+    const metadata = await discoverOAuthMetadata(config.issuer, {}, fetchFn);
+    assert.ok(metadata);
+    const client = await registerClient(config.issuer, {
+      metadata,
+      clientMetadata: {
+        redirect_uris: ["https://connector.example/callback"],
+        token_endpoint_auth_method: "client_secret_basic",
+      },
+      fetchFn,
+    });
+    assert.ok(client.client_secret);
+    const basic = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}`;
+    const request = (
+      header: string,
+      form = new URLSearchParams({ token: "unknown" }),
+    ) =>
+      auth.fetch(
+        new Request(`${config.issuer}/oauth/revoke`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            authorization: header,
+          },
+          body: form,
+        }),
+      );
+    for (const value of [
+      "Bearer invalid",
+      "Basic !!!",
+      "Basic YQ==",
+      `Basic ${Buffer.from("%ZZ:secret").toString("base64")}`,
+      `${basic}, ${basic}`,
+    ])
+      assert.equal((await request(value)).status, 401);
+    assert.equal(
+      (
+        await request(
+          basic,
+          new URLSearchParams({
+            token: "unknown",
+            client_id: "conflicting-id",
+          }),
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request(
+          basic,
+          new URLSearchParams({
+            token: "unknown",
+            client_secret: client.client_secret,
+          }),
+        )
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request(
+          basic,
+          new URLSearchParams({
+            token: "unknown",
+            client_id: client.client_id,
+          }),
+        )
+      ).status,
+      200,
+    );
+    const encode = (value: string) =>
+      Array.from(value, (c) => `%${c.charCodeAt(0).toString(16)}`).join("");
+    assert.equal(
+      (
+        await request(
+          `Basic ${Buffer.from(`${encode(client.client_id)}:${encode(client.client_secret)}`).toString("base64")}`,
+        )
+      ).status,
+      200,
+    );
+    const publicId = await register(auth),
+      legacy = store.client(publicId);
+    delete legacy.authMethod;
+    store.saveClient(legacy);
+    assert.equal(
+      (
+        await post(auth, "/oauth/revoke", {
+          client_id: publicId,
+          token: "unknown",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await clientPost(
+          auth,
+          "/oauth/revoke",
+          { token: "unknown" },
+          publicId,
+          "unregistered-secret",
+          "client_secret_post",
+        )
+      ).status,
+      401,
+    );
+    assert.equal(
+      (
+        await clientPost(
+          auth,
+          "/oauth/revoke",
+          { token: "unknown" },
+          publicId,
+          "unregistered-secret",
+          "client_secret_basic",
+        )
+      ).status,
+      401,
+    );
+    const duplicate = new URLSearchParams({
+      client_id: client.client_id,
+      token: "unknown",
+    });
+    duplicate.append("client_secret", client.client_secret);
+    duplicate.append("client_secret", client.client_secret);
+    assert.equal(
+      (
+        await auth.fetch(
+          new Request(`${config.issuer}/oauth/revoke`, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: duplicate,
+          }),
+        )
+      ).status,
+      400,
+    );
+  } finally {
+    store.close();
   }
 });
