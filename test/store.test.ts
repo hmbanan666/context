@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { syntheticSource } from "../fixtures/synthetic-source.js";
 import { SourceStore } from "../src/store.js";
 

@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { Worker } from "node:worker_threads";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import {
@@ -225,7 +225,7 @@ test("simultaneous independent worker threads claim a queued job exactly once", 
             path: f.path,
             scope,
             now: f.clock(),
-            module: new URL("../src/jobs.js", import.meta.url).href,
+            module: new URL("../dist/src/jobs.js", import.meta.url).href,
           },
         }),
       );

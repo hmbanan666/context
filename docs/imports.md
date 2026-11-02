@@ -1,6 +1,6 @@
 # Import existing material
 
-Build once with `npm ci && npm run build`. There is one owner-local ingestion
+Build once with `pnpm install --frozen-lockfile && pnpm run build`. There is one owner-local ingestion
 command; collectors only produce JSONL and never open the Context database.
 No new environment variables, services, model APIs or volumes are needed.
 
@@ -191,7 +191,7 @@ backup volumes suffice; no runtime memory-limit change is required by design.
 
 Synthetic tests cover redaction before persistence, retries and immutable revisions,
 area fallback/denial, reopen and MCP retrieval, malformed/oversized lines, collector
-selection, pagination and partial failures. Run `npm run check` before release.
+selection, pagination and partial failures. Run `pnpm run check` before release.
 Real collector checks report only counts and bytes; real exports, private repo
 contents and memory never belong in this repository or public PR text.
 

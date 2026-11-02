@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { test } from "node:test";
+import { test, vi } from "vite-plus/test";
 import { EmbeddingIndex } from "../src/embedding-index.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { SourceStore } from "../src/store.js";
@@ -92,9 +92,10 @@ test("tidy preserves a duplicate decision when effective dates reverse on rerun"
 });
 
 test("tidy never closes an existing duplicate chain, including branches into cycles", async (t) => {
-  t.mock.timers.enable({
-    apis: ["Date"],
-    now: Date.parse("2026-02-01T00:00:00Z"),
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-02-01T00:00:00Z"));
+  t.onTestFinished(() => {
+    vi.useRealTimers();
   });
   const f = await fixture();
   try {
@@ -132,7 +133,7 @@ test("tidy never closes an existing duplicate chain, including branches into cyc
         ["c"],
       );
     }
-    t.mock.timers.tick(1000);
+    vi.setSystemTime(Date.now() + 1000);
     f.add("d", text, "personal", "2026-01-04T00:00:00Z");
     // Legacy cycle a -> b -> c -> a plus a later branch b -> d.
     // d -> a would close another cycle even though canonical(a) is a.

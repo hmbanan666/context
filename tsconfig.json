@@ -19,6 +19,7 @@
     "src/**/*.ts",
     "scripts/**/*.ts",
     "test/**/*.ts",
-    "fixtures/**/*.ts"
+    "fixtures/**/*.ts",
+    "vite.config.ts"
   ]
 }

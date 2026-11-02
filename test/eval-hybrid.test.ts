@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { EmbeddingIndex } from "../src/embedding-index.js";
 import { retrieveForEval } from "../src/eval-retrieval.js";
 import { openPackageFixture } from "./fixtures/package-client.js";

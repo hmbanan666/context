@@ -103,7 +103,7 @@ Access tokens last five minutes. Refresh authorization lasts one day, or 30 days
 with separately consented `offline_access`; rotation retains the original family
 deadline. Replay of a consumed code or refresh token revokes that family.
 
-Inside the container (or `npm run context -- ...` in a built checkout):
+Inside the container (or `pnpm run context ...` in a built checkout):
 
 ```sh
 context token create coding-agent --read projects --write projects --default-write projects
@@ -137,7 +137,7 @@ coordinates CLI and scheduled runs. Use one local backup directory per database.
 # Inside the running container:
 node dist/scripts/backup.js run
 node dist/scripts/backup.js status
-# In a built checkout: npm run backup / npm run backup -- status
+# In a built checkout: pnpm run backup / pnpm run backup status
 ```
 
 Status distinguishes a verified local snapshot from an uploaded copy. A failed
@@ -166,7 +166,7 @@ Restore offline into a **new** destination, never over the live database:
 ```sh
 node dist/scripts/database.js restore /app/data/backups/CHOSEN.db /app/data/recovered.db
 # Existing two-volume installs use /app/backups/CHOSEN.db instead.
-# In a checkout: npm run database -- restore SOURCE NEW_DESTINATION
+# In a checkout: pnpm run database restore SOURCE NEW_DESTINATION
 ```
 
 For an off-host copy, download it privately and compare SHA-256 with the recorded
@@ -207,12 +207,12 @@ hosted cgroup usage and concurrent workload capacity remain unverified.
 For synthetic loopback development only:
 
 ```sh
-npm ci && npm run build
-CONTEXT_LOCAL_MCP=enabled npm start
+pnpm install --frozen-lockfile && pnpm run build
+CONTEXT_LOCAL_MCP=enabled pnpm start
 ```
 
 No-auth mode rejects bearer headers and cannot start in production. With neither
-URL nor local opt-in, development exposes health only. Run `npm run check` for
+URL nor local opt-in, development exposes health only. Run `pnpm run check` for
 lint, types and all tests; the test runner pins UTC itself. CI additionally runs
 `node dist/test/validate-compose.js` against synthetic base/overlay configurations
 (no daemon), builds Docker and runs the one-volume restart/restore smoke test.
@@ -227,7 +227,7 @@ measurement. Retest save → reopen → ask after a separately approved deployme
 
 The existing backup schedule now runs backup → tidy → eval, including after a
 failed backup attempt. `CONTEXT_BACKUP_AT=off` disables this whole scheduled
-chain. Manual use inside the container (or `npm run context -- tidy ...`):
+chain. Manual use inside the container (or `pnpm run context tidy ...`):
 
 ```sh
 context tidy --dry-run --json

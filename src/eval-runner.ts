@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { findPackageJSON } from "node:module";
 import { performance } from "node:perf_hooks";
 import type { EmbeddingIndex } from "./embedding-index.js";
 import { E5_VERSION } from "./embedding-model.js";
@@ -57,9 +58,11 @@ export interface EvalOptions {
   k: number;
 }
 function version() {
-  const pkg = JSON.parse(
-    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-  ) as { version: string };
+  const packagePath = findPackageJSON(import.meta.url);
+  if (!packagePath) throw new Error("Cannot locate the Context package");
+  const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as {
+    version: string;
+  };
   let sha = process.env.GITHUB_SHA;
   if (!sha) {
     try {

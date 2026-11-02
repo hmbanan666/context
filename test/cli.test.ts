@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { AuthStore } from "../src/auth-store.js";
 
 test("CLI initializes exactly one owner, prints credentials once, lists grants and revokes across reopen", async () => {

@@ -5,30 +5,29 @@
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=24.21",
-    "npm": "11.19.1"
+    "node": "24.22.1"
   },
-  "packageManager": "npm@11.19.1",
+  "packageManager": "pnpm@10.34.9",
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\" && tsc",
+    "build": "tsc",
     "start": "node dist/src/main.js",
-    "lint": "biome check .",
+    "lint": "vp check --deny-warnings",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && TZ=UTC node --test --test-concurrency=3 dist/test/*.test.js",
+    "test": "pnpm run build && TZ=UTC vp test",
     "database": "node dist/scripts/database.js",
     "memory:process": "node dist/scripts/process-memory.js",
     "test:container": "python3 scripts/container-smoke.py",
-    "eval:context-package": "npm run build && node dist/test/evaluate-context-package.js",
-    "check": "npm run lint && npm run typecheck && npm test",
+    "eval:context-package": "pnpm run build && node dist/test/evaluate-context-package.js",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm test",
     "context": "node dist/scripts/context.js",
     "backup": "node dist/scripts/backup.js",
-    "eval:retrieval": "npm run build && node dist/test/evaluate-retrieval.js"
+    "eval:retrieval": "pnpm run build && node dist/test/evaluate-retrieval.js"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.3",
     "@types/node": "24.19.2",
     "@types/ssh2": "1.15.6",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vite-plus": "1.4.0"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1161.0",

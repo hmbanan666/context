@@ -1,12 +1,12 @@
 FROM node:24.22.1-bookworm-slim AS build
 WORKDIR /app
-RUN npm install --global npm@11.19.1
-COPY package.json package-lock.json .npmrc ./
-RUN npm ci
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
-RUN npm run build && node dist/scripts/download-search-model.js /app/models && npm prune --omit=dev
+RUN pnpm run build && node dist/scripts/download-search-model.js /app/models && pnpm prune --prod
 
 FROM node:24.22.1-bookworm-slim
 ENV NODE_ENV=production

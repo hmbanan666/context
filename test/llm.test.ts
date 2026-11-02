@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { createLlm, llmExtractor } from "../src/llm.js";
 
 test("OpenAI-compatible client requires key and model, validates JSON and never follows redirects", async () => {

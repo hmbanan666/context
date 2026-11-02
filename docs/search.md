@@ -111,7 +111,7 @@ to measure SQLite/vector cost; it is not a 50,000-item relevance benchmark.
 To reproduce from a checkout, with packages already installed:
 
 ```sh
-npm run build
+pnpm run build
 mkdir -p .output
 node dist/scripts/download-search-model.js .output/models
 node dist/scripts/benchmark-search.js .output/models
@@ -120,7 +120,7 @@ node dist/scripts/benchmark-search.js .output/models
 For ordinary local development, the optional one-time preparation command is
 `node dist/scripts/download-search-model.js models`. The service always attempts
 to use that fixed model directory; without it, lexical fallback works. Neither
-command runs as part of `npm run check`: automated retrieval/queue tests inject
+command runs as part of `pnpm run check`: automated retrieval/queue tests inject
 synthetic fake embedders and never download weights.
 
 ## Existing synthetic retrieval comparison
@@ -149,7 +149,7 @@ Fake-embedder tests verify retrieval rules and access isolation deterministicall
 
 ## Merged synthetic eval harness
 
-With the same frozen question file and k=10, `npm run eval:retrieval` at baseline
+With the same frozen question file and k=10, `pnpm run eval:retrieval` at baseline
 `7370702` reports hit@1 / expected-match recall@10 / MRR of **0.333333** each.
 The rebased search branch reports **0.666667** each. Both runs complete with
 **zero isolation violations**. Exact RU/EN cases remain correct, and both
@@ -198,14 +198,14 @@ Nightly eval has no second model allocation.
 Reproduce offline after downloading the public model once:
 
 ```sh
-npm run build
+pnpm run build
 node dist/scripts/download-search-model.js models
 node dist/test/benchmark-eval.js
 ```
 
 The script uses only [synthetic calibration pairs](../fixtures/evals/cross-language.ts),
 prints scores/aggregate metrics/RSS and removes its temporary database/history.
-It is deliberately separate from `npm run check`; tests use fake embedders.
+It is deliberately separate from `pnpm run check`; tests use fake embedders.
 Keep downloaded weights outside the default `models/` directory when running
 model-free checks: process-start tests launch the real service and otherwise
 load those optional weights.

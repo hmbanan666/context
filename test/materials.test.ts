@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import {
   type CaptureFileInput,
@@ -231,11 +231,12 @@ test("invalid material input neither writes data nor consumes a request key", ()
         metadata: { sourceUri: "https://example.com/\uD800" },
       }),
     );
+    const unsupportedApproval = { approved: true };
     assert.throws(() =>
-      store.captureMaterial({ ...materialInput, ...{ approved: true } }),
+      store.captureMaterial({ ...materialInput, ...unsupportedApproval }),
     );
     assert.throws(() =>
-      store.captureFile({ ...fileInput, ...{ approved: true } }),
+      store.captureFile({ ...fileInput, ...unsupportedApproval }),
     );
     assert.deepEqual(store.list(fileInput.scope), []);
     assert.equal(store.captureFile(fileInput).duplicate, false);

@@ -152,7 +152,11 @@ service's `environment` (or use `docker run -e`).
 
 ## Development
 
-Node >=24.21 and npm 11.19.1: `npm ci && npm run check`. The test runner pins UTC
+Node 24.22.1 (see `.nvmrc`) and pnpm 10.34.9 (see `packageManager`):
+`corepack enable && pnpm install --frozen-lockfile && pnpm run check`.
+Vite+ runs Oxlint/Oxfmt and Vitest; `tsc` checks types and builds the existing
+`dist/src`, `dist/scripts` and eval entrypoints under `dist/test`. The test script
+builds first for CLI/process integration tests and pins UTC
 regardless of the machine timezone. Tests cover auth, area
 isolation, redaction, retries, restart and backup/restore. Docker/Compose checks
 run in CI. Public fixtures must be synthetic.

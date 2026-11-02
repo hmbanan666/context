@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -50,7 +50,7 @@ test("pre-cleanup database keeps every domain row, original bytes, retry and leg
     const db = new DatabaseSync(path);
     db.exec(
       await readFile(
-        new URL("../../test/fixtures/pre-cleanup.sql", import.meta.url),
+        new URL("./fixtures/pre-cleanup.sql", import.meta.url),
         "utf8",
       ),
     );

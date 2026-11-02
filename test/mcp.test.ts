@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -44,98 +44,107 @@ async function connect(url: string) {
   return client;
 }
 
-test("MCP client captures, retries, searches and recalls an unchanged source after restart", {
-  timeout: 20000,
-}, async () => {
-  const directory = await mkdtemp(join(tmpdir(), "context-mcp-"));
-  const config = {
-    port: 0,
-    databasePath: join(directory, "context.db"),
-    localMcpScopes: [scope],
-  };
-  let service = await startService(config);
-  let client: Client | undefined;
-  try {
-    client = await connect(`http://127.0.0.1:${service.address.port}`);
-    const tools = await client.listTools();
-    const names = tools.tools.map((tool) => tool.name);
-    assert.deepEqual(names.sort(), ["read", "remember", "search", "timeline"]);
-    const saved = await client.callTool({
-      name: "capture",
-      arguments: capture,
-    });
-    assert.ok(!saved.isError);
-    const source = sourceSchema.parse(payload(saved).source);
-    assert.equal(source.text, capture.text);
-    assert.equal(source.origin, capture.origin);
-    assert.equal(source.scope, scope);
-    assert.equal(
-      source.checksum,
-      "12d9e9edd65c2213a088a61dfcffa9080327c690ef222fab3579721311a6330f",
-    );
-    const duplicate = await client.callTool({
-      name: "capture",
-      arguments: capture,
-    });
-    assert.equal(payload(duplicate).duplicate, true);
-    assert.deepEqual(payload(duplicate).source, source);
-    const conflict = await client.callTool({
-      name: "capture",
-      arguments: { ...capture, text: "different" },
-    });
-    assert.equal(conflict.isError, true);
-    assert.equal(payload(conflict).error, "idempotency_conflict");
-    const results = await client.callTool({
-      name: "recall",
-      arguments: { version: 1, scope, query: "cobalt fox" },
-    });
-    assert.deepEqual(payload(results).sources, [source]);
-    await client.close();
-    client = undefined;
-    await service.close();
-    service = await startService(config);
-    client = await connect(`http://127.0.0.1:${service.address.port}`);
-    const recalled = await client.callTool({
-      name: "recall",
-      arguments: { version: 1, scope, id: source.id },
-    });
-    assert.deepEqual(payload(recalled).sources, [source]);
-    const read = await client.callTool({
-      name: "read",
-      arguments: { scope, id: source.id },
-    });
-    assert.deepEqual(
-      z.object({ source: sourceSchema }).parse(payload(read).material).source,
-      source,
-    );
-    const found = await client.callTool({
-      name: "search",
-      arguments: { scope, query: "cobalt fox" },
-    });
-    assert.deepEqual(
-      z
-        .array(z.object({ id: z.string() }))
-        .parse(payload(found).sources)
-        .map((s) => s.id),
-      [source.id],
-    );
-    const retry = await client.callTool({
-      name: "capture",
-      arguments: capture,
-    });
-    assert.equal(payload(retry).duplicate, true);
-    assert.deepEqual(payload(retry).source, source);
-    const searched = await client.callTool({
-      name: "recall",
-      arguments: { version: 1, scope, query: "Юникод" },
-    });
-    assert.deepEqual(payload(searched).sources, [source]);
-  } finally {
-    await client?.close();
-    await service.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+test(
+  "MCP client captures, retries, searches and recalls an unchanged source after restart",
+  {
+    timeout: 20000,
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "context-mcp-"));
+    const config = {
+      port: 0,
+      databasePath: join(directory, "context.db"),
+      localMcpScopes: [scope],
+    };
+    let service = await startService(config);
+    let client: Client | undefined;
+    try {
+      client = await connect(`http://127.0.0.1:${service.address.port}`);
+      const tools = await client.listTools();
+      const names = tools.tools.map((tool) => tool.name);
+      assert.deepEqual(names.sort(), [
+        "read",
+        "remember",
+        "search",
+        "timeline",
+      ]);
+      const saved = await client.callTool({
+        name: "capture",
+        arguments: capture,
+      });
+      assert.ok(!saved.isError);
+      const source = sourceSchema.parse(payload(saved).source);
+      assert.equal(source.text, capture.text);
+      assert.equal(source.origin, capture.origin);
+      assert.equal(source.scope, scope);
+      assert.equal(
+        source.checksum,
+        "12d9e9edd65c2213a088a61dfcffa9080327c690ef222fab3579721311a6330f",
+      );
+      const duplicate = await client.callTool({
+        name: "capture",
+        arguments: capture,
+      });
+      assert.equal(payload(duplicate).duplicate, true);
+      assert.deepEqual(payload(duplicate).source, source);
+      const conflict = await client.callTool({
+        name: "capture",
+        arguments: { ...capture, text: "different" },
+      });
+      assert.equal(conflict.isError, true);
+      assert.equal(payload(conflict).error, "idempotency_conflict");
+      const results = await client.callTool({
+        name: "recall",
+        arguments: { version: 1, scope, query: "cobalt fox" },
+      });
+      assert.deepEqual(payload(results).sources, [source]);
+      await client.close();
+      client = undefined;
+      await service.close();
+      service = await startService(config);
+      client = await connect(`http://127.0.0.1:${service.address.port}`);
+      const recalled = await client.callTool({
+        name: "recall",
+        arguments: { version: 1, scope, id: source.id },
+      });
+      assert.deepEqual(payload(recalled).sources, [source]);
+      const read = await client.callTool({
+        name: "read",
+        arguments: { scope, id: source.id },
+      });
+      assert.deepEqual(
+        z.object({ source: sourceSchema }).parse(payload(read).material).source,
+        source,
+      );
+      const found = await client.callTool({
+        name: "search",
+        arguments: { scope, query: "cobalt fox" },
+      });
+      assert.deepEqual(
+        z
+          .array(z.object({ id: z.string() }))
+          .parse(payload(found).sources)
+          .map((s) => s.id),
+        [source.id],
+      );
+      const retry = await client.callTool({
+        name: "capture",
+        arguments: capture,
+      });
+      assert.equal(payload(retry).duplicate, true);
+      assert.deepEqual(payload(retry).source, source);
+      const searched = await client.callTool({
+        name: "recall",
+        arguments: { version: 1, scope, query: "Юникод" },
+      });
+      assert.deepEqual(payload(searched).sources, [source]);
+    } finally {
+      await client?.close();
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("scope grants come from server configuration and cannot be supplied by a client", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-scope-"));

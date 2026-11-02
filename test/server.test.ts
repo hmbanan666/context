@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { startTestService as startService } from "./fixtures/search-service.js";
 
 test("only health is exposed on loopback; private routes do not exist", async () => {
@@ -37,9 +37,8 @@ test("built-in auth routes and CLI credentials work through the HTTP listener, i
   const { request } = await import("node:http");
   const { AuthStore } = await import("../src/auth-store.js");
   const { readConfig } = await import("../src/config.js");
-  const { Client, StreamableHTTPClientTransport } = await import(
-    "@modelcontextprotocol/client"
-  );
+  const { Client, StreamableHTTPClientTransport } =
+    await import("@modelcontextprotocol/client");
   const directory = await mkdtemp(join(process.cwd(), ".output-http-auth-"));
   const path = join(directory, "context.db");
   const config = readConfig({
