@@ -96,13 +96,27 @@ export const escapeHtml = (value: string) =>
         c
       ] ?? c,
   );
-export function page(body: string, cookie?: string) {
+// CSP source for the client callback: browsers apply form-action to the
+// redirect that follows the consent POST. Network callbacks use their origin;
+// private-use schemes (cursor:, vscode:) use a scheme source.
+export function callbackSource(redirect: string) {
+  const url = new URL(redirect);
+  return url.protocol === "https:" || url.protocol === "http:"
+    ? url.origin
+    : url.protocol;
+}
+export function page(
+  body: string,
+  cookie?: string,
+  formTargets: string[] = [],
+) {
   const headers: Record<string, string> = {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
-    "content-security-policy":
-      "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-    "referrer-policy": "no-referrer",
+    "content-security-policy": `default-src 'none'; script-src 'self'; connect-src 'self'; form-action ${["'self'", ...formTargets].join(" ")}; frame-ancestors 'none'; base-uri 'none'`,
+    // Not no-referrer: with it browsers send `Origin: null` on same-origin
+    // POSTs, which the exact Origin check in browser() must reject.
+    "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
   };
   if (cookie) headers["set-cookie"] = cookie;
@@ -568,6 +582,7 @@ export class AuthorizationServer {
     return page(
       `<h2>${this.store.passkeys().length ? "Verify your passkey" : "Register your first passkey"}</h2><p>Password accepted. Use your device to continue.</p><input type="hidden" id="csrf" value="${session.csrf}"><button id="passkey">Continue with passkey</button><p id="status" role="status"></p><script src="/auth/passkey.js" defer></script>`,
       cookie,
+      this.formTargets(session),
     );
   }
   consentPage(session: BrowserSession) {
@@ -591,7 +606,14 @@ export class AuthorizationServer {
       : [];
     return page(
       `<h2>Authorize ${escapeHtml(client.name)}</h2><p>Client names are self-declared. Check the callback before granting access:</p><p>${escapeHtml(p.redirect)}</p><form method="post" action="/oauth/consent">${csrfInput(session)}${choices}<label>Default write area <select name="default_write"><option value="">None (read only)</option>${writable.map((a, index) => `<option value="${escapeHtml(a)}"${index === 0 ? " selected" : ""}>${escapeHtml(a)}</option>`).join("")}</select></label>${p.scopes.includes("offline_access") && client.refresh ? '<p><label><input type="checkbox" name="offline" value="yes">Allow bounded offline access</label></p>' : ""}<button name="decision" value="allow">Allow selected rights</button><button name="decision" value="deny">Deny</button></form>`,
+      undefined,
+      this.formTargets(session),
     );
+  }
+  // The passkey page document later hosts the consent form (document.write keeps
+  // its CSP), so both pages must allow the consent redirect target.
+  private formTargets(session: BrowserSession) {
+    return session.pending ? [callbackSource(session.pending.redirect)] : [];
   }
   private async passkey(request: Request): Promise<Response> {
     const { handlePasskey } = await import("./passkeys.js");
