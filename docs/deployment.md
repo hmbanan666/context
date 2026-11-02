@@ -1,7 +1,7 @@
 # Current deployment and recovery
 
-**Stage 1a merged; stage 1b implementation done in PR #23 (2 November 2026).**
-Stage 1b is not yet merged or deployed. The pilot's last recorded status comes
+**Stages 1a and 1b merged; stage 1c prepared in PR #21 (2 November 2026).**
+The backup slice is not yet merged or deployed. The pilot's last recorded status comes
 from [PR #19](https://github.com/hmbanan666/context/pull/19), not a new inspection.
 This PR removes identity services from the repository, not the live installation.
 Merge, deployment and live changes remain distinct approval/action steps.
@@ -142,9 +142,83 @@ private identity database backup; realm JSON is not a database backup. Backup
 contents and credentials stay outside Git. Future hard-delete acceptance must
 address retention and restore reconciliation.
 
-**Nightly scheduling and configurable SFTP/S3-compatible delivery remain stage
-1c work.** A same-host backup volume does not cover host loss; retain a verified
-private off-host copy and test isolated restore.
+### Nightly schedule and off-host delivery
+
+
+The Context process makes a SQLite online snapshot nightly, checks `quick_check`,
+restores it into a temporary separate file and opens/checks that restored copy.
+Only verified snapshots become `context-<UTC timestamp>-<UUID>.db` files. Originals,
+BLOBs, indexes, retry keys and every `auth_*` table stay together. No host cron or identity provider is
+needed for backups. This implementation is release preparation, not live activation.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CONTEXT_BACKUP_DIR` | `./backups` | Dedicated writable, persistent local directory; `/app/backups` in the image's working directory. |
+| `CONTEXT_BACKUP_AT` | `03:30` | Daily local `HH:MM`; `off` disables scheduling but allows the CLI. |
+| `CONTEXT_BACKUP_TIMEZONE` | Process timezone | IANA timezone, e.g. `Europe/Berlin`; containers normally use UTC. |
+| `CONTEXT_BACKUP_KEEP` | `7` | Retain 1–3650 verified local snapshots, including manual runs. |
+| `CONTEXT_BACKUP_TARGET` | `none` | `none` (local only), `s3`, or `sftp`. |
+| `CONTEXT_BACKUP_TIMEOUT_MS` | `300000` | Whole upload deadline, 1000–3600000 ms. |
+| `CONTEXT_BACKUP_S3_ENDPOINT` | Required for S3 | HTTPS S3-compatible endpoint without embedded credentials/query/fragment; path-style addressing. |
+| `CONTEXT_BACKUP_S3_REGION` | Required for S3 | Signing region accepted by the target. |
+| `CONTEXT_BACKUP_S3_BUCKET` | Required for S3 | Existing private bucket. |
+| `CONTEXT_BACKUP_S3_PREFIX` | `context/` | Object key prefix; empty is allowed. |
+| `CONTEXT_BACKUP_S3_ACCESS_KEY` / `CONTEXT_BACKUP_S3_SECRET_KEY` | Required for S3 | Dedicated credentials, supplied privately through the environment. |
+| `CONTEXT_BACKUP_SFTP_HOST` / `CONTEXT_BACKUP_SFTP_PORT` | Host required / `22` | SFTP destination. |
+| `CONTEXT_BACKUP_SFTP_USER` | Required for SFTP | Dedicated remote account. |
+| `CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH` | Required for SFTP | Readable mounted private key; encrypted private keys are not supported in this slice. |
+| `CONTEXT_BACKUP_SFTP_REMOTE_DIR` | Required for SFTP | Existing private absolute directory with write/rename rights. |
+| `CONTEXT_BACKUP_SFTP_HOST_KEY_SHA256` | Required for SFTP | Trusted SHA-256 host-key fingerprint as 64 hex digits; mismatches fail closed. |
+
+After startup, the scheduler checks every 30 seconds. If today's time has passed,
+it catches up once; it does not replay all missed days. Completed and failed
+scheduled attempts persist their local calendar date across restarts. An
+interrupted attempt is retried after restart. A daylight-saving gap runs at the
+first later local minute; a repeated hour does not duplicate the daily attempt.
+A lock coordinates scheduled and CLI backups and releases automatically on exit.
+Use one local backup directory per database, on a filesystem with SQLite locking.
+
+Retention runs after verification and before upload. It removes only generated
+snapshot names, preserving unrelated files and the current snapshot even after
+clock changes. Failed uploads keep that verified local snapshot. The next nightly
+attempt sends a fresh complete snapshot; `npm run backup` retries immediately
+with a new snapshot. There is no queue of old failed uploads. S3 uses a streaming
+single PUT (up to the provider's single-object PUT limit); SFTP streams a private
+`.part` file, checks its size, then renames it. Remote retention is **not** applied:
+configure the bucket lifecycle or remote cleanup, including abandoned `.part`
+files. An upload acknowledgement is not a remote restore drill.
+
+```sh
+npm run build
+npm run backup                # verified snapshot, retention, configured upload
+npm run backup -- status      # owner-only last result; nonzero unless successful
+npm run database -- restore ./backups/CHOSEN-SNAPSHOT.db ./data/recovered.db
+```
+
+In the image, use `node dist/scripts/backup.js run` / `status` and
+`node dist/scripts/database.js restore SOURCE NEW_DESTINATION`. These CLI commands
+use filesystem access as owner authority; they do not require MCP or OAuth.
+Restore refuses an existing destination or its WAL/SHM sidecars. It never selects
+or replaces the live database. Stop Context before deliberately switching its
+database path to a recovered file. For an off-host restore, download the snapshot,
+compare SHA-256 with the recorded checksum, then use the same restore command.
+
+`status.json` and snapshots are mode `0600`; newly created backup directories are
+`0700`. Status is local only, read through the CLI; public `/health` stays unchanged.
+Logs contain only backup metadata (name, bytes, SHA-256, timestamps, duration,
+stage and outcome), never raw errors, records, endpoints or credentials. Failures
+do not stop capture/recall. Invalid backup configuration disables scheduling and
+logs `stage: configuration`; it never silently falls back to local-only success.
+The last status file may then describe an older attempt; check its timestamp and
+startup logs. Filesystem failures that prevent writing status are logged too.
+
+Persist the backup directory separately from the container's disposable layer.
+Budget for retained snapshots plus two temporary full database copies during
+verification. `none` does not protect against host loss. Transfers use TLS or SSH;
+**client-side backup encryption is a follow-up**. Local and remote files contain
+the complete SQLite database, so keep both destinations private. Configuration and external credentials need separate recovery; this backup copies
+SQLite, including the built-in authentication state, only. No real remote-storage or hosted recovery claim
+is made by the synthetic tests.
 
 ## Verification and limits
 

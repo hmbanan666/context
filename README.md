@@ -4,8 +4,8 @@ An [MIT](LICENSE) open-source personal context engine for **one owner** and thei
 AI agents. Context preserves sources and provenance so authorized clients can
 remember and answer across conversations and providers through MCP.
 
-**Status: stage 1a merged; stage 1b implementation done in PR #23, not yet
-merged or deployed.** The core now provides built-in OAuth 2.1, password + passkey
+**Status: stages 1a and 1b merged; stage 1c nightly backups implemented in
+PR #21, not yet merged or deployed.** The core now provides built-in OAuth 2.1, password + passkey
 owner login and CLI bearer tokens without Keycloak or its PostgreSQL database.
 Existing Keycloak connections must reconnect after the switch. The pilot's last
 recorded release remains unchanged; this PR does not inspect or migrate it.
@@ -51,6 +51,22 @@ supported; S256 is mandatory. Protected `remember` uses the credential's default
 write area. Export variables in the shell; [`.env.example`](.env.example) is reference, not an
 auto-loaded file. See [deployment](docs/deployment.md#current-protected-setup) for
 setup, supported clients, token management and the reconnect migration.
+
+## Nightly backups
+
+The process now creates verified SQLite snapshots daily at 03:30, keeps seven
+local copies and optionally uploads to S3-compatible storage or SFTP. Snapshots
+include all tables, including built-in owner, passkey, client and token state.
+No host cron is needed. Configure `CONTEXT_BACKUP_AT`, `CONTEXT_BACKUP_TIMEZONE`,
+`CONTEXT_BACKUP_KEEP` and `CONTEXT_BACKUP_TARGET` (`none`, `s3`, `sftp`) plus the
+target credentials in [`.env.example`](.env.example). Base Compose uses UTC and
+the persistent `/app/backups` volume; `none` is explicitly local only.
+
+After building, `npm run backup` runs now and `npm run backup -- status` reads the
+owner-only last result. Restore with `npm run database -- restore SOURCE NEW_FILE`;
+existing destinations are refused. See [backup and restore](docs/deployment.md#backup-and-restore-today)
+for all settings, retention, upload failure handling and auth rollback precautions.
+Client-side encryption and actual hosted off-host recovery remain unverified.
 
 ## Direction and current behavior
 
