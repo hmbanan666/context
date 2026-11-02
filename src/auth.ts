@@ -5,27 +5,18 @@ import {
   type OAuthTokenVerifier,
   requireBearerAuth,
 } from "@modelcontextprotocol/server";
-import { createRemoteJWKSet, type JWTVerifyGetKey, jwtVerify } from "jose";
-import {
-  type ClientGrants,
-  configuredDataScopes,
-  operationScopes,
-} from "./access.js";
+import type { AuthStore } from "./auth-store.js";
+import type { OAuthConfig } from "./oauth.js";
 
-export interface OAuthConfig {
-  readonly issuer: string;
-  readonly resource: string;
-  readonly ownerSubject: string;
-  readonly clientGrants?: ClientGrants;
-}
+export type { OAuthConfig } from "./oauth.js";
 
 export function protectMcp(
   handler: Pick<McpHttpHandler, "fetch">,
   config: OAuthConfig,
-  resolveKey?: JWTVerifyGetKey,
+  registry: AuthStore,
 ) {
   const gate = requireBearerAuth({
-    verifier: createTokenVerifier(config, resolveKey),
+    verifier: createTokenVerifier(config, registry),
     expectedResource: new URL(config.resource),
     resourceMetadataUrl: `${new URL(config.resource).origin}/.well-known/oauth-protected-resource/mcp`,
   });
@@ -52,45 +43,17 @@ export function protectMcp(
 
 export function createTokenVerifier(
   config: OAuthConfig,
-  resolveKey?: JWTVerifyGetKey,
+  registry: AuthStore,
 ): OAuthTokenVerifier {
-  const recognizedScopes = new Set<string>([
-    ...operationScopes,
-    ...configuredDataScopes(config.clientGrants),
-  ]);
-  const keys =
-    resolveKey ??
-    createRemoteJWKSet(
-      new URL(`${config.issuer}/protocol/openid-connect/certs`),
-      { timeoutDuration: 5000 },
-    );
   return {
     async verifyAccessToken(token) {
       try {
-        const { payload } = await jwtVerify(token, keys, {
-          issuer: config.issuer,
-          audience: config.resource,
-          algorithms: ["RS256"],
-          requiredClaims: ["sub", "exp", "iat", "azp", "scope"],
-          maxTokenAge: "5m",
-        });
-        if (
-          payload.sub !== config.ownerSubject ||
-          typeof payload.exp !== "number" ||
-          typeof payload.iat !== "number" ||
-          payload.exp - payload.iat > 300 ||
-          typeof payload.azp !== "string" ||
-          !Object.hasOwn(config.clientGrants ?? {}, payload.azp) ||
-          typeof payload.scope !== "string"
-        )
-          throw new Error("Invalid claims");
+        const access = registry.access(token, config.resource);
         return {
           token,
-          clientId: payload.azp,
-          scopes: payload.scope
-            .split(" ")
-            .filter((scope) => recognizedScopes.has(scope)),
-          expiresAt: payload.exp,
+          clientId: access.clientId,
+          scopes: access.scopes,
+          expiresAt: access.expires,
           resource: new URL(config.resource),
         };
       } catch {

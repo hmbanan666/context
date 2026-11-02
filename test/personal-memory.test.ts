@@ -7,35 +7,28 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
 import { z } from "zod";
 import type { ClientGrants } from "../src/access.js";
 import { protectMcp } from "../src/auth.js";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
+import { fixtureAuth } from "./fixtures/auth.js";
 
 const scope = "personal";
 const resource = "https://context.kosarev.space/mcp";
-const issuer = "https://context.kosarev.space/auth/realms/context";
 const grants: ClientGrants = {
   "context-chatgpt": { read: [scope], write: [scope], process: [] },
   "context-codex": { read: [scope], write: [], process: [] },
 };
-const key = await generateKeyPair("RS256");
-const jwk = await exportJWK(key.publicKey);
-const keys = createLocalJWKSet({ keys: [{ ...jwk, kid: "fixture" }] });
 
 async function openMemory(path: string) {
   const store = new SourceStore(path);
+  const auth = fixtureAuth(grants, resource, path);
   const mcp = createContextMcp(store, [], true, {
-    clientGrants: grants,
+    auth: auth.store,
   });
-  const handler = protectMcp(
-    mcp,
-    { resource, issuer, ownerSubject: "synthetic-owner", clientGrants: grants },
-    keys,
-  );
+  const handler = protectMcp(mcp, auth.config, auth.store);
   const clients: Client[] = [];
   return {
     store,
@@ -45,18 +38,7 @@ async function openMemory(path: string) {
       scopes = ["context:read", "context:write", scope],
       subject = "synthetic-owner",
     ) {
-      const now = Math.floor(Date.now() / 1000);
-      const token = await new SignJWT({
-        sub: subject,
-        azp: clientId,
-        scope: scopes.join(" "),
-      })
-        .setProtectedHeader({ alg: "RS256", kid: "fixture" })
-        .setIssuer(issuer)
-        .setAudience(resource)
-        .setIssuedAt(now)
-        .setExpirationTime(now + 300)
-        .sign(key.privateKey);
+      const token = auth.token(clientId, scopes, subject);
       const client = new Client({
         name: "personal-pilot-fixture",
         version: "1",
@@ -73,6 +55,7 @@ async function openMemory(path: string) {
     async close() {
       for (const client of clients) await client.close();
       await mcp.close();
+      auth.store.close();
       store.close();
     },
   };

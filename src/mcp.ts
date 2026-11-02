@@ -5,6 +5,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { authorizeScope, type ClientGrants } from "./access.js";
+import type { AuthStore } from "./auth-store.js";
 import { buildContextPackage } from "./context-package.js";
 import { captureSchema, recallSchema, scopeSchema } from "./contracts.js";
 import type { JobStore } from "./jobs.js";
@@ -25,6 +26,7 @@ export interface McpStores {
   readonly knowledge?: KnowledgeStore;
   readonly jobs?: JobStore;
   readonly clientGrants?: ClientGrants;
+  readonly auth?: AuthStore;
 }
 
 export function createContextMcp(
@@ -37,6 +39,13 @@ export function createContextMcp(
   return createMcpHandler(
     ({ authInfo }) => {
       const allowed = new Set(localScopes);
+      const credential =
+        authInfo && stores.auth
+          ? stores.auth.access(authInfo.token, String(authInfo.resource))
+          : undefined;
+      const grants = credential
+        ? { [credential.clientId]: credential.grants }
+        : stores.clientGrants;
       const insufficientScope = (
         operation: string,
         scope: string,
@@ -65,7 +74,7 @@ export function createContextMcp(
               authInfo.scopes,
               scope,
               operation,
-              stores.clientGrants,
+              grants,
             )
           )
             return result({ error: "forbidden_scope" }, true);
@@ -81,6 +90,7 @@ export function createContextMcp(
         authorize,
         authInfo?.clientId ?? "local",
         protectedMode,
+        credential?.defaultWrite ?? undefined,
       );
       registerMaterialTools(server, store, authorize, protectedMode);
       if (stores.knowledge)

@@ -8,12 +8,13 @@ import {
   originValidation,
   toNodeHandler,
 } from "@modelcontextprotocol/node";
-import { configuredDataScopes, operationScopes } from "./access.js";
 import { protectMcp } from "./auth.js";
+import { AuthStore } from "./auth-store.js";
 import type { Config } from "./config.js";
 import { JobStore } from "./jobs.js";
 import { KnowledgeStore } from "./knowledge.js";
 import { createContextMcp } from "./mcp.js";
+import { AuthorizationServer } from "./oauth.js";
 import { SourceStore } from "./store.js";
 
 export async function startService(config: Config) {
@@ -32,18 +33,40 @@ export async function startService(config: Config) {
     store.close();
     throw error;
   }
+  const auth = config.oauth
+    ? new AuthStore(config.databasePath, config.oauth.areas)
+    : undefined;
+  const authorization =
+    auth && config.oauth
+      ? new AuthorizationServer(auth, config.oauth)
+      : undefined;
+  const handleAuth = authorization
+    ? toNodeHandler(
+        {
+          fetch: (request: Request) =>
+            authorization.fetch(
+              new Request(
+                new URL(
+                  new URL(request.url).pathname + new URL(request.url).search,
+                  config.oauth?.issuer,
+                ),
+                request,
+              ),
+            ),
+        },
+        { maxRequestBodySize: 16384 },
+      )
+    : undefined;
   const mcp =
     config.oauth || config.localMcpScopes
       ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth, {
           knowledge,
           jobs,
-          ...(config.oauth?.clientGrants === undefined
-            ? {}
-            : { clientGrants: config.oauth.clientGrants }),
+          ...(auth ? { auth } : {}),
         })
       : undefined;
   const authenticated =
-    mcp && config.oauth ? protectMcp(mcp, config.oauth) : mcp;
+    mcp && config.oauth && auth ? protectMcp(mcp, config.oauth, auth) : mcp;
   const handleMcp = mcp
     ? toNodeHandler(authenticated ?? mcp, { maxRequestBodySize: 65536 })
     : undefined;
@@ -56,31 +79,20 @@ export async function startService(config: Config) {
   const server = createServer((request, response) => {
     response.setHeader("Content-Type", "application/json");
     response.setHeader("Cache-Control", "no-store");
+    const pathname = request.url?.split("?")[0] ?? "";
     if (
-      config.oauth &&
-      [
-        "/.well-known/oauth-protected-resource",
-        "/.well-known/oauth-protected-resource/mcp",
-      ].includes(request.url ?? "")
+      handleAuth &&
+      (pathname.startsWith("/.well-known/") ||
+        pathname.startsWith("/oauth/") ||
+        pathname.startsWith("/auth/"))
     ) {
       if (!validateHost(request, response)) return;
-      if (request.method !== "GET") {
-        response.writeHead(405).end();
-        return;
-      }
-      response.writeHead(200).end(
-        JSON.stringify({
-          resource: config.oauth.resource,
-          authorization_servers: [config.oauth.issuer],
-          // Refresh consent is advertised separately from data-access grants.
-          scopes_supported: [
-            ...operationScopes,
-            ...configuredDataScopes(config.oauth.clientGrants),
-            "offline_access",
-          ],
-          bearer_methods_supported: ["header"],
-          resource_name: "Context",
-        }),
+      // The canonical public origin is configured, never taken from forwarded headers.
+      void handleAuth(request as NodeIncomingMessageLike, response).catch(
+        () => {
+          if (!response.headersSent) response.writeHead(400);
+          response.end();
+        },
       );
       return;
     }
@@ -133,6 +145,7 @@ export async function startService(config: Config) {
     });
   } catch (error) {
     await mcp?.close();
+    auth?.close();
     jobs.close();
     knowledge.close();
     store.close();
@@ -149,6 +162,7 @@ export async function startService(config: Config) {
         });
       } finally {
         await mcp?.close();
+        auth?.close();
         jobs.close();
         knowledge.close();
         store.close();

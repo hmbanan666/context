@@ -15,3 +15,5 @@ uploads/
 secrets/
 *.log
 .DS_Store
+
+.tools/
