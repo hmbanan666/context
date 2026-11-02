@@ -36,6 +36,7 @@ interface TidySource {
   effective_date: string;
   captured_at: string;
   checksum: string;
+  type: "note" | "document" | null;
 }
 export interface TidyOptions {
   databasePath: string;
@@ -322,7 +323,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       const sources = db
         .prepare(
           `SELECT s.rowid AS row,s.id,s.text,s.scope,s.captured_at,
-            COALESCE(m.created_at,s.captured_at) AS effective_date,s.checksum
+            COALESCE(m.created_at,s.captured_at) AS effective_date,s.checksum,m.type
            FROM sources s LEFT JOIN source_metadata m ON m.source_id=s.id
            WHERE s.scope=? ORDER BY s.rowid`,
         )
@@ -369,13 +370,15 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       if (!options.llm || unavailable()) continue;
       run.vectorsMissing += sources.filter(
         (source) =>
-          source.text.length <= MAX_FACT_LENGTH && !embeddings.has(source.id),
+          source.type === "note" &&
+          source.text.length <= MAX_FACT_LENGTH &&
+          !embeddings.has(source.id),
       ).length;
       const pending: { a: TidySource; b: TidySource }[] = [];
       const flushPairs = async () => {
         if (!pending.length) return;
         const answers = await judgeBatch(
-          'For each indexed pair, which text explicitly replaces or updates the SAME statement in the other? Consider both effective dates. Different subjects, proposals, questions and mere related facts do not replace one another. Return a JSON array [{"index":0,"current":"a"|"b"|null},...]; null means no supersession.',
+          'For each indexed pair, choose a current text only if it makes a specific claim in the other text false or obsolete: a changed value, reversed decision, or plan explicitly completed or replaced. Consider both effective dates. Additional detail, an incident or event about the same thing, a summary omitting rules the other text retains, and related or complementary facts are NOT supersession. Different subjects, proposals and questions do not replace one another. When in doubt return null. Return a JSON array [{"index":0,"current":"a"|"b"|null},...]; null means no supersession.',
           pending.map(({ a, b }, index) => ({
             index,
             a: { text: a.text, effectiveDate: a.effective_date },
@@ -415,6 +418,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           if (
             [a, b].some(
               (source) =>
+                source.type !== "note" ||
                 source.text.length > MAX_FACT_LENGTH ||
                 copies.has(source.id) ||
                 state.canonical(source.id) !== source.id,
