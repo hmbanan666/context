@@ -57,6 +57,10 @@ test("MCP discovery advertises DCR, S256 and separate offline consent", async ()
 
 import {
   Client,
+  discoverOAuthMetadata,
+  exchangeAuthorization,
+  refreshAuthorization,
+  registerClient,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { protectMcp } from "../src/auth.js";
@@ -135,21 +139,23 @@ class Browser {
   }
 }
 async function register(auth: AuthorizationServer) {
-  const response = await auth.fetch(
-    new Request(`${config.issuer}/oauth/register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_name: "Fictional <worker>",
-        redirect_uris: ["http://127.0.0.1:4567/callback"],
-        token_endpoint_auth_method: "none",
-        grant_types: ["authorization_code", "refresh_token"],
-      }),
-    }),
-  );
-  assert.equal(response.status, 201);
-  return (await response.json()).client_id as string;
+  const fetchFn: typeof fetch = async (input, init) =>
+    auth.fetch(new Request(input, init));
+  const metadata = await discoverOAuthMetadata(config.issuer, {}, fetchFn);
+  assert.ok(metadata);
+  const client = await registerClient(config.issuer, {
+    metadata,
+    clientMetadata: {
+      client_name: "Fictional <worker>",
+      redirect_uris: ["http://127.0.0.1:4567/callback"],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+    },
+    fetchFn,
+  });
+  return client.client_id;
 }
+
 function authorization(
   client: string,
   verifier: string,
@@ -248,12 +254,27 @@ test("owner enrolls a passkey; DCR → PKCE → consent → SDK MCP save/read �
         .status,
       400,
     );
-    const tokensResponse = await post(auth, "/oauth/token", data);
-    assert.equal(tokensResponse.status, 200);
-    const tokens = await tokensResponse.json();
+    const fetchFn: typeof fetch = async (input, init) =>
+      auth.fetch(new Request(input, init));
+    const metadata = await discoverOAuthMetadata(config.issuer, {}, fetchFn);
+    assert.ok(metadata);
+    const clientInformation = {
+      client_id: clientId,
+      token_endpoint_auth_method: "none" as const,
+    };
+    const tokens = await exchangeAuthorization(config.issuer, {
+      metadata,
+      clientInformation,
+      authorizationCode: data.code,
+      iss: callback.searchParams.get("iss") ?? "",
+      codeVerifier: verifier,
+      redirectUri: data.redirect_uri,
+      resource,
+      fetchFn,
+    });
     assert.ok(tokens.refresh_token);
     assert.equal(tokens.expires_in, 300);
-    assert.equal(tokens.scope.includes("personal"), false);
+    assert.equal(tokens.scope?.includes("personal"), false);
     const client = await connect(tokens.access_token);
     const saved = await client.callTool({
       name: "remember",
@@ -281,14 +302,14 @@ test("owner enrolls a passkey; DCR → PKCE → consent → SDK MCP save/read �
       ).isError,
       true,
     );
-    const refreshed = await post(auth, "/oauth/token", {
-      grant_type: "refresh_token",
-      client_id: clientId,
-      refresh_token: tokens.refresh_token,
+    const rotated = await refreshAuthorization(config.issuer, {
+      metadata,
+      clientInformation,
+      refreshToken: tokens.refresh_token,
       resource,
+      fetchFn,
     });
-    assert.equal(refreshed.status, 200);
-    const rotated = await refreshed.json();
+    assert.ok(rotated.refresh_token);
     assert.notEqual(rotated.refresh_token, tokens.refresh_token);
     const reopened = await connect(rotated.access_token);
     assert.match(
@@ -703,5 +724,100 @@ test("login and token endpoints bound requests with retry guidance", async () =>
     assert.equal((await post(auth, "/oauth/token", {})).status, 429);
   } finally {
     store.close();
+  }
+});
+
+test("owner passkey, refresh lineage and narrowed consent survive reopen and private backup/restore without plaintext credentials", async () => {
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { backupDatabase, restoreDatabase } = await import("../src/backup.js");
+  const directory = await mkdtemp(
+      join(process.cwd(), ".output-auth-recovery-"),
+    ),
+    path = join(directory, "context.db"),
+    snapshot = join(directory, "snapshot.db"),
+    restored = join(directory, "restored.db");
+  const sources = new SourceStore(path);
+  sources.close();
+  let store = new AuthStore(path, config.areas),
+    auth = new AuthorizationServer(store, config);
+  const key = new SoftwareAuthenticator(),
+    browser = new Browser(auth);
+  try {
+    await store.initOwner(password);
+    const id = await register(auth),
+      verifier = secret();
+    await browser.login(key, authorization(id, verifier));
+    const allowed = await browser.request(
+      "/oauth/consent",
+      new URLSearchParams({
+        csrf: browser.csrf,
+        read: "garden",
+        decision: "allow",
+        offline: "yes",
+      }),
+    );
+    const tokens = await (
+      await post(auth, "/oauth/token", {
+        grant_type: "authorization_code",
+        client_id: id,
+        code:
+          new URL(allowed.headers.get("location") ?? "").searchParams.get(
+            "code",
+          ) ?? "",
+        resource,
+        redirect_uri: "http://127.0.0.1:4567/callback",
+        code_verifier: verifier,
+      })
+    ).json();
+    store.close();
+    store = new AuthStore(path, config.areas);
+    auth = new AuthorizationServer(store, config);
+    assert.deepEqual(store.access(tokens.access_token, resource).grants, {
+      read: ["garden"],
+      write: [],
+      process: [],
+    });
+    const rotated = await (
+      await post(auth, "/oauth/token", {
+        grant_type: "refresh_token",
+        client_id: id,
+        resource,
+        refresh_token: tokens.refresh_token,
+      })
+    ).json();
+    assert.ok(rotated.refresh_token);
+    await backupDatabase(path, snapshot);
+    await restoreDatabase(snapshot, restored);
+    const bytes = await readFile(snapshot);
+    for (const value of [
+      password,
+      tokens.access_token,
+      tokens.refresh_token,
+      rotated.refresh_token,
+    ])
+      assert.equal(bytes.includes(Buffer.from(value)), false);
+    const restoredStore = new AuthStore(restored, config.areas),
+      restoredAuth = new AuthorizationServer(restoredStore, config);
+    try {
+      await new Browser(restoredAuth).login(key, authorization(id, secret()));
+      assert.equal(
+        (
+          await post(restoredAuth, "/oauth/token", {
+            grant_type: "refresh_token",
+            client_id: id,
+            resource,
+            refresh_token: tokens.refresh_token,
+          })
+        ).status,
+        400,
+      );
+      assert.throws(() => restoredStore.access(rotated.access_token, resource));
+    } finally {
+      restoredStore.close();
+    }
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });

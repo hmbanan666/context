@@ -89,6 +89,7 @@ export class AuthStore {
       CREATE TABLE IF NOT EXISTS auth_clients(id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS auth_tokens(hash TEXT PRIMARY KEY, id TEXT UNIQUE NOT NULL, family TEXT NOT NULL, expires INTEGER NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auth_token_family ON auth_tokens(family);
+      CREATE INDEX IF NOT EXISTS auth_token_expiry ON auth_tokens(expires);
       CREATE TABLE IF NOT EXISTS auth_owner(id INTEGER PRIMARY KEY CHECK(id=1), salt TEXT NOT NULL, password TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS auth_passkeys(id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS auth_sessions(hash TEXT PRIMARY KEY, expires INTEGER NOT NULL, data TEXT NOT NULL);`);
@@ -149,7 +150,8 @@ export class AuthStore {
     redirects: string[],
     refresh: boolean,
   ): RegisteredClient {
-    if (this.listClients().length >= 256) throw new Error("Client limit");
+    if (this.listClients().filter((c) => !c.revoked).length >= 256)
+      throw new Error("Client limit");
     const client: RegisteredClient = {
       id: secret(),
       name,
@@ -191,7 +193,8 @@ export class AuthStore {
       );
       if (client?.revoked) throw new Error("Revoked client");
       if (!client) {
-        if (this.listClients().length >= 256) throw new Error("Client limit");
+        if (this.listClients().filter((c) => !c.revoked).length >= 256)
+          throw new Error("Client limit");
         client = {
           id: secret(),
           name,
@@ -226,6 +229,12 @@ export class AuthStore {
     });
   }
   issue(input: Omit<TokenRecord, "id" | "created" | "used" | "revoked">) {
+    // Keep spent refresh hashes until every descendant has expired, for replay detection.
+    this.db
+      .prepare(
+        "DELETE FROM auth_tokens WHERE expires < ? AND json_extract(data, '$.kind') != 'cli'",
+      )
+      .run(this.now() - 300);
     const token = secret(),
       id = secret();
     const record: TokenRecord = {
@@ -260,13 +269,12 @@ export class AuthStore {
       .run(JSON.stringify(record), record.id);
   }
   revokeFamily(family: string) {
-    for (const row of this.db
-      .prepare("SELECT data FROM auth_tokens WHERE family=?")
-      .all(family)) {
-      const record: TokenRecord = JSON.parse(row.data as string);
-      record.revoked = true;
-      this.saveToken(record);
-    }
+    // One statement serializes with rotation, including from a separate CLI process.
+    this.db
+      .prepare(
+        "UPDATE auth_tokens SET data=json_set(data, '$.revoked', json('true')) WHERE family=?",
+      )
+      .run(family);
   }
   revokeToken(id: string) {
     const row = this.db
@@ -310,14 +318,19 @@ export class AuthStore {
         (a) => this.areas.includes(a) && client.grants[op].includes(a),
       );
     client.lastUsed = this.now();
-    this.saveClient(client);
+    // Never overwrite grants/revocation from a stale client read while the CLI writes.
+    this.db
+      .prepare(
+        "UPDATE auth_clients SET data=json_set(data, '$.lastUsed', ?) WHERE id=?",
+      )
+      .run(client.lastUsed, client.id);
     return { ...token, grants, client };
   }
   async initOwner(password: string) {
     if (password.length < 12 || password.length > 1024)
       throw new Error("Password must be 12–1024 characters");
     const salt = secret();
-    const hash = (await derive(password, salt)) as Buffer;
+    const hash = await derive(password, salt);
     this.db
       .prepare("INSERT INTO auth_owner VALUES (1,?,?)")
       .run(salt, hash.toString("base64url"));
@@ -326,10 +339,10 @@ export class AuthStore {
     const row = this.db
       .prepare("SELECT salt,password FROM auth_owner WHERE id=1")
       .get();
-    const hash = (await derive(
+    const hash = await derive(
       password.slice(0, 1025),
       (row?.salt as string) ?? "uninitialized-owner",
-    )) as Buffer;
+    );
     return (
       !!row &&
       password.length <= 1024 &&

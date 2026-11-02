@@ -5,7 +5,7 @@ import { readConfig } from "../src/config.js";
 const oauth = {
   NODE_ENV: "production",
   CONTEXT_AUTH: "oauth",
-  CONTEXT_PUBLIC_URL: "https://context.kosarev.space/mcp",
+  CONTEXT_PUBLIC_URL: "https://context.example/mcp",
   CONTEXT_AREAS: "personal,garden",
 };
 
@@ -24,10 +24,7 @@ test("defaults to a persistent local database and validates configuration", () =
 });
 
 test("protected mode requires a portable HTTPS resource and rejects legacy auth and local bypass", () => {
-  assert.equal(
-    readConfig(oauth).oauth?.issuer,
-    "https://context.kosarev.space",
-  );
+  assert.equal(readConfig(oauth).oauth?.issuer, "https://context.example");
   for (const change of [
     { CONTEXT_OWNER_SUBJECT: "" },
     { CONTEXT_PUBLIC_URL: "http://context.kosarev.space/mcp" },
@@ -72,7 +69,7 @@ test("area configuration rejects malformed, duplicate, reserved and excessive ar
   );
 });
 
-test("grants require valid explicit operations and configured areas, and are OAuth-only", () => {
+test("legacy environment grants are rejected in every auth mode", () => {
   for (const CONTEXT_CLIENT_GRANTS of [
     "",
     "null",
@@ -88,4 +85,20 @@ test("grants require valid explicit operations and configured areas, and are OAu
   for (const local of [{}, { CONTEXT_LOCAL_MCP: "enabled" }]) {
     assert.throws(() => readConfig({ ...local, CONTEXT_CLIENT_GRANTS: "{}" }));
   }
+});
+
+test("refresh lifetimes are configurable and bounded in production", () => {
+  const configured = readConfig({
+    ...oauth,
+    CONTEXT_REFRESH_SECONDS: "600",
+    CONTEXT_OFFLINE_SECONDS: "1200",
+  });
+  assert.equal(configured.oauth?.refreshSeconds, 600);
+  assert.equal(configured.oauth?.offlineSeconds, 1200);
+  for (const change of [
+    { CONTEXT_REFRESH_SECONDS: "2592001" },
+    { CONTEXT_OFFLINE_SECONDS: "299" },
+    { CONTEXT_REFRESH_SECONDS: "1200", CONTEXT_OFFLINE_SECONDS: "600" },
+  ])
+    assert.throws(() => readConfig({ ...oauth, ...change }));
 });

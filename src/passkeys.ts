@@ -97,6 +97,7 @@ export async function handlePasskey(
       throw new OAuthFailure("access_denied", 403);
     const credential = verified.registrationInfo.credential;
     server.store.transaction(() => {
+      server.store.session(value);
       if (server.store.passkeys().length)
         throw new OAuthFailure("access_denied", 403);
       server.store.savePasskey({
@@ -122,6 +123,7 @@ export async function handlePasskey(
     });
     if (!verified.verified) throw new OAuthFailure("access_denied", 403);
     server.store.transaction(() => {
+      server.store.session(value);
       const current = server.store.passkeys().find((k) => k.id === key.id);
       if (!current || current.counter !== key.counter)
         throw new OAuthFailure("access_denied", 403);

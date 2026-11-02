@@ -225,10 +225,13 @@ export class AuthorizationServer {
         const { value, session } = this.browser(request, form.get("csrf"));
         if (!(await this.store.checkPassword(form.get("password") ?? "")))
           throw new OAuthFailure("invalid_credentials", 401);
-        this.store.deleteSession(value);
-        session.password = true;
-        session.csrf = secret();
-        const next = this.store.newSession(session);
+        const next = this.store.transaction(() => {
+          this.store.session(value);
+          this.store.deleteSession(value);
+          session.password = true;
+          session.csrf = secret();
+          return this.store.newSession(session);
+        });
         return this.passkeyPage(session, this.cookie(next));
       }
       if (request.method === "POST" && path === "/oauth/consent") {
@@ -271,6 +274,8 @@ export class AuthorizationServer {
             this.store.time() +
             (offline ? this.config.offlineSeconds : this.config.refreshSeconds);
           const issued = this.store.transaction(() => {
+            this.store.session(value);
+            const client = this.store.client(pending.clientId);
             // Registry is the union of owner-approved rights; each credential retains its narrower consent.
             for (const op of ["read", "write", "process"] as const)
               client.grants[op] = [
@@ -310,11 +315,7 @@ export class AuthorizationServer {
       return json({ error: "not_found" }, 404);
     } catch (error) {
       const code =
-        error instanceof OAuthFailure
-          ? error.code
-          : error instanceof z.ZodError
-            ? "invalid_request"
-            : "invalid_request";
+        error instanceof OAuthFailure ? error.code : "invalid_request";
       const response = json(
         { error: code },
         error instanceof OAuthFailure ? error.status : 400,
@@ -378,7 +379,6 @@ export class AuthorizationServer {
       token.resource !== this.config.resource
     )
       throw new OAuthFailure("invalid_grant");
-    const client = this.store.client(token.clientId);
     if (
       grant === "authorization_code" &&
       (token.redirect !== form.get("redirect_uri") ||
@@ -394,6 +394,7 @@ export class AuthorizationServer {
     }
     // Commit revocation on replay, including all descendants; never roll it back with the error.
     const output = this.store.transaction(() => {
+      const client = this.store.client(token.clientId);
       token = this.store.token(
         form.get(grant === "authorization_code" ? "code" : "refresh_token") ??
           "",
