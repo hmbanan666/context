@@ -94,13 +94,15 @@ CHECK/FK table migration preserving historical rows and retry keys. Both endpoin
 and evidence must share the relation's area. A supersedes B means A is current;
 A duplicates B means B is canonical. Sources and their text/checksums remain intact.
 
-`llm.ts` is a bounded, provider-agnostic fetch client shared by tidy and the
-operator-run `memory:process` command. The version-pinned Codex adapter is removed.
+`llm.ts` selects a bounded OpenAI-compatible fetch client (default) or opt-in
+`codex-llm.ts` CLI client behind the same `ask` interface, shared by tidy and the
+operator-run `memory:process` command. The Codex CLI is unpinned.
 `jobs.ts` still owns explicit processing leases and durable validated output.
-No key means dedup only; no inference provider is needed for capture or reading.
+Without a configured processor, tidy does dedup only; no inference provider is
+needed for capture or reading.
 Tidy history is content-free JSONL beside eval history, including the successful
-watermark, model, counts and duration. Distilled per-topic knowledge and hard
-delete are future slices, not claims of complete stage 4 acceptance.
+watermark, processor, model, counts (including LLM calls) and duration. Distilled
+per-topic knowledge and hard delete are future slices, not claims of complete stage 4 acceptance.
 
 Inbox moves are transactional metadata changes. FTS/stemmed rows retain their
 rowids/text and enforce area by joining sources; embedding scopes move and active

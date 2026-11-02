@@ -235,12 +235,13 @@ context tidy --area inbox
 ```
 
 Dry-run reports proposed relation/move counts and writes neither SQLite nor
-history; configured model steps still call the selected endpoint. Normal runs
-append counts, outcome, duration, model and last-success time to
-`/app/data/tidy/history.jsonl`. Preserve that file separately if needed; the SQLite
+history; configured model steps still call the selected processor. Normal runs
+append counts (including `llmCalls`), processor, outcome, duration, model and
+last-success time to `/app/data/tidy/history.jsonl`. Preserve that file separately if needed; the SQLite
 snapshot contains relations/moved areas but not either JSONL history file.
 
-Three optional settings are added; Compose forwards all three:
+The OpenAI-compatible API remains the default (`CONTEXT_PROCESSOR` unset or
+`openai`). Compose forwards the selector and these existing API settings:
 
 - `CONTEXT_LLM_API_KEY`: endpoint credential (a placeholder is enough for a local
   endpoint that requires no authentication).
@@ -256,3 +257,38 @@ stored E5 vectors without loading another model. Missing vectors leave LLM runs
 partial so later indexing cannot strand unprocessed facts. Model errors also
 leave the successful watermark unchanged. Uncertain/conflicting inbox routing
 stays for the owner; a destination with broader existing read grants is skipped.
+
+### Optional Codex subscription processor
+
+Set `CONTEXT_PROCESSOR=codex` to use the CLI's ChatGPT login for tidy and
+`memory:process`. `CONTEXT_LLM_MODEL` defaults to `gpt-6-luna`; reasoning effort is
+`low`. API credentials/endpoints are ignored. Calls use stdin, an empty temporary
+working directory, a read-only sandbox, ephemeral sessions and disabled tools,
+MCP, user config, rules and skills instructions. Output is bounded to 128 KiB and
+the process group is killed after 180 seconds. No CLI version is pinned; unsupported
+flags, missing login/binary and failed calls report `llm: "unavailable"` and leave
+tidy doing dedup only. Subscription/model availability and login refresh after
+inactivity still need a live check; synthetic tests do not establish them.
+
+On the host, install a static Codex executable compatible with the container's
+Linux architecture (not the npm launcher). Set `CONTEXT_CODEX_BIN` to its absolute
+path and `CONTEXT_CODEX_HOME` to a **new dedicated directory**, separate from agent
+sessions so token refresh does not collide. Log in directly; never copy agent auth:
+
+```sh
+mkdir -p "$CONTEXT_CODEX_HOME"
+chmod 700 "$CONTEXT_CODEX_HOME"
+CODEX_HOME="$CONTEXT_CODEX_HOME" codex login --device-auth
+sudo chown -R 1000:1000 "$CONTEXT_CODEX_HOME"
+```
+
+Append `-f deploy/codex.yaml` after `-f deploy/compose.yaml` and, if used,
+`-f deploy/dokploy.yaml`. The overlay adds only the read-only binary mount at
+`/usr/local/bin/codex` and the writable login directory at `/app/codex`, used by
+uid 1000. Root filesystem read-only, `cap_drop: ALL` and `no-new-privileges` remain;
+no SSH or Docker socket is mounted. The CLI alone handles its auth files, including
+refresh. [Codex CLI reference](https://developers.openai.com/codex/cli/reference).
+
+Both processors batch up to 25 supersede pairs or inbox items per call, with a
+shared hard limit of 12 calls per tidy run. Counts include failed calls. Cursors
+retain leftover work for the next night; invalid entries are skipped and counted.
