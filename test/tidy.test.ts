@@ -130,11 +130,14 @@ for (const [name, aDate, bDate, choice, skipped] of [
         llm: {
           model: "fake",
           async ask(_instruction: string, data: unknown) {
-            assert.deepEqual(data, {
-              a: { text: other.text, effectiveDate: aDate },
-              b: { text: current.text, effectiveDate: bDate },
-            });
-            return { current: choice };
+            assert.deepEqual(data, [
+              {
+                index: 0,
+                a: { text: other.text, effectiveDate: aDate },
+                b: { text: current.text, effectiveDate: bDate },
+              },
+            ]);
+            return [{ index: 0, current: choice }];
           },
         },
       });
@@ -175,9 +178,12 @@ test("tidy windows use capture time so newly imported old notes are considered",
     embeddingModel: "fixture",
     llm: {
       model: "fake",
-      async ask() {
+      async ask(_instruction: string, data: unknown) {
         calls++;
-        return { current: null };
+        return (data as { index: number }[]).map(({ index }) => ({
+          index,
+          current: null,
+        }));
       },
     },
   };
@@ -204,7 +210,7 @@ test("tidy windows use capture time so newly imported old notes are considered",
     // All three imports arrived Jan 4, including the old and future authored notes.
     // Their six pairs qualify; a future capture does not.
     assert.equal(run.pairs, 6);
-    assert.equal(calls, 6);
+    assert.equal(calls, 1);
     assert.equal(run.failures, 0);
     assert.equal(run.lastSuccessfulAt, "2026-01-04T00:00:00.000Z");
   } finally {
@@ -247,7 +253,7 @@ test("tidy uses vectors for conservative dedup and model updates, retries failur
       async ask(_instruction: string, data: unknown) {
         calls++;
         assert.ok(!JSON.stringify(data).includes("limit 8"));
-        return invalid ? { current: "yes" } : { current: "a" };
+        return [{ index: 0, current: invalid ? "yes" : "a" }];
       },
     };
     const options = {
@@ -321,12 +327,16 @@ test("inbox moves confident sources atomically, leaves uncertain/derived sources
     const llm = {
       model: "fake",
       async ask(_instruction: string, data: unknown) {
-        const d = data as { text: string; areas: string[] };
-        assert.ok(!d.areas.includes("vault"));
-        return {
-          area: "personal",
-          confidence: d.text.includes("confident") ? 0.95 : 0.6,
-        };
+        return (data as { index: number; text: string; areas: string[] }[]).map(
+          (d) => {
+            assert.ok(!d.areas.includes("vault"));
+            return {
+              index: d.index,
+              area: "personal",
+              confidence: d.text.includes("confident") ? 0.95 : 0.6,
+            };
+          },
+        );
       },
     };
     const options = {
@@ -396,6 +406,7 @@ test("tidy CLI dry-run reports synthetic counts without changing database bytes 
           ...process.env,
           CONTEXT_DB_PATH: f.path,
           CONTEXT_AREAS: "personal,vault",
+          CONTEXT_PROCESSOR: "openai",
           CONTEXT_LLM_API_KEY: "",
           CONTEXT_LLM_MODEL: "",
         },
@@ -406,6 +417,8 @@ test("tidy CLI dry-run reports synthetic counts without changing database bytes 
     assert.equal(summary.duplicates, 1);
     assert.equal(summary.dryRun, true);
     assert.equal(summary.llm, "not_configured");
+    assert.equal(summary.llmCalls, 0);
+    assert.equal(summary.processor, "openai");
     assert.deepEqual(await readFile(f.path), before);
     await assert.rejects(readFile(join(f.directory, "tidy/history.jsonl")));
   } finally {
@@ -432,9 +445,12 @@ test("capped model pairs resume and missing vectors do not advance the successfu
       embeddingModel: "fixture",
       llm: {
         model: "fake",
-        async ask() {
+        async ask(_instruction: string, data: unknown) {
           calls++;
-          return { current: null };
+          return (data as { index: number }[]).map(({ index }) => ({
+            index,
+            current: null,
+          }));
         },
       },
     };
@@ -452,7 +468,7 @@ test("capped model pairs resume and missing vectors do not advance the successfu
     assert.equal(second.pairs, 10);
     assert.equal(second.capped, false);
     assert.ok(second.lastSuccessfulAt);
-    assert.equal(calls, 210);
+    assert.equal(calls, 9);
     assert.equal((await runTidy(options)).pairs, 0);
   } finally {
     await index.close();
@@ -505,6 +521,261 @@ test("near-duplicate cosine gate is conservative and concurrent reruns add one r
     assert.equal(links[0]?.fromId, "above");
     assert.equal(links[0]?.toId, "original");
     assert.ok(f.sources.find("below", "personal"));
+  } finally {
+    await index.close();
+    await f.close();
+  }
+});
+
+for (const processor of ["codex", "openai"] as const) {
+  test(`${processor} batches both jobs within 12 calls and resumes untouched work`, async () => {
+    const { createLlm } = await import("../src/llm.js");
+    const { fakeCodex } = await import("./fake-codex.js");
+    const fake = await fakeCodex(`
+assert.ok(Array.isArray(data) && data.length <= 25);
+fs.appendFileSync(process.env.HOME + '/calls.jsonl', JSON.stringify(data) + '\\n');
+respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, confidence:0}));
+`);
+    const f = await fixture();
+    const index = new EmbeddingIndex(f.path, {
+      version: "fixture",
+      async embed() {
+        return Float32Array.from([1, 0]);
+      },
+    });
+    const apiBatches: unknown[][] = [];
+    try {
+      for (let i = 1; i <= 21; i++)
+        f.add(`fact-${i}`, `Synthetic lunar limit ${i}`);
+      // Long inbox sources are sorted but are not short-fact supersede candidates.
+      for (let i = 1; i <= 110; i++)
+        f.add(
+          `inbox-${i}`,
+          `Synthetic inbox ${i} ${"note ".repeat(301)}`,
+          "inbox",
+        );
+      while (await index.processOne()) {
+        /* synthetic vector preparation */
+      }
+      const llm = createLlm(
+        {
+          ...fake.env,
+          CONTEXT_PROCESSOR: processor,
+          CONTEXT_LLM_MODEL: "fixture",
+          CONTEXT_LLM_API_KEY: "synthetic",
+        },
+        async (_url, init) => {
+          const data = JSON.parse(
+            JSON.parse(String(init?.body)).messages[1].content,
+          ) as { index: number; a?: unknown }[];
+          apiBatches.push(data);
+          return Response.json({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify(
+                    data.map(({ index, a }) =>
+                      a
+                        ? { index, current: null }
+                        : { index, area: null, confidence: 0 },
+                    ),
+                  ),
+                },
+              },
+            ],
+          });
+        },
+      );
+      assert.ok(llm);
+      const options = {
+        databasePath: f.path,
+        areas: ["inbox", "personal"],
+        embeddingModel: "fixture",
+        llm,
+      };
+      const first = await runTidy(options);
+      assert.equal(first.processor, processor);
+      assert.equal(first.llmCalls, 12);
+      assert.equal(first.capped, true);
+      assert.equal(first.uncertain, 110);
+      assert.equal(first.pairs, 175);
+      assert.equal(first.failures, 0);
+      const second = await runTidy(options);
+      assert.equal(second.llmCalls, 2);
+      assert.equal(second.pairs, 35);
+      assert.equal(second.uncertain, 0);
+      assert.equal(second.capped, false);
+      assert.ok(second.lastSuccessfulAt);
+      assert.equal(second.windowEnd, first.windowEnd);
+      const batches: unknown[][] =
+        processor === "codex"
+          ? (await readFile(join(fake.directory, "calls.jsonl"), "utf8"))
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line))
+          : apiBatches;
+      assert.equal(batches.length, 14);
+      assert.ok(batches.every((batch) => batch.length <= 25));
+      assert.equal(batches.flat().length, 320);
+      assert.equal(
+        new Set(batches.flat().map((item) => JSON.stringify(item))).size,
+        320,
+      );
+      const history = await readFile(
+        join(f.directory, "tidy/history.jsonl"),
+        "utf8",
+      );
+      assert.ok(!history.includes("Synthetic"));
+      assert.equal(JSON.parse(history.split("\n")[0] ?? "").llmCalls, 12);
+    } finally {
+      await index.close();
+      await f.close();
+      await fake.close();
+    }
+  });
+}
+
+for (const [name, body] of [
+  ["invalid JSON", "console.log('not-json synthetic-private-diagnostic');"],
+  [
+    "not logged in",
+    "console.error('synthetic-private-diagnostic'); process.exit(1);",
+  ],
+  ["timeout", "setInterval(() => {}, 1000);"],
+  ["oversized output", "console.log('x'.repeat(256 * 1024));"],
+  ["missing binary", ""],
+]) {
+  test(`Codex ${name} falls back to dedup without exposing diagnostics or changing sources`, async () => {
+    const { createCodexLlm } = await import("../src/codex-llm.js");
+    const { fakeCodex } = await import("./fake-codex.js");
+    const fake = await fakeCodex(body ?? "");
+    const f = await fixture();
+    const index = new EmbeddingIndex(f.path, {
+      version: "fixture",
+      async embed() {
+        return Float32Array.from([1, 0]);
+      },
+    });
+    try {
+      if (name === "missing binary") await rm(join(fake.directory, "codex"));
+      const old = f.add("old", "Synthetic limit 1");
+      const newer = f.add("new", "Synthetic limit 2");
+      f.add("duplicate-a", "Synthetic repeated note", "vault");
+      f.add("duplicate-b", "Synthetic repeated note", "vault");
+      while (await index.processOne()) {
+        /* synthetic vector preparation */
+      }
+      const started = performance.now();
+      const run = await runTidy({
+        databasePath: f.path,
+        areas: ["personal", "vault"],
+        embeddingModel: "fixture",
+        llm: createCodexLlm(
+          fake.env,
+          "fixture",
+          name === "timeout" ? 200 : 5000,
+        ),
+      });
+      assert.ok(performance.now() - started < 5000);
+      assert.equal(run.llm, "unavailable");
+      assert.equal(run.llmCalls, 1);
+      assert.equal(run.failures, 1);
+      assert.equal(run.duplicates, 1);
+      assert.equal(run.supersedes, 0);
+      assert.equal(run.lastSuccessfulAt, null);
+      assert.deepEqual(f.sources.find(old.id, "personal"), old);
+      assert.deepEqual(f.sources.find(newer.id, "personal"), newer);
+      const history = await readFile(
+        join(f.directory, "tidy/history.jsonl"),
+        "utf8",
+      );
+      assert.ok(!history.includes("synthetic-private-diagnostic"));
+      assert.ok(!history.includes("Synthetic"));
+    } finally {
+      await index.close();
+      await f.close();
+      await fake.close();
+    }
+  });
+}
+
+test("Codex batch output skips invalid, duplicate and missing indexes while applying valid entries", async () => {
+  const { createLlm } = await import("../src/llm.js");
+  const { fakeCodex } = await import("./fake-codex.js");
+  const fake = await fakeCodex(`respond([
+    {index:3,area:'personal',confidence:0.95},
+    {index:0,area:'personal',confidence:'invalid'},
+    {index:1,area:'personal',confidence:0.9},
+    {index:1,area:'personal',confidence:0.9},
+    {index:999,area:'personal',confidence:1}
+  ]);`);
+  const f = await fixture();
+  try {
+    for (let i = 0; i < 4; i++)
+      f.add(`inbox-${i}`, `Synthetic routing ${i}`, "inbox");
+    const llm = createLlm(fake.env);
+    assert.ok(llm);
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["inbox", "personal"],
+      area: "inbox",
+      llm,
+    });
+    assert.equal(run.llmCalls, 1);
+    assert.equal(run.failures, 3);
+    assert.equal(run.moved, 1);
+    assert.ok(f.sources.find("inbox-3", "personal"));
+    for (let i = 0; i < 3; i++)
+      assert.ok(f.sources.find(`inbox-${i}`, "inbox"));
+  } finally {
+    await f.close();
+    await fake.close();
+  }
+});
+
+test("invalid entries in a capped window do not starve later pairs or advance success", async () => {
+  const f = await fixture();
+  const index = new EmbeddingIndex(f.path, {
+    version: "fixture",
+    async embed() {
+      return Float32Array.from([1, 0]);
+    },
+  });
+  let invalid = true;
+  try {
+    for (let i = 0; i < 21; i++) f.add(`fact-${i}`, `Synthetic limit ${i}`);
+    while (await index.processOne()) {
+      /* synthetic vector preparation */
+    }
+    const options = {
+      databasePath: f.path,
+      areas: ["personal"],
+      embeddingModel: "fixture",
+      llm: {
+        model: "fake",
+        async ask(_instruction: string, data: unknown) {
+          const result = (data as { index: number }[]).map(({ index }) => ({
+            index,
+            current: null,
+          }));
+          if (invalid) {
+            result.shift();
+            invalid = false;
+          }
+          return result;
+        },
+      },
+    };
+    const first = await runTidy(options);
+    assert.equal(first.failures, 1);
+    assert.equal(first.pairs, 200);
+    const second = await runTidy(options);
+    assert.equal(second.pairs, 10);
+    assert.equal(second.capped, false);
+    assert.equal(second.lastSuccessfulAt, null);
+    // A clean replay revisits the skipped entry before the watermark advances.
+    assert.equal((await runTidy(options)).pairs, 200);
+    assert.ok((await runTidy(options)).lastSuccessfulAt);
   } finally {
     await index.close();
     await f.close();
