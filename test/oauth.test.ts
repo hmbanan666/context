@@ -73,6 +73,9 @@ const password = "fictional owner password 123";
 class Browser {
   cookie = "";
   csrf = "";
+  // Policies of the current document, as a real browser applies them.
+  referrerPolicy = "";
+  csp = "";
   constructor(readonly auth: AuthorizationServer) {}
   async request(
     path: string,
@@ -80,7 +83,8 @@ class Browser {
   ) {
     const headers: Record<string, string> = {
       cookie: this.cookie,
-      origin: config.issuer,
+      // Fetch spec: a no-referrer document serializes its POST origin as "null".
+      origin: this.referrerPolicy === "no-referrer" ? "null" : config.issuer,
     };
     if (body)
       headers["content-type"] =
@@ -103,6 +107,14 @@ class Browser {
     );
     const cookie = response.headers.get("set-cookie");
     if (cookie) this.cookie = cookie.split(";")[0] ?? "";
+    // Passkey calls are fetches rendered via document.write: the document keeps its policies.
+    if (
+      !path.startsWith("/auth/passkey") &&
+      response.headers.get("content-type")?.startsWith("text/html")
+    ) {
+      this.referrerPolicy = response.headers.get("referrer-policy") ?? "";
+      this.csp = response.headers.get("content-security-policy") ?? "";
+    }
     return response;
   }
   async html(response: Response) {
@@ -220,6 +232,10 @@ test("owner enrolls a passkey; DCR → PKCE → consent → SDK MCP save/read �
     );
     assert.match(html, /Fictional &lt;worker&gt;/);
     assert.match(html, /<option value="personal" selected>/);
+    // Real-browser headers: same-origin POSTs carry Origin, and the consent
+    // document (written into the passkey page) may follow the 303 to the callback.
+    assert.equal(browser.referrerPolicy, "same-origin");
+    assert.match(browser.csp, /form-action 'self' http:\/\/127\.0\.0\.1:4567;/);
     const consent = new URLSearchParams({
       csrf: browser.csrf,
       read: "garden",
@@ -1119,6 +1135,10 @@ for (const redirect of [
         authorization(client.client_id, verifier, { redirect_uri: redirect }),
       );
       assert.ok(html.includes(redirect));
+      const target = /^https?:$/.test(new URL(redirect).protocol)
+        ? new URL(redirect).origin
+        : new URL(redirect).protocol;
+      assert.ok(browser.csp.includes(`form-action 'self' ${target};`));
       const consent = await browser.request(
         "/oauth/consent",
         new URLSearchParams({
