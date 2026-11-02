@@ -15,11 +15,15 @@ import type { Llm } from "./llm.js";
 const DUPLICATE_COSINE = 0.97;
 const SUPERSEDE_COSINE = 0.85;
 const MAX_PAIRS = 200;
+const BATCH_SIZE = 25;
+const MAX_LLM_CALLS = 12;
 const MAX_FACT_LENGTH = 1500;
 const supersedeSchema = z.strictObject({
+  index: z.number().int().nonnegative(),
   current: z.enum(["a", "b"]).nullable(),
 });
 const sortSchema = z.strictObject({
+  index: z.number().int().nonnegative(),
   area: z.string().nullable(),
   confidence: z.number().min(0).max(1),
 });
@@ -29,6 +33,7 @@ interface TidySource {
   text: string;
   scope: string;
   effective_date: string;
+  captured_at: string;
   checksum: string;
 }
 export interface TidyOptions {
@@ -45,7 +50,9 @@ export interface TidyRun {
   outcome: "completed" | "partial" | "failed";
   dryRun: boolean;
   areas: string[];
-  llm: "configured" | "not_configured";
+  llm: "configured" | "not_configured" | "unavailable";
+  processor: "openai" | "codex";
+  llmCalls: number;
   model: string | null;
   lastSuccessfulAt: string | null;
   sources: number;
@@ -60,11 +67,14 @@ export interface TidyRun {
   capped: boolean;
   pairAfter: { area: string; row: number; priorRow: number } | null;
   windowEnd: string;
+  inboxAfter: number | null;
+  windowIncomplete: boolean;
 }
 async function previousRun(
   path: string,
   areas: string[],
   model: string | null,
+  processor: string,
 ) {
   const stream = createReadStream(path, { encoding: "utf8" });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -77,6 +87,7 @@ async function previousRun(
         if (
           JSON.stringify(run.areas) === JSON.stringify(areas) &&
           run.model === model &&
+          (run.processor ?? "openai") === processor &&
           !run.dryRun
         )
           previous = run;
@@ -158,7 +169,8 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
   const directory = join(dirname(options.databasePath), "tidy");
   const history = join(directory, "history.jsonl");
   const model = options.llm?.model ?? null;
-  const previous = await previousRun(history, areas, model);
+  const processor = options.llm?.processor ?? "openai";
+  const previous = await previousRun(history, areas, model, processor);
   const timestamp = new Date().toISOString();
   const run: TidyRun = {
     timestamp,
@@ -168,6 +180,15 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     areas,
     llm: options.llm ? "configured" : "not_configured",
     model,
+    processor,
+    llmCalls: 0,
+    inboxAfter: previous?.capped ? (previous.inboxAfter ?? null) : null,
+    windowIncomplete: !!(
+      previous?.capped &&
+      (previous.windowIncomplete ||
+        previous.failures ||
+        previous.vectorsMissing)
+    ),
     lastSuccessfulAt: previous?.lastSuccessfulAt ?? null,
     sources: 0,
     vectorsMissing: 0,
@@ -179,14 +200,47 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     skipped: 0,
     failures: 0,
     capped: false,
-    pairAfter:
-      previous?.capped && !previous.failures && !previous.vectorsMissing
-        ? previous.pairAfter
-        : null,
-    windowEnd:
-      previous?.capped && !previous.failures && !previous.vectorsMissing
-        ? previous.windowEnd
-        : timestamp,
+    pairAfter: previous?.capped ? previous.pairAfter : null,
+    windowEnd: previous?.capped ? previous.windowEnd : timestamp,
+  };
+  const judgeBatch = async <T>(
+    instruction: string,
+    data: unknown[],
+    schema: z.ZodType<T>,
+  ) => {
+    const answers = new Map<number, T>();
+    if (
+      !options.llm ||
+      run.llm === "unavailable" ||
+      run.llmCalls >= MAX_LLM_CALLS
+    )
+      return answers;
+    run.llmCalls++;
+    let raw: unknown[];
+    try {
+      const response = await options.llm.ask(instruction, data);
+      if (!Array.isArray(response)) throw new Error("invalid_output");
+      raw = response;
+    } catch {
+      run.failures++;
+      run.llm = "unavailable";
+      return answers;
+    }
+    for (let index = 0; index < data.length; index++) {
+      const entries = raw.filter(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          "index" in entry &&
+          entry.index === index,
+      );
+      const answer = schema.safeParse(
+        entries.length === 1 ? entries[0] : undefined,
+      );
+      if (answer.success) answers.set(index, answer.data);
+      else run.failures++;
+    }
+    return answers;
   };
   const start = performance.now();
   let knowledge: KnowledgeStore | undefined;
@@ -241,7 +295,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     for (const area of areas) {
       const sources = db
         .prepare(
-          `SELECT s.rowid AS row,s.id,s.text,s.scope,
+          `SELECT s.rowid AS row,s.id,s.text,s.scope,s.captured_at,
             COALESCE(m.created_at,s.captured_at) AS effective_date,s.checksum
            FROM sources s LEFT JOIN source_metadata m ON m.source_id=s.id
            WHERE s.scope=? ORDER BY s.rowid`,
@@ -286,6 +340,35 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
         (source) =>
           source.text.length <= MAX_FACT_LENGTH && !embeddings.has(source.id),
       ).length;
+      const pending: { a: TidySource; b: TidySource }[] = [];
+      const flushPairs = async () => {
+        if (!pending.length) return;
+        const answers = await judgeBatch(
+          'For each indexed pair, which text explicitly replaces or updates the SAME statement in the other? Consider both effective dates. Different subjects, proposals, questions and mere related facts do not replace one another. Return a JSON array [{"index":0,"current":"a"|"b"|null},...]; null means no supersession.',
+          pending.map(({ a, b }, index) => ({
+            index,
+            a: { text: a.text, effectiveDate: a.effective_date },
+            b: { text: b.text, effectiveDate: b.effective_date },
+          })),
+          supersedeSchema,
+        );
+        for (const [index, answer] of answers) {
+          const pair = pending[index];
+          if (!pair || answer.current === null) continue;
+          const [current, other] =
+            answer.current === "a" ? [pair.a, pair.b] : [pair.b, pair.a];
+          if (
+            Date.parse(other.effective_date) -
+              Date.parse(current.effective_date) >
+            60_000
+          ) {
+            run.skipped++;
+            continue;
+          }
+          relation("supersedes", current, other);
+        }
+        pending.length = 0;
+      };
       // Resume by immutable row positions, not list offsets: another run may
       // move a source out of inbox while this capped window is unfinished.
       const pairSources = [...sources].sort((a, b) => a.row - b.row);
@@ -295,8 +378,8 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           const a = laterRow,
             b = priorRow;
           const latestDate = Math.max(
-            Date.parse(a.effective_date),
-            Date.parse(b.effective_date),
+            Date.parse(a.captured_at),
+            Date.parse(b.captured_at),
           );
           if (
             [a, b].some(
@@ -322,7 +405,8 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           const similarity = cosine(embeddings.get(a.id), embeddings.get(b.id));
           if (similarity < SUPERSEDE_COSINE) continue;
           // High-cosine numeric changes rejected by the dedup guards remain candidates.
-          if (run.pairs >= MAX_PAIRS) {
+          if (run.llm === "unavailable") continue;
+          if (run.pairs >= MAX_PAIRS || run.llmCalls >= MAX_LLM_CALLS) {
             run.capped = true;
             continue;
           }
@@ -336,56 +420,52 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
               .get(area, a.id, b.id, b.id, a.id)
           )
             continue;
-          try {
-            const answer = supersedeSchema.parse(
-              await options.llm.ask(
-                'Which text explicitly replaces or updates the SAME statement in the other? Consider both effective dates. Different subjects, proposals, questions and mere related facts do not replace one another. Return {"current":"a"|"b"|null}; null means no supersession.',
-                {
-                  a: { text: a.text, effectiveDate: a.effective_date },
-                  b: { text: b.text, effectiveDate: b.effective_date },
-                },
-              ),
-            );
-            if (answer.current === null) continue;
-            const [current, other] = answer.current === "a" ? [a, b] : [b, a];
-            if (
-              Date.parse(other.effective_date) -
-                Date.parse(current.effective_date) >
-              60_000
-            ) {
-              run.skipped++;
-              continue;
-            }
-            relation("supersedes", current, other);
-          } catch {
-            run.failures++;
-          }
+          pending.push({ a, b });
+          if (pending.length === BATCH_SIZE) await flushPairs();
         }
       }
+      await flushPairs();
       if (area === "inbox") {
-        for (const source of sources) {
+        const destinations = options.areas.filter(
+          (a) => a !== "inbox" && safeDestination(connection, a),
+        );
+        const eligible = pairSources.filter((source) => {
           if (
+            source.row <= (run.inboxAfter ?? 0) ||
+            Date.parse(source.captured_at) > Date.parse(run.windowEnd)
+          )
+            return false;
+          if (
+            !destinations.length ||
             plannedRelations.has(source.id) ||
             copies.has(source.id) ||
-            !movable(db, source.id)
+            !movable(connection, source.id)
           ) {
             run.skipped++;
-            continue;
+            return false;
           }
-          try {
-            const destinations = options.areas.filter(
-              (a) => a !== "inbox" && safeDestination(connection, a),
-            );
-            if (!destinations.length) {
-              run.skipped++;
-              continue;
-            }
-            const answer = sortSchema.parse(
-              await options.llm.ask(
-                'Choose a destination from areas only if the source clearly belongs there. Return {"area":"name"|null,"confidence":0.0}. When uncertain use null. Area is an access boundary, not just a topic.',
-                { areas: destinations, text: source.text },
-              ),
-            );
+          return true;
+        });
+        for (let offset = 0; offset < eligible.length; offset += BATCH_SIZE) {
+          if (run.llm === "unavailable") break;
+          if (run.llmCalls >= MAX_LLM_CALLS) {
+            run.capped = true;
+            break;
+          }
+          const batch = eligible.slice(offset, offset + BATCH_SIZE);
+          const answers = await judgeBatch(
+            'For each indexed source, choose a destination from areas only if it clearly belongs there. Return a JSON array [{"index":0,"area":"name"|null,"confidence":0.0},...]. When uncertain use null. Area is an access boundary, not just a topic.',
+            batch.map((source, index) => ({
+              index,
+              areas: destinations,
+              text: source.text,
+            })),
+            sortSchema,
+          );
+          run.inboxAfter = batch.at(-1)?.row ?? run.inboxAfter;
+          for (const [index, answer] of answers) {
+            const source = batch[index];
+            if (!source) continue;
             if (
               !answer.area ||
               answer.confidence < 0.8 ||
@@ -397,15 +477,18 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
             if (options.dryRun) run.moved++;
             else if (moveInbox(db, source.id, answer.area)) run.moved++;
             else run.skipped++;
-          } catch {
-            run.failures++;
           }
         }
       }
     }
-    if (!run.capped) run.pairAfter = null;
-    if (run.failures || run.capped || run.vectorsMissing)
-      run.outcome = "partial";
+    if (!run.capped) {
+      run.pairAfter = null;
+      run.inboxAfter = null;
+    }
+    // Finish capped work even if an earlier page had missing vectors/invalid
+    // entries, then replay that incomplete window before advancing success.
+    run.windowIncomplete ||= !!(run.failures || run.vectorsMissing);
+    if (run.capped || run.windowIncomplete) run.outcome = "partial";
     else if (!options.dryRun) run.lastSuccessfulAt = run.windowEnd;
   } catch {
     run.outcome = "failed";

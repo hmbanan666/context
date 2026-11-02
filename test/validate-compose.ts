@@ -10,13 +10,26 @@ interface Compose {
       ports?: { host_ip: string; published: string; target: number }[];
       networks: Record<string, unknown>;
       labels?: Record<string, string>;
-      volumes: { source: string; target: string }[];
+      volumes: {
+        source: string;
+        target: string;
+        read_only?: boolean;
+        bind?: { create_host_path?: boolean };
+      }[];
+      user?: string;
+      read_only: boolean;
+      cap_drop: string[];
+      security_opt: string[];
     };
   };
   networks: Record<string, { name: string; external?: boolean }>;
   volumes: Record<string, { name: string }>;
 }
-function render(overlay: boolean, env: Record<string, string> = {}): Compose {
+function render(
+  overlay: boolean,
+  env: Record<string, string> = {},
+  codex = false,
+): Compose {
   return JSON.parse(
     execFileSync(
       "docker",
@@ -29,6 +42,7 @@ function render(overlay: boolean, env: Record<string, string> = {}): Compose {
         "-f",
         "deploy/compose.yaml",
         ...(overlay ? ["-f", "deploy/dokploy.yaml"] : []),
+        ...(codex ? ["-f", "deploy/codex.yaml"] : []),
         "config",
         "--format",
         "json",
@@ -160,4 +174,33 @@ for (const overlay of [false, true]) {
 }
 console.log(
   "Compose base and Traefik overlay: ports, routing, volumes, timezone and backup targets passed",
+);
+
+for (const overlay of [false, true]) {
+  const codex = render(
+    overlay,
+    {
+      CONTEXT_CODEX_BIN: "/opt/synthetic/codex",
+      CONTEXT_CODEX_HOME: "/opt/synthetic/context-login",
+    },
+    true,
+  ).services.context;
+  assert.equal(codex.environment.CONTEXT_PROCESSOR, "codex");
+  assert.equal(codex.environment.CODEX_HOME, "/app/codex");
+  assert.equal(codex.user, "1000:1000");
+  assert.equal(codex.read_only, true);
+  assert.deepEqual(codex.cap_drop, ["ALL"]);
+  assert.deepEqual(codex.security_opt, ["no-new-privileges:true"]);
+  assert.equal(codex.volumes.length, overlay ? 4 : 3);
+  const binary = codex.volumes.find((v) => v.target === "/usr/local/bin/codex");
+  assert.equal(binary?.source, "/opt/synthetic/codex");
+  assert.equal(binary?.read_only, true);
+  assert.equal(binary?.bind?.create_host_path ?? false, false);
+  const login = codex.volumes.find((v) => v.target === "/app/codex");
+  assert.equal(login?.source, "/opt/synthetic/context-login");
+  assert.equal(login?.read_only ?? false, false);
+  assert.equal(login?.bind?.create_host_path ?? false, false);
+}
+console.log(
+  "Optional Codex overlay: isolated mounts and inherited hardening passed",
 );

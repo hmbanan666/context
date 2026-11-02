@@ -1,0 +1,19 @@
+# Optional subscription processor; append after compose.yaml / dokploy.yaml.
+services:
+  context:
+    user: "1000:1000"
+    environment:
+      CONTEXT_PROCESSOR: codex
+      CODEX_HOME: /app/codex
+    volumes:
+      - type: bind
+        source: ${CONTEXT_CODEX_BIN:?Set the host static Codex binary path}
+        target: /usr/local/bin/codex
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CONTEXT_CODEX_HOME:?Set the dedicated host Codex login directory}
+        target: /app/codex
+        bind:
+          create_host_path: false

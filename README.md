@@ -130,7 +130,10 @@ service's `environment` (or use `docker run -e`).
 | `CONTEXT_PUBLIC_URL` | Required HTTPS URL ending in `/mcp`; keep stable after connecting clients. |
 | `CONTEXT_HOST`, `CONTEXT_PROXY_NETWORK` | Required only for the Traefik overlay: public hostname and existing external proxy network. |
 | `CONTEXT_AREAS` | `personal`; comma-separated owner areas, at most eight. |
-| `CONTEXT_LLM_API_KEY`, `CONTEXT_LLM_MODEL` | Both required for optional model steps; unset means dedup only. Local endpoints may use a non-secret placeholder key. |
+| `CONTEXT_PROCESSOR` | `openai`; optional `codex` uses the CLI's ChatGPT login for model steps. |
+| `CONTEXT_LLM_API_KEY`, `CONTEXT_LLM_MODEL` | Both required for the default API processor; unset means dedup only. Local endpoints may use a placeholder key. Codex needs no API key; its model defaults to `gpt-6-luna`. |
+| `CONTEXT_CODEX_BIN`, `CONTEXT_CODEX_HOME` | Required only by the [Codex overlay](docs/deployment.md#optional-codex-subscription-processor): absolute host paths to a static binary and dedicated login directory. |
+| `CODEX_HOME` | CLI-owned login directory; the overlay sets `/app/codex`. Context never reads auth files. |
 | `CONTEXT_LLM_BASE_URL` | `https://api.openai.com/v1`; any OpenAI-compatible chat-completions endpoint, including local. |
 | `CONTEXT_DB_PATH` | `./data/context.db` (`/app/data/context.db` in the image). |
 | `CONTEXT_PORT` | `3000`; usually change the host port mapping instead. |
