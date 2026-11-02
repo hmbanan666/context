@@ -57,7 +57,7 @@ questions:
 | `question` | Nonblank natural-language RU/EN question, up to 512 characters. Search validity follows the current MCP implementation. |
 | `areas` | Ordered array of 1–8 distinct areas to search. It grants no access. |
 | `read_areas` | Simulated client's read rights, 0–8 distinct areas. Write/process rights are always empty. |
-| `expected` | Up to 100 matchers. Each object has exactly one of `source_external_id`, `source_id`, or `substring`. A source can satisfy several matchers. |
+| `expected` | Up to 100 acceptable evidence matchers; any one match is a hit. Each object has exactly one of `source_external_id`, `source_id`, or `substring`. A source can satisfy several matchers. |
 | `forbidden_areas` | Optional distinct areas whose results must never appear, default `[]`. These areas are also probed directly with the same client rights. |
 | `tags` | Optional labels such as `inflection`, `paraphrase`, `ru`, `en`; kept in the private file, not the results. |
 | `placeholder` | Optional boolean, default false. True skips the question completely, with null metrics and pass state. |
@@ -103,14 +103,15 @@ isolation but are not separate ranks in the source-quality metrics.
 | Metric | Definition |
 | --- | --- |
 | `hit_at_1` | 1 if the first source card matches any expected matcher, otherwise 0. |
-| `hit_at_k` | Fraction of expected matchers satisfied by the top k source cards (expected-match recall, not precision). |
+| `hit_at_k` | 1 if any of the top k source cards satisfies any expected matcher, otherwise 0. |
 | `mrr` | Reciprocal rank of the first card satisfying any matcher; 0 if none in top k. The run reports the mean across questions. |
+| `diagnostics.lexical` | Lexical-only control's `hit_at_1`, `hit_at_k` and `mrr`, scored by the same rules and macro-averaged over compared questions. Each metric is null when no questions were compared. |
 | `isolation_violations` | Number of distinct unauthorized/forbidden records or access/scope breaches per question; summed across questions. All returned cards and provenance references are audited, even outside the combined top k. Must be zero. |
 | `latency_ms` | Per-question wall time for setup, all MCP searches, isolation probes, auditing and cleanup. |
 | `latency_p50_ms`, `latency_p95_ms` | Nearest-rank percentiles across non-placeholder questions, including failed attempts. |
 
 Run quality metrics are macro averages across questions with expected matchers.
-A question passes when all expected matchers are found and isolation holds;
+A question passes when any expected matcher is found in the top k and isolation holds;
 isolation-only cases pass on isolation. Retrieval misses stay visible but do not
 fail the command, so today's lexical misses can be compared with later search.
 A failed retrieval attempt is reported as failed, never a successful empty search.
@@ -133,7 +134,7 @@ The text output explicitly says **`semantic: unavailable`** on fallback. A
 completed lexical fallback still exits 0; inspect search status before comparing
 quality. Skipped or denied-only runs cannot establish semantic availability.
 
-Each run also records content-free `diagnostics`:
+Each run also records content-free `diagnostics`. The question counts are:
 
 - `compared_questions`: completed questions with expected matchers compared with
   a second, lexical-only call through the same protected MCP path and grants.
@@ -150,6 +151,14 @@ a multi-source question can count in both. Control time is excluded from primary
 latency; isolation audits cover both paths without counting the same breach twice.
 No source IDs, text or raw scores are persisted. Concurrent writes can affect the
 sequential comparison; this is a diagnostic, not a frozen database snapshot.
+
+`diagnostics.lexical` records the control's aggregate quality for those same
+compared questions when an embedding index is attached, including lexical
+fallback runs. Skipped, isolation-only and failed comparisons are excluded.
+Text output shows one `lexical control: hit@1 … hit@k … mrr …` line beside the
+primary metrics. The field is additive and optional in schema 2: older rows
+without it remain readable and omit that line. New runs with no comparisons
+record null for all three control metrics.
 
 Each JSONL row contains the timestamp, run ID, package version and git SHA when
 available, SHA-256 of the exact question-file bytes, k, outcome, aggregate metrics
@@ -169,6 +178,11 @@ latency or violation deltas are regressions. It reads history as a stream and
 retains only the display window. New history files use mode `0600`, new containing
 directories `0700`. History is append-only with no automatic retention. A malformed
 history line fails the history command rather than silently dropping evidence.
+
+Older rows used the fraction of satisfied matchers for `hit_at_k` and required
+all matchers to pass. Across this scoring change, a delta can reflect the new
+acceptable-evidence rule rather than changed retrieval; use fresh runs for
+quality comparisons.
 
 After each nightly backup attempt (successful or failed, excluding a busy lock),
 the same process checks for the conventional questions file and runs the eval
@@ -198,8 +212,10 @@ CLI against [`example.yaml`](../fixtures/evals/example.yaml), checks exact RU/EN
 retrieval and isolation, and prints only numeric results and question IDs. It
 removes the temporary database/history afterward. The frozen inflection and
 paraphrase cases record known lexical misses; improvements are allowed without
-rewriting expectations. The initial lexical scores are 1/3 for hit@1, recall@10
-and MRR, with zero isolation violations.
+rewriting expectations. Current synthetic scores are 2/3 (0.666667) for hit@1,
+hit@10 and MRR on both the primary and lexical-control paths, with zero isolation
+violations. Exact RU/EN and both inflection questions pass; both paraphrases
+remain misses. The isolation-only question passes and the placeholder is skipped.
 
 Execution is sequential, with one bounded question file, bounded MCP packages and
 no corpus copy or worker pool. CLI runs use one local model per process; nightly

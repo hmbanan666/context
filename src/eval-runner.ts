@@ -36,6 +36,7 @@ export interface EvalRun {
     compared_questions: number;
     vector_only_questions: number;
     lexical_only_questions: number;
+    lexical?: Pick<EvalMetrics, "hit_at_1" | "hit_at_k" | "mrr">;
   };
   id: string;
   timestamp: string;
@@ -87,7 +88,7 @@ export function scoreEval(question: EvalQuestion, hits: EvalHit[]) {
   const found = ranks.filter((rank) => rank > 0);
   return {
     hit_at_1: ranks.length ? Number(found.includes(1)) : null,
-    hit_at_k: ranks.length ? found.length / ranks.length : null,
+    hit_at_k: ranks.length ? Number(found.length > 0) : null,
     mrr: ranks.length ? (found.length ? 1 / Math.min(...found) : 0) : null,
   };
 }
@@ -97,6 +98,7 @@ export async function evaluate(
 ): Promise<EvalRun> {
   let semanticUsed = false;
   let semanticUnavailable = false;
+  const lexicalScores: ReturnType<typeof scoreEval>[] = [];
   const run: EvalRun = {
     schema_version: 2,
     search: {
@@ -204,6 +206,7 @@ export async function evaluate(
               scoreEval({ ...q, expected: [expected] }, lexical.hits).hit_at_k,
           );
           run.diagnostics.compared_questions++;
+          lexicalScores.push(scoreEval(q, lexical.hits));
           if (
             hybridScores.some(
               (found, i) => found === 1 && controlScores[i] === 0,
@@ -226,13 +229,19 @@ export async function evaluate(
   } catch {
     run.outcome = "failed";
   }
-  const mean = (key: "hit_at_1" | "hit_at_k" | "mrr") => {
-    const values = run.questions.flatMap((q) =>
-      q[key] === null ? [] : [q[key]],
-    );
+  const mean = (
+    key: "hit_at_1" | "hit_at_k" | "mrr",
+    scores: ReturnType<typeof scoreEval>[] = run.questions,
+  ) => {
+    const values = scores.flatMap((q) => (q[key] === null ? [] : [q[key]]));
     return values.length
       ? values.reduce((a, b) => a + b, 0) / values.length
       : null;
+  };
+  run.diagnostics.lexical = {
+    hit_at_1: mean("hit_at_1", lexicalScores),
+    hit_at_k: mean("hit_at_k", lexicalScores),
+    mrr: mean("mrr", lexicalScores),
   };
   const latencies = run.questions
     .flatMap((q) => (q.latency_ms === null ? [] : [q.latency_ms]))
