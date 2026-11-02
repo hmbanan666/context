@@ -67,8 +67,8 @@ Changing providers does not move your memory or widen those rights.
 Search combines exact text, Russian/English stemming and local semantic
 embeddings. The image includes the model; background indexing catches up after
 capture, with lexical fallback if the model is unavailable. [Search details](docs/search.md). Nightly tidy collapses near-identical sources and, when a processor is configured,
-records superseding facts and sorts confident inbox items. Distillation and hard
-delete remain [planned](docs/roadmap.md).
+sorts confident inbox items. Clients supersede explicitly through `remember`.
+Distillation and hard delete remain [planned](docs/roadmap.md).
 Capture and reading work without an inference provider.
 
 Every night at 03:30, Context verifies a SQLite snapshot and retains seven local

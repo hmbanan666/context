@@ -14,15 +14,8 @@ import type { Llm } from "./llm.js";
 // changed number/negation merely because its semantic vector is almost equal.
 const DUPLICATE_COSINE = 0.97;
 const MIN_DUPLICATE_LENGTH = 80;
-const SUPERSEDE_COSINE = 0.85;
-const MAX_PAIRS = 200;
 const BATCH_SIZE = 25;
 const MAX_LLM_CALLS = 12;
-const MAX_FACT_LENGTH = 1500;
-const supersedeSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
-  current: z.enum(["a", "b"]).nullable(),
-});
 const sortSchema = z.strictObject({
   index: z.number().int().nonnegative(),
   area: z.string().nullable(),
@@ -34,9 +27,6 @@ interface TidySource {
   text: string;
   scope: string;
   effective_date: string;
-  captured_at: string;
-  checksum: string;
-  type: "note" | "document" | null;
 }
 export interface TidyOptions {
   databasePath: string;
@@ -58,19 +48,13 @@ export interface TidyRun {
   model: string | null;
   lastSuccessfulAt: string | null;
   sources: number;
-  vectorsMissing: number;
   duplicates: number;
-  supersedes: number;
-  pairs: number;
   moved: number;
   uncertain: number;
   skipped: number;
   failures: number;
   capped: boolean;
-  pairAfter: { area: string; row: number; priorRow: number } | null;
-  windowEnd: string;
   inboxAfter: number | null;
-  windowIncomplete: boolean;
 }
 async function previousRun(
   path: string,
@@ -185,33 +169,18 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     processor,
     llmCalls: 0,
     inboxAfter: previous?.capped ? (previous.inboxAfter ?? null) : null,
-    windowIncomplete: !!(
-      previous?.capped &&
-      (previous.windowIncomplete ||
-        previous.failures ||
-        previous.vectorsMissing)
-    ),
     lastSuccessfulAt: previous?.lastSuccessfulAt ?? null,
     sources: 0,
-    vectorsMissing: 0,
     duplicates: 0,
-    supersedes: 0,
-    pairs: 0,
     moved: 0,
     uncertain: 0,
     skipped: 0,
     failures: 0,
     capped: false,
-    pairAfter: previous?.capped ? previous.pairAfter : null,
-    windowEnd: previous?.capped ? previous.windowEnd : timestamp,
   };
   const unavailable = () => run.llm === "unavailable";
-  const judgeBatch = async <T>(
-    instruction: string,
-    data: unknown[],
-    schema: z.ZodType<T>,
-  ) => {
-    const answers = new Map<number, T>();
+  const judgeBatch = async (instruction: string, data: unknown[]) => {
+    const answers = new Map<number, z.infer<typeof sortSchema>>();
     if (!options.llm || unavailable() || run.llmCalls >= MAX_LLM_CALLS)
       return answers;
     run.llmCalls++;
@@ -233,7 +202,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           "index" in entry &&
           entry.index === index,
       );
-      const answer = schema.safeParse(
+      const answer = sortSchema.safeParse(
         entries.length === 1 ? entries[0] : undefined,
       );
       if (answer.success) answers.set(index, answer.data);
@@ -261,11 +230,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     const connection = db;
     const relations = new KnowledgeStore(connection);
     const plannedRelations = new Set<string>();
-    const relation = (
-      kind: "duplicates" | "supersedes",
-      newer: TidySource,
-      older: TidySource,
-    ) => {
+    const relation = (newer: TidySource, older: TidySource) => {
       plannedRelations.add(newer.id);
       plannedRelations.add(older.id);
       if (!options.dryRun) connection.exec("BEGIN IMMEDIATE");
@@ -273,15 +238,14 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
         if (
           connection
             .prepare(
-              "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind=? AND from_id=? AND to_id=?",
+              "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind='duplicates' AND from_id=? AND to_id=?",
             )
-            .get(newer.scope, kind, newer.id, older.id)
+            .get(newer.scope, newer.id, older.id)
         )
           return;
         // UNION visits every reachable ID once, including malformed cycles.
         // Check and write under the same lock so concurrent runs cannot close a cycle.
         if (
-          kind === "duplicates" &&
           connection
             .prepare(`
         WITH RECURSIVE chain(id) AS (
@@ -299,31 +263,27 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
             version: 1,
             scope: newer.scope,
             idempotencyKey: `tidy:${createHash("sha256")
-              .update(JSON.stringify([kind, newer.id, older.id]))
+              .update(JSON.stringify(["duplicates", newer.id, older.id]))
               .digest("hex")}`,
-            kind,
+            kind: "duplicates",
             fromId: newer.id,
             toId: older.id,
             sourceRefs: [{ sourceId: newer.id }, { sourceId: older.id }],
-            creator:
-              kind === "duplicates"
-                ? { kind: "user", name: "context-tidy" }
-                : { kind: "model", name: model ?? "context-tidy" },
+            creator: { kind: "user", name: "context-tidy" },
           });
           if (saved.duplicate) return;
         }
         if (!options.dryRun) connection.exec("COMMIT");
-        run[kind]++;
+        run.duplicates++;
       } finally {
         if (connection.isTransaction) connection.exec("ROLLBACK");
       }
     };
-    const cursor = run.pairAfter;
     for (const area of areas) {
       const sources = db
         .prepare(
-          `SELECT s.rowid AS row,s.id,s.text,s.scope,s.captured_at,
-            COALESCE(m.created_at,s.captured_at) AS effective_date,s.checksum,m.type
+          `SELECT s.rowid AS row,s.id,s.text,s.scope,
+            COALESCE(m.created_at,s.captured_at) AS effective_date
            FROM sources s LEFT JOIN source_metadata m ON m.source_id=s.id
            WHERE s.scope=? ORDER BY s.rowid`,
         )
@@ -360,7 +320,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
                 DUPLICATE_COSINE,
           );
         if (canonical) {
-          relation("duplicates", source, canonical);
+          relation(source, canonical);
           copies.add(source.id);
         } else {
           normalized.set(text, source);
@@ -368,119 +328,25 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
         }
       }
       if (!options.llm || unavailable()) continue;
-      run.vectorsMissing += sources.filter(
-        (source) =>
-          source.type === "note" &&
-          source.text.length <= MAX_FACT_LENGTH &&
-          !embeddings.has(source.id),
-      ).length;
-      const pending: { a: TidySource; b: TidySource }[] = [];
-      const flushPairs = async () => {
-        if (!pending.length) return;
-        const answers = await judgeBatch(
-          'For each indexed pair, choose a current text only if it makes a specific claim in the other text false or obsolete: a changed value, reversed decision, or plan explicitly completed or replaced. Consider both effective dates. Additional detail, an incident or event about the same thing, a summary omitting rules the other text retains, and related or complementary facts are NOT supersession. Different subjects, proposals and questions do not replace one another. When in doubt return null. Return a JSON array [{"index":0,"current":"a"|"b"|null},...]; null means no supersession.',
-          pending.map(({ a, b }, index) => ({
-            index,
-            a: { text: a.text, effectiveDate: a.effective_date },
-            b: { text: b.text, effectiveDate: b.effective_date },
-          })),
-          supersedeSchema,
-        );
-        for (const [index, answer] of answers) {
-          const pair = pending[index];
-          if (!pair || answer.current === null) continue;
-          const [current, other] =
-            answer.current === "a" ? [pair.a, pair.b] : [pair.b, pair.a];
-          if (
-            Date.parse(other.effective_date) -
-              Date.parse(current.effective_date) >
-            60_000
-          ) {
-            run.skipped++;
-            continue;
-          }
-          relation("supersedes", current, other);
-        }
-        pending.length = 0;
-      };
-      // Resume by immutable row positions, not list offsets: another run may
-      // move a source out of inbox while this capped window is unfinished.
-      const pairSources = [...sources].sort((a, b) => a.row - b.row);
-      for (const [i, laterRow] of pairSources.entries()) {
-        if (i % 32 === 0) await yieldLoop();
-        for (const priorRow of pairSources.slice(0, i)) {
-          const a = laterRow,
-            b = priorRow;
-          const latestDate = Math.max(
-            Date.parse(a.captured_at),
-            Date.parse(b.captured_at),
-          );
-          if (
-            [a, b].some(
-              (source) =>
-                source.type !== "note" ||
-                source.text.length > MAX_FACT_LENGTH ||
-                copies.has(source.id) ||
-                state.canonical(source.id) !== source.id,
-            ) ||
-            latestDate > Date.parse(run.windowEnd) ||
-            (run.lastSuccessfulAt &&
-              latestDate < Date.parse(run.lastSuccessfulAt))
-          )
-            continue;
-          if (
-            cursor &&
-            (area < cursor.area ||
-              (area === cursor.area &&
-                (laterRow.row < cursor.row ||
-                  (laterRow.row === cursor.row &&
-                    priorRow.row <= cursor.priorRow))))
-          )
-            continue;
-          const similarity = cosine(embeddings.get(a.id), embeddings.get(b.id));
-          if (similarity < SUPERSEDE_COSINE) continue;
-          // High-cosine numeric changes rejected by the dedup guards remain candidates.
-          if (unavailable()) continue;
-          if (run.pairs >= MAX_PAIRS || run.llmCalls >= MAX_LLM_CALLS) {
-            run.capped = true;
-            continue;
-          }
-          run.pairs++;
-          run.pairAfter = { area, row: laterRow.row, priorRow: priorRow.row };
-          if (
-            db
-              .prepare(
-                "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind='supersedes' AND ((from_id=? AND to_id=?) OR (from_id=? AND to_id=?))",
-              )
-              .get(area, a.id, b.id, b.id, a.id)
-          )
-            continue;
-          pending.push({ a, b });
-          if (pending.length === BATCH_SIZE) await flushPairs();
-        }
-      }
-      await flushPairs();
       if (area === "inbox") {
         const destinations = options.areas.filter(
           (a) => a !== "inbox" && safeDestination(connection, a),
         );
-        const eligible = pairSources.filter((source) => {
-          if (
-            source.row <= (run.inboxAfter ?? 0) ||
-            Date.parse(source.captured_at) > Date.parse(run.windowEnd)
-          )
-            return false;
-          if (
-            !destinations.length ||
-            plannedRelations.has(source.id) ||
-            copies.has(source.id) ||
-            !movable(connection, source.id)
-          ) {
-            run.skipped++;
-            return false;
-          }
-          return true;
-        });
+        const eligible = sources
+          .sort((a, b) => a.row - b.row)
+          .filter((source) => {
+            if (source.row <= (run.inboxAfter ?? 0)) return false;
+            if (
+              !destinations.length ||
+              plannedRelations.has(source.id) ||
+              copies.has(source.id) ||
+              !movable(connection, source.id)
+            ) {
+              run.skipped++;
+              return false;
+            }
+            return true;
+          });
         for (let offset = 0; offset < eligible.length; offset += BATCH_SIZE) {
           if (unavailable()) break;
           if (run.llmCalls >= MAX_LLM_CALLS) {
@@ -495,7 +361,6 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
               areas: destinations,
               text: source.text,
             })),
-            sortSchema,
           );
           run.inboxAfter = batch.at(-1)?.row ?? run.inboxAfter;
           for (const [index, answer] of answers) {
@@ -516,15 +381,9 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
         }
       }
     }
-    if (!run.capped) {
-      run.pairAfter = null;
-      run.inboxAfter = null;
-    }
-    // Finish capped work even if an earlier page had missing vectors/invalid
-    // entries, then replay that incomplete window before advancing success.
-    run.windowIncomplete ||= !!(run.failures || run.vectorsMissing);
-    if (run.capped || run.windowIncomplete) run.outcome = "partial";
-    else if (!options.dryRun) run.lastSuccessfulAt = run.windowEnd;
+    if (!run.capped) run.inboxAfter = null;
+    if (run.capped || run.failures) run.outcome = "partial";
+    else if (!options.dryRun) run.lastSuccessfulAt = timestamp;
   } catch {
     run.outcome = "failed";
     run.failures++;

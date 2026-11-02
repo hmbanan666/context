@@ -88,8 +88,12 @@ results retain only a per-question boolean, not matching text.
 ## Processing and recovery
 
 `tidy.ts` processes each area independently: deterministic exact/vector dedup,
-optional model superseding, then confident inbox sorting. `knowledge_relations`
-accepts source or knowledge endpoints, with `duplicates` added by a transactional
+then optional model-driven confident inbox sorting. Automatic supersession was
+removed after owner-reported live precision of 3/12 proposals: record-level
+replacement can hide still-valid claims in multi-claim notes. Clients supersede
+explicitly via `remember` with `supersedes`; search demotion is unchanged.
+`knowledge_relations` accepts source or knowledge endpoints, with `duplicates`
+added by a transactional
 CHECK/FK table migration preserving historical rows and retry keys. Both endpoints
 and evidence must share the relation's area. A supersedes B means A is current;
 A duplicates B means B is canonical. Sources and their text/checksums remain intact.
@@ -100,9 +104,10 @@ operator-run `memory:process` command. The Codex CLI is unpinned.
 `jobs.ts` still owns explicit processing leases and durable validated output.
 Without a configured processor, tidy does dedup only; no inference provider is
 needed for capture or reading.
-Tidy history is content-free JSONL beside eval history, including the successful
-watermark, processor, model, counts (including LLM calls) and duration. Distilled
-per-topic knowledge and hard delete are future slices, not claims of complete stage 4 acceptance.
+Tidy history is content-free JSONL beside eval history, including the last-success
+time, processor, model, counts (including LLM calls) and duration. Old supersession
+history fields are ignored. Distilled per-topic knowledge and hard delete are
+future slices, not claims of complete stage 4 acceptance.
 
 Inbox moves are transactional metadata changes. FTS/stemmed rows retain their
 rowids/text and enforce area by joining sources; embedding scopes move and active

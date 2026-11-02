@@ -22,7 +22,7 @@ export async function tidyCommand(args: string[], env: NodeJS.ProcessEnv) {
     ...(area ? { area } : {}),
   });
   process.stdout.write(
-    `${json ? JSON.stringify(run) : `${run.dryRun ? "Dry run" : "Tidy"}: ${run.outcome}; duplicates ${run.duplicates}, supersedes ${run.supersedes}, moved ${run.moved}, uncertain ${run.uncertain}, failures ${run.failures}; llm ${run.llm}`}\n`,
+    `${json ? JSON.stringify(run) : `${run.dryRun ? "Dry run" : "Tidy"}: ${run.outcome}; duplicates ${run.duplicates}, moved ${run.moved}, uncertain ${run.uncertain}, failures ${run.failures}; llm ${run.llm}`}\n`,
   );
   if (run.outcome !== "completed") process.exitCode = 1;
 }
