@@ -76,6 +76,15 @@ JSONL format. Imports redact secrets, preserve provenance and retain immutable
 revisions on change, with safe retries. See [imports](docs/imports.md) for the
 format, commands, limits and Grok Bot example. No new service or env vars are needed.
 
+## Retrieval evals
+
+Place private questions at `/app/data/evals/questions.yaml`, then run
+`context eval run` and `context eval history` inside the container. Retrieval uses
+the protected MCP path with simulated client read rights and read-only SQLite.
+Content-free results append to `/app/data/evals/history.jsonl`. When questions
+exist, the existing nightly backup triggers eval afterward; no extra settings or
+volumes are needed. See [question format, metrics and synthetic CI](docs/evals.md).
+
 ## Direction and current behavior
 
 - [Product spec and staged acceptance](docs/spec.md)

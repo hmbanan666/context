@@ -1,0 +1,60 @@
+# Fictional public questions only. Keep real questions outside the repository.
+questions:
+  - id: exact_en
+    question: What does the cobalt iris need?
+    areas: [garden]
+    read_areas: [garden]
+    forbidden_areas: [vault]
+    expected:
+      - source_external_id: https://fictional.example/iris
+      - substring: needs shade
+    tags: [en, exact]
+  - id: exact_ru
+    question: Где фиалка?
+    areas: [garden]
+    read_areas: [garden]
+    forbidden_areas: [vault]
+    expected:
+      - substring: возле окна
+    tags: [ru, exact]
+  - id: inflection_en
+    question: lily
+    areas: [garden]
+    read_areas: [garden]
+    expected:
+      - source_external_id: https://fictional.example/lilies
+    tags: [en, inflection]
+  - id: inflection_ru
+    question: фиалку
+    areas: [garden]
+    read_areas: [garden]
+    expected:
+      - source_external_id: https://fictional.example/violet
+    tags: [ru, inflection]
+  - id: paraphrase_en
+    question: Where is the planting stash kept?
+    areas: [garden]
+    read_areas: [garden]
+    expected:
+      - source_external_id: https://fictional.example/storage
+    tags: [en, paraphrase]
+  - id: paraphrase_ru
+    question: Где хранится посадочный запас?
+    areas: [garden]
+    read_areas: [garden]
+    expected:
+      - source_external_id: https://fictional.example/storage-ru
+    tags: [ru, paraphrase]
+  - id: denied_area
+    question: cobalt iris
+    areas: [vault]
+    read_areas: [garden]
+    forbidden_areas: [vault]
+    expected: []
+    tags: [isolation]
+  - id: future_question
+    question: Placeholder for a future fictional question
+    areas: [garden]
+    read_areas: [garden]
+    expected: []
+    placeholder: true

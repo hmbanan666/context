@@ -1,11 +1,13 @@
+import { runEvalAfterBackup } from "./automatic-eval.js";
 import { readBackupConfig } from "./backup-config.js";
 import { BackupRunner, readBackupStatus } from "./backup-runner.js";
-import { startBackupScheduler } from "./backup-scheduler.js";
+import { type BackupClock, startBackupScheduler } from "./backup-scheduler.js";
 import { createBackupTarget } from "./backup-transports.js";
 
 export async function startAutomaticBackups(
   databasePath: string,
   env: NodeJS.ProcessEnv,
+  clock?: BackupClock,
 ) {
   try {
     const config = readBackupConfig(env);
@@ -21,9 +23,12 @@ export async function startAutomaticBackups(
       async (day) => {
         const status = await runner.run(day);
         console.log(JSON.stringify({ event: "backup", ...status }));
-        return status.outcome !== "busy";
+        if (status.outcome === "busy") return false;
+        await runEvalAfterBackup(databasePath, env);
+        return true;
       },
       previous?.outcome === "running" ? undefined : previous?.lastScheduledDate,
+      clock,
     );
   } catch {
     console.error(

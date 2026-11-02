@@ -240,6 +240,19 @@ the complete SQLite database, so keep both destinations private. Configuration a
 SQLite, including the built-in authentication state, only. No real remote-storage or hosted recovery claim
 is made by the synthetic tests.
 
+## Retrieval evaluation
+
+The owner CLI supports `context eval run [--questions PATH] [--k 10] [--json]`
+and `context eval history [--limit 10] [--json]`. Put private questions at
+`/app/data/evals/questions.yaml`; summary rows append to
+`/app/data/evals/history.jsonl` on the existing data volume. The main database
+is opened read-only. No new environment variables, auth credentials, volumes or
+scheduler configuration are required. Nightly eval runs immediately after the
+existing scheduled backup attempt when the file exists; backup scheduling off
+also disables eval. The SQLite backup does not include these separate files.
+See [eval schema, metrics, privacy and limits](evals.md). Hosted private quality
+and performance under the container memory limit have not been measured here.
+
 ## Verification and limits
 
 Run `npm ci` and `npm run check` with pinned Node/npm. Checks cover source/knowledge

@@ -77,6 +77,20 @@ Current FTS has no Russian/English morphological pipeline or semantic embeddings
 Derived knowledge is source-grounded but is not yet the approved automatically
 maintained understanding layer with deduplication and superseding.
 
+## Retrieval measurement
+
+The [eval harness](evals.md) exercises the protected `context_package` handler
+with simulated read-only client grants over an in-process MCP transport. Search
+remains owned by the MCP implementation. Source and knowledge stores have explicit
+read-only opening modes; a separate metadata lookup audits the actual area of
+returned sources, items and relations. Results contain only numeric metrics and
+question IDs, appended to `evals/history.jsonl` beside the database.
+
+The existing nightly backup callback runs eval afterward if `evals/questions.yaml`
+exists. No independent timer, settings, worker or job store is added. This delivers
+retrieval measurement and that narrow automation step; it does not claim private
+question-set acceptance, answer grading or the remaining stage 4 capabilities.
+
 ## Processing and legacy interfaces
 
 A durable processing queue supports leases, retries and replay of saved validated
