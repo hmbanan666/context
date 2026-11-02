@@ -9,6 +9,15 @@ function check(database: DatabaseSync): void {
   database.prepare("SELECT id, scope, checksum FROM sources LIMIT 1").get();
 }
 
+export function verifyDatabase(path: string): void {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    check(database);
+  } finally {
+    database.close();
+  }
+}
+
 export async function backupDatabase(
   source: string,
   destination: string,
@@ -24,6 +33,7 @@ export async function backupDatabase(
     created = true;
     await file.close();
     await backup(database, destination);
+    verifyDatabase(destination);
   } catch (error) {
     if (created) await rm(destination, { force: true });
     throw error;
