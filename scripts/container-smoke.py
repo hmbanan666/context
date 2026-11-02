@@ -26,7 +26,8 @@ def main():
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--publish", "127.0.0.1::3000", *mounts]
         for value in ["CONTEXT_AUTH=oauth", "CONTEXT_PUBLIC_URL=https://context.kosarev.space/mcp",
                       "CONTEXT_OAUTH_ISSUER=https://context.kosarev.space/auth/realms/context",
-                      "CONTEXT_OWNER_SUBJECT=synthetic-owner", "CONTEXT_DB_PATH=/app/data/context.db"]:
+                      "CONTEXT_OWNER_SUBJECT=synthetic-owner", "CONTEXT_AREAS=sandbox",
+                      'CONTEXT_CLIENT_GRANTS={"context-codex":{"read":["sandbox"],"write":["sandbox"],"process":[]}}', "CONTEXT_DB_PATH=/app/data/context.db"]:
             args += ["--env", value]
         run(args + [image])
         port = current_port()
@@ -62,7 +63,7 @@ import {JobStore} from './dist/src/jobs.js';
 const store = new SourceStore('/app/data/context.db');
 const knowledge = new KnowledgeStore('/app/data/context.db');
 const jobs = new JobStore('/app/data/context.db');
-const scope='synthetic:hosted-pilot';
+const scope='sandbox';
 const captured=store.capture({version:1, text:'Synthetic container orange kite',
 origin:'fixture:container',scope,idempotencyKey:'container-001'});
 const file=store.captureFile({version:1,scope,origin:'fixture:container-file',

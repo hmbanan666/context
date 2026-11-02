@@ -14,20 +14,18 @@ import { JobStore } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
-import { WorkStore } from "../src/work.js";
 
-test("protected MCP applies project and operation grants to every read, write, processing and context tool", async () => {
+test("protected MCP applies area and operation grants to every read, write, processing and context tool", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-projects-"));
   const path = join(directory, "context.db");
   const sources = new SourceStore(path),
     knowledge = new KnowledgeStore(path),
     jobs = new JobStore(path);
-  const a = "synthetic:project-a",
-    b = "synthetic:project-b";
-  const work = new WorkStore(path, sources, knowledge);
+  const a = "garden",
+    b = "orchard";
   const grants: ClientGrants = {
     "context-chatgpt": { read: [a, b], write: [a, b], process: [a, b] },
-    "context-codex": { read: [a], write: [], process: [] },
+    "fictional-reader": { read: [a], write: [], process: [] },
   };
   const materialInput = {
     version: 1 as const,
@@ -64,7 +62,6 @@ test("protected MCP applies project and operation grants to every read, write, p
   const mcp = createContextMcp(sources, [], true, {
     knowledge,
     jobs,
-    work,
     clientGrants: grants,
   });
   const key = await generateKeyPair("RS256");
@@ -109,7 +106,7 @@ test("protected MCP applies project and operation grants to every read, write, p
     return client;
   };
   try {
-    const codex = await connect("context-codex");
+    const codex = await connect("fictional-reader");
     const reads = [
       ["recall", { id: sb.id }],
       ["recall", { query: "secret" }],
@@ -118,11 +115,9 @@ test("protected MCP applies project and operation grants to every read, write, p
       ["read_knowledge", { id: kb.id }],
       ["read_knowledge", {}],
       ["read_relations", {}],
-      ["knowledge_history", { id: kb.id }],
       ["processing_status", { id: jobB.id }],
-      ["project_context", {}],
       ["context_package", { question: "secret" }],
-      ["work_context", { id: "foreign-work" }],
+      ["memory_context", {}],
     ] as const;
     for (const [name, args] of reads) {
       const result = await codex.callTool({
@@ -134,6 +129,10 @@ test("protected MCP applies project and operation grants to every read, write, p
       assert.equal(JSON.stringify(result).includes(sb.id), false, name);
     }
     const writes = [
+      [
+        "remember",
+        { text: "Fictional denied", idempotencyKey: "blocked-note" },
+      ],
       [
         "capture",
         {
@@ -185,8 +184,13 @@ test("protected MCP applies project and operation grants to every read, write, p
       assert.equal(result.isError, true, name);
     }
     const context = await codex.callTool({
-      name: "project_context",
-      arguments: { version: 1, scope: a, maxBytes: 2048 },
+      name: "context_package",
+      arguments: {
+        version: 1,
+        scope: a,
+        question: "observatory",
+        maxBytes: 2048,
+      },
     });
     assert.ok(!context.isError);
     assert.ok(JSON.stringify(context).includes(sa.id));
@@ -195,7 +199,9 @@ test("protected MCP applies project and operation grants to every read, write, p
       Buffer.byteLength(JSON.stringify(context.structuredContent)) <= 2048,
     );
     const tools = (await codex.listTools()).tools;
-    assert.equal(tools.length, 16);
+    assert.equal(tools.length, 15);
+    for (const name of ["work_context", "project_context", "knowledge_history"])
+      assert.ok(!tools.some((tool) => tool.name === name));
     assert.ok(tools.every((tool) => tool._meta?.securitySchemes !== undefined));
     const ownerWithoutProcessing = await connect("context-chatgpt", [
       "context:read",
@@ -223,31 +229,58 @@ test("protected MCP applies project and operation grants to every read, write, p
       },
     });
     assert.ok(!queued.isError);
-    const missingRead = await connect("context-codex", ["context:write"]);
+    const missingRead = await connect("fictional-reader", ["context:write"]);
     assert.equal(
       (
         await missingRead.callTool({
-          name: "work_context",
-          arguments: { version: 1, scope: a, id: "unknown-work" },
+          name: "context_package",
+          arguments: { version: 1, scope: a, question: "observatory" },
         })
       ).isError,
       true,
     );
-    assert.equal(
-      (
-        await missingRead.callTool({
-          name: "project_context",
-          arguments: { version: 1, scope: a },
-        })
-      ).isError,
-      true,
-    );
-    assert.equal(sources.list(a).length, 1);
+    // A configured non-personal area supports the same memory journey.
+    const note = {
+      scope: a,
+      text: "Fictional garden diary",
+      idempotencyKey: "garden-note",
+    };
+    const saved = await owner.callTool({ name: "remember", arguments: note });
+    assert.ok(!saved.isError);
+    const retried = await owner.callTool({ name: "remember", arguments: note });
+    assert.deepEqual(retried.structuredContent, {
+      ...(saved.structuredContent as object),
+      duplicate: true,
+    });
+    const page = await owner.callTool({
+      name: "memory_context",
+      arguments: { scope: a, limit: 1 },
+    });
+    assert.ok(!page.isError);
+    const cursor = (page.structuredContent as { nextCursor: string })
+      .nextCursor;
+    assert.ok(cursor);
+    const otherArea = await owner.callTool({
+      name: "memory_context",
+      arguments: { scope: b, limit: 1, cursor },
+    });
+    assert.deepEqual(otherArea.structuredContent, {
+      version: 1,
+      error: "invalid_cursor",
+    });
+    const defaultDenied = await owner.callTool({
+      name: "remember",
+      arguments: {
+        text: "Fictional denied default",
+        idempotencyKey: "default",
+      },
+    });
+    assert.equal(defaultDenied.isError, true);
+    assert.equal(sources.list(a).length, 2);
     assert.equal(knowledge.list(a).length, 0);
   } finally {
     for (const client of clients) await client.close();
     await mcp.close();
-    work.close();
     jobs.close();
     knowledge.close();
     sources.close();

@@ -10,7 +10,7 @@ import { SourceStore } from "../src/store.js";
 
 test("MCP preserves file bytes and metadata and denies material access outside grants", async () => {
   const store = new SourceStore(":memory:");
-  const mcp = createContextMcp(store, ["synthetic:materials"]);
+  const mcp = createContextMcp(store, ["materials"]);
   const client = new Client({ name: "materials-test", version: "1" });
   await client.connect(
     new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
@@ -19,7 +19,7 @@ test("MCP preserves file bytes and metadata and denies material access outside g
   );
   const args = {
     version: 1,
-    scope: "synthetic:materials",
+    scope: "materials",
     origin: "fixture:materials",
     idempotencyKey: "file-001",
     filename: "idea.txt",
@@ -57,7 +57,7 @@ test("MCP preserves file bytes and metadata and denies material access outside g
     for (const name of ["read_file", "read_material"]) {
       const denied = await client.callTool({
         name,
-        arguments: { ...lookup, scope: "synthetic:forbidden" },
+        arguments: { ...lookup, scope: "forbidden" },
       });
       assert.equal(denied.isError, true);
       assert.equal(JSON.stringify(denied).includes("green kite"), false);
@@ -75,7 +75,7 @@ test("MCP preserves file bytes and metadata and denies material access outside g
             };
       const denied = await client.callTool({
         name,
-        arguments: { ...input, scope: "synthetic:forbidden" },
+        arguments: { ...input, scope: "forbidden" },
       });
       assert.equal(denied.isError, true);
     }

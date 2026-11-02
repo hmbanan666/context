@@ -40,8 +40,13 @@ const {
   .parse(JSON.parse(input));
 const resource = "https://context.kosarev.space/mcp";
 const store = new SourceStore(":memory:");
-const mcp = createContextMcp(store, [], true);
+const baseGrants: ClientGrants = {
+  "context-chatgpt": { read: ["sandbox"], write: ["sandbox"], process: [] },
+  "context-codex": { read: ["sandbox"], write: ["sandbox"], process: [] },
+};
+const mcp = createContextMcp(store, [], true, { clientGrants: baseGrants });
 const protectedMcp = protectMcp(mcp, {
+  clientGrants: baseGrants,
   issuer,
   resource,
   ownerSubject,
@@ -62,7 +67,7 @@ try {
     name: "capture",
     arguments: {
       version: 1,
-      scope: "synthetic:hosted-pilot",
+      scope: "sandbox",
       text: "Synthetic Keycloak green kite",
       origin: "fixture:real-keycloak",
       idempotencyKey: "keycloak-001",
@@ -74,7 +79,7 @@ try {
     .parse(captured.structuredContent);
   const recalled = await client.callTool({
     name: "recall",
-    arguments: { version: 1, scope: "synthetic:hosted-pilot", id: source.id },
+    arguments: { version: 1, scope: "sandbox", id: source.id },
   });
   assert.deepEqual(
     z
@@ -91,9 +96,9 @@ try {
   store.close();
 }
 
-const projectA = "synthetic:project-a";
-const projectB = "synthetic:project-b";
-const pilot = "synthetic:hosted-pilot";
+const projectA = "garden";
+const projectB = "orchard";
+const pilot = "sandbox";
 const grants: ClientGrants = {
   "context-codex": {
     read: [pilot, projectA],
@@ -184,8 +189,8 @@ try {
   });
   assert.ok(!added.isError);
   const context = await client.callTool({
-    name: "project_context",
-    arguments: { version: 1, scope: projectA },
+    name: "context_package",
+    arguments: { version: 1, scope: projectA, question: "observatory" },
   });
   assert.ok(!context.isError);
   z.object({
@@ -213,7 +218,10 @@ try {
       name: "recall",
       arguments: { version: 1, scope: projectB, query: "silver observatory" },
     },
-    { name: "project_context", arguments: { version: 1, scope: projectB } },
+    {
+      name: "context_package",
+      arguments: { version: 1, scope: projectB, question: "observatory" },
+    },
   ]) {
     const result = await client.callTool(request);
     if (identity.clientId === "context-codex") {
@@ -247,7 +255,10 @@ try {
         name: "recall",
         arguments: { version: 1, scope: projectA, id: material.source.id },
       },
-      { name: "project_context", arguments: { version: 1, scope: projectA } },
+      {
+        name: "context_package",
+        arguments: { version: 1, scope: projectA, question: "observatory" },
+      },
     ]) {
       const result = await reduced.callTool(request);
       assert.equal(result.isError, true);
@@ -299,7 +310,6 @@ const personalKnowledge = personalDatabase
   ? new KnowledgeStore(personalDatabase)
   : undefined;
 const personalMcp = createContextMcp(personalSources, [], true, {
-  personalMemory: true,
   ...(personalKnowledge ? { knowledge: personalKnowledge } : {}),
   clientGrants: personalGrants,
 });

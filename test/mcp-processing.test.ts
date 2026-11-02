@@ -19,7 +19,7 @@ test("MCP queues only authorized persisted sources and returns status without wo
   const sources = new SourceStore(path),
     knowledge = new KnowledgeStore(path),
     jobs = new JobStore(path);
-  const scope = "synthetic:processing";
+  const scope = "processing";
   const { source } = sources.capture({
     version: 1,
     scope,
@@ -43,7 +43,7 @@ test("MCP queues only authorized persisted sources and returns status without wo
   try {
     const denied = await client.callTool({
       name: "queue_processing",
-      arguments: { ...input, scope: "synthetic:other" },
+      arguments: { ...input, scope: "other" },
     });
     assert.equal(denied.isError, true);
     const missing = await client.callTool({

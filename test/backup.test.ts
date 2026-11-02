@@ -16,7 +16,7 @@ test("online backup and offline restore retain source, FTS and persistent retry 
     version: 1 as const,
     text: "Synthetic silver otter",
     origin: "fixture:backup",
-    scope: "synthetic:backup",
+    scope: "backup",
     idempotencyKey: "backup-001",
   };
   try {

@@ -9,29 +9,21 @@ import {
   toNodeHandler,
 } from "@modelcontextprotocol/node";
 import { configuredDataScopes, operationScopes } from "./access.js";
-import { oauthScopes, protectMcp } from "./auth.js";
+import { protectMcp } from "./auth.js";
 import type { Config } from "./config.js";
 import { JobStore } from "./jobs.js";
 import { KnowledgeStore } from "./knowledge.js";
 import { createContextMcp } from "./mcp.js";
 import { SourceStore } from "./store.js";
-import { WorkStore } from "./work.js";
 
 export async function startService(config: Config) {
   const store = new SourceStore(config.databasePath);
   let knowledge: KnowledgeStore;
   let jobs: JobStore;
-  let work: WorkStore;
   try {
     knowledge = new KnowledgeStore(config.databasePath);
     try {
       jobs = new JobStore(config.databasePath);
-      try {
-        work = new WorkStore(config.databasePath, store, knowledge);
-      } catch (error) {
-        jobs.close();
-        throw error;
-      }
     } catch (error) {
       knowledge.close();
       throw error;
@@ -45,11 +37,9 @@ export async function startService(config: Config) {
       ? createContextMcp(store, config.localMcpScopes ?? [], !!config.oauth, {
           knowledge,
           jobs,
-          work,
           ...(config.oauth?.clientGrants === undefined
             ? {}
             : { clientGrants: config.oauth.clientGrants }),
-          ...(config.oauth?.personalMemory ? { personalMemory: true } : {}),
         })
       : undefined;
   const authenticated =
@@ -84,18 +74,12 @@ export async function startService(config: Config) {
           authorization_servers: [config.oauth.issuer],
           // Refresh consent is advertised separately from data-access grants.
           scopes_supported: [
-            ...(config.oauth.clientGrants === undefined
-              ? oauthScopes
-              : [
-                  ...operationScopes,
-                  ...configuredDataScopes(config.oauth.clientGrants),
-                ]),
+            ...operationScopes,
+            ...configuredDataScopes(config.oauth.clientGrants),
             "offline_access",
           ],
           bearer_methods_supported: ["header"],
-          resource_name: config.oauth.personalMemory
-            ? "Context personal memory"
-            : "Context synthetic pilot",
+          resource_name: "Context",
         }),
       );
       return;
@@ -109,7 +93,7 @@ export async function startService(config: Config) {
       if (!config.oauth && request.headers.authorization !== undefined) {
         response
           .writeHead(401)
-          .end(JSON.stringify({ error: "local_synthetic_mode_only" }));
+          .end(JSON.stringify({ error: "local_development_mode_only" }));
         return;
       }
       // The SDK's structural optional fields omit Node's explicit undefined types.
@@ -149,7 +133,6 @@ export async function startService(config: Config) {
     });
   } catch (error) {
     await mcp?.close();
-    work.close();
     jobs.close();
     knowledge.close();
     store.close();
@@ -166,7 +149,6 @@ export async function startService(config: Config) {
         });
       } finally {
         await mcp?.close();
-        work.close();
         jobs.close();
         knowledge.close();
         store.close();

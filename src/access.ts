@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { scopeSchema } from "./contracts.js";
 
-export const pilotDataScope = "synthetic:hosted-pilot";
 export const operationScopes = [
   "context:read",
   "context:write",
@@ -9,7 +8,6 @@ export const operationScopes = [
 ] as const;
 export type OperationScope = (typeof operationScopes)[number];
 
-const clientIds = ["context-chatgpt", "context-codex"] as const;
 const scopeList = z
   .array(scopeSchema)
   .max(8)
@@ -23,23 +21,28 @@ const grantSchema = z.strictObject({
 });
 
 export const clientGrantsSchema = z
-  .strictObject({
-    "context-chatgpt": grantSchema.optional(),
-    "context-codex": grantSchema.optional(),
-  })
+  .record(
+    z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[a-zA-Z0-9._-]+$/),
+    grantSchema,
+  )
   .refine(
-    (grants) => clientIds.some((clientId) => grants[clientId] !== undefined),
-    { message: "Configure at least one client explicitly" },
+    (grants) =>
+      Object.keys(grants).length > 0 && Object.keys(grants).length <= 64,
+    {
+      message: "Configure 1–64 clients explicitly",
+    },
   );
 export type ClientGrants = z.infer<typeof clientGrantsSchema>;
 
 export function configuredDataScopes(grants?: ClientGrants): string[] {
-  if (grants === undefined) return [pilotDataScope];
+  if (grants === undefined) return [];
   const validated = clientGrantsSchema.parse(grants);
   const scopes = new Set<string>();
-  for (const clientId of clientIds) {
-    const client = validated[clientId];
-    if (!client) continue;
+  for (const client of Object.values(validated)) {
     for (const operation of ["read", "write", "process"] as const) {
       for (const scope of client[operation]) scopes.add(scope);
     }
@@ -62,7 +65,6 @@ export function authorizeScope(
   grants?: ClientGrants,
 ): boolean {
   if (
-    (clientId !== "context-chatgpt" && clientId !== "context-codex") ||
     !scopeSchema.safeParse(scope).success ||
     !Object.hasOwn(grantOperations, operation) ||
     !signedTokenScopes.includes(operation) ||
@@ -70,11 +72,10 @@ export function authorizeScope(
   ) {
     return false;
   }
-  if (grants === undefined) {
-    return operation !== "context:process" && scope === pilotDataScope;
-  }
+  if (grants === undefined) return false;
   const validated = clientGrantsSchema.safeParse(grants);
-  if (!validated.success) return false;
+  if (!validated.success || !Object.hasOwn(validated.data, clientId))
+    return false;
   return (
     validated.data[clientId]?.[grantOperations[operation]].includes(scope) ??
     false

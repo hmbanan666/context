@@ -15,7 +15,7 @@ function payload(result: { structuredContent?: unknown }) {
   return z.record(z.string(), z.unknown()).parse(result.structuredContent);
 }
 
-const scope = "synthetic:local-foundation";
+const scope = "local-foundation";
 const capture = {
   version: 1,
   scope,
@@ -130,7 +130,7 @@ test("scope grants come from server configuration and cannot be supplied by a cl
   const reader = await startService({
     port: 0,
     databasePath,
-    localMcpScopes: ["synthetic:other"],
+    localMcpScopes: ["other"],
   });
   const a = await connect(`http://127.0.0.1:${writer.address.port}`);
   const b = await connect(`http://127.0.0.1:${reader.address.port}`);
@@ -156,17 +156,17 @@ test("scope grants come from server configuration and cannot be supplied by a cl
     assert.equal(payload(deniedWrite).error, "forbidden_scope");
     const crossScopeId = await b.callTool({
       name: "recall",
-      arguments: { version: 1, scope: "synthetic:other", id: source.id },
+      arguments: { version: 1, scope: "other", id: source.id },
     });
     assert.equal(payload(crossScopeId).error, "not_found");
     const crossScopeSearch = await b.callTool({
       name: "recall",
-      arguments: { version: 1, scope: "synthetic:other", query: "cobalt" },
+      arguments: { version: 1, scope: "other", query: "cobalt" },
     });
     assert.deepEqual(payload(crossScopeSearch).sources, []);
     const other = await b.callTool({
       name: "capture",
-      arguments: { ...capture, scope: "synthetic:other" },
+      arguments: { ...capture, scope: "other" },
     });
     const otherSource = sourceSchema.parse(payload(other).source);
     assert.notEqual(otherSource.id, source.id);

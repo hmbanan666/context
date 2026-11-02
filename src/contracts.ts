@@ -1,15 +1,18 @@
 import { z } from "zod";
 
-export const personalDataScope = "private:personal";
+export const personalDataScope = "personal";
 
-export const syntheticScopeSchema = z
+// Colons remain valid so existing databases can retain their original area names.
+export const scopeSchema = z
   .string()
   .max(80)
-  .regex(/^synthetic:[a-z0-9][a-z0-9:_-]*$/);
-export const scopeSchema = z.union([
-  syntheticScopeSchema,
-  z.literal(personalDataScope),
-]);
+  .regex(/^[a-z0-9][a-z0-9:_-]*$/)
+  .refine(
+    (scope) => !scope.startsWith("context:") && scope !== "offline_access",
+    {
+      message: "An area cannot be an OAuth operation or refresh scope",
+    },
+  );
 const identifier = z
   .string()
   .min(1)

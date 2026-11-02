@@ -19,7 +19,6 @@ import { authorizeScope, type ClientGrants } from "../src/access.js";
 import {
   createTokenVerifier,
   type OAuthConfig,
-  oauthScopes,
   protectMcp,
 } from "../src/auth.js";
 import { readConfig } from "../src/config.js";
@@ -27,7 +26,13 @@ import { createContextMcp } from "../src/mcp.js";
 import { startService } from "../src/server.js";
 import { SourceStore } from "../src/store.js";
 
+const oauthScopes = ["context:read", "context:write", "sandbox"];
+const baseGrants: ClientGrants = {
+  "context-chatgpt": { read: ["sandbox"], write: ["sandbox"], process: [] },
+  "context-codex": { read: ["sandbox"], write: ["sandbox"], process: [] },
+};
 const config: OAuthConfig = {
+  clientGrants: baseGrants,
   resource: "https://context.kosarev.space/mcp",
   issuer: "https://context.kosarev.space/auth/realms/context",
   ownerSubject: "synthetic-owner-subject",
@@ -81,31 +86,31 @@ test("verifies signature, issuer, audience, owner, authorized client, expiry and
 test("signed project scopes still require independent client and operation grants", async () => {
   const grants: ClientGrants = {
     "context-chatgpt": {
-      read: ["synthetic:project:a", "synthetic:project:b"],
-      write: ["synthetic:project:a", "synthetic:project:b"],
-      process: ["synthetic:project:b"],
+      read: ["garden", "orchard"],
+      write: ["garden", "orchard"],
+      process: ["orchard"],
     },
-    "context-codex": { read: ["synthetic:project:a"], write: [], process: [] },
+    "context-codex": { read: ["garden"], write: [], process: [] },
   };
   const verifier = createTokenVerifier(
     { ...config, clientGrants: grants },
     keys,
   );
   const scope =
-    "context:read context:write context:process synthetic:project:a synthetic:project:b synthetic:unconfigured unrelated:scope";
+    "context:read context:write context:process garden orchard unconfigured unrelated:scope";
   const codex = await verifier.verifyAccessToken(await token({ scope }));
   assert.deepEqual(codex.scopes, [
     "context:read",
     "context:write",
     "context:process",
-    "synthetic:project:a",
-    "synthetic:project:b",
+    "garden",
+    "orchard",
   ]);
   assert.equal(
     authorizeScope(
       codex.clientId,
       codex.scopes,
-      "synthetic:project:a",
+      "garden",
       "context:read",
       grants,
     ),
@@ -115,7 +120,7 @@ test("signed project scopes still require independent client and operation grant
     authorizeScope(
       codex.clientId,
       codex.scopes,
-      "synthetic:project:b",
+      "orchard",
       "context:read",
       grants,
     ),
@@ -125,7 +130,7 @@ test("signed project scopes still require independent client and operation grant
     authorizeScope(
       codex.clientId,
       codex.scopes,
-      "synthetic:project:a",
+      "garden",
       "context:write",
       grants,
     ),
@@ -135,7 +140,7 @@ test("signed project scopes still require independent client and operation grant
     authorizeScope(
       codex.clientId,
       codex.scopes,
-      "synthetic:project:a",
+      "garden",
       "context:process",
       grants,
     ),
@@ -148,7 +153,7 @@ test("signed project scopes still require independent client and operation grant
     authorizeScope(
       chatgpt.clientId,
       chatgpt.scopes,
-      "synthetic:project:b",
+      "orchard",
       "context:process",
       grants,
     ),
@@ -161,18 +166,20 @@ test("signed project scopes still require independent client and operation grant
     authorizeScope(
       missing.clientId,
       missing.scopes,
-      "synthetic:project:a",
+      "garden",
       "context:read",
       grants,
     ),
     false,
   );
-  const missingClient = { "context-chatgpt": grants["context-chatgpt"] };
+  const chatgptGrant = grants["context-chatgpt"];
+  assert.ok(chatgptGrant);
+  const missingClient = { "context-chatgpt": chatgptGrant };
   assert.equal(
     authorizeScope(
       codex.clientId,
       codex.scopes,
-      "synthetic:project:a",
+      "garden",
       "context:read",
       missingClient,
     ),
@@ -187,7 +194,7 @@ test("signed project scopes still require independent client and operation grant
 
 test("protected MCP permits signed scoped requests and denies writes, cross-scope reads and missing tokens", async () => {
   const store = new SourceStore(":memory:");
-  const mcp = createContextMcp(store, [], true);
+  const mcp = createContextMcp(store, [], true, { clientGrants: baseGrants });
   const handler = protectMcp(mcp, config, keys);
   const clients: Client[] = [];
   const connect = async (accessToken: string) => {
@@ -215,15 +222,14 @@ test("protected MCP permits signed scoped requests and denies writes, cross-scop
     );
     const writer = await connect(
       await token({
-        scope:
-          "context:read context:write synthetic:hosted-pilot offline_access",
+        scope: "context:read context:write sandbox offline_access",
       }),
     );
     const args = {
       version: 1,
       text: "Synthetic protected yellow kite",
       origin: "fixture:oauth",
-      scope: "synthetic:hosted-pilot",
+      scope: "sandbox",
       idempotencyKey: "protected-001",
     };
     const saved = await writer.callTool({ name: "capture", arguments: args });
@@ -232,7 +238,7 @@ test("protected MCP permits signed scoped requests and denies writes, cross-scop
       .object({ source: z.object({ id: z.string(), text: z.string() }) })
       .parse(saved.structuredContent);
     const reader = await connect(
-      await token({ scope: "context:read synthetic:hosted-pilot" }),
+      await token({ scope: "context:read sandbox" }),
     );
     const recalled = await reader.callTool({
       name: "recall",
@@ -246,13 +252,13 @@ test("protected MCP permits signed scoped requests and denies writes, cross-scop
     assert.equal(deniedWrite.isError, true);
     const deniedScope = await reader.callTool({
       name: "recall",
-      arguments: { version: 1, scope: "synthetic:other", query: "kite" },
+      arguments: { version: 1, scope: "other", query: "kite" },
     });
     assert.equal(deniedScope.isError, true);
     for (const scope of [
       "offline_access",
       "context:read context:write offline_access",
-      "synthetic:hosted-pilot offline_access",
+      "sandbox offline_access",
     ]) {
       const unprivileged = await connect(await token({ scope }));
       for (const request of [
@@ -274,12 +280,13 @@ test("protected MCP permits signed scoped requests and denies writes, cross-scop
 
 for (const scenario of [
   {
-    name: "pilot",
-    grants: undefined,
+    name: "configured sandbox",
+    grants: baseGrants,
     scopes: [
       "context:read",
       "context:write",
-      "synthetic:hosted-pilot",
+      "context:process",
+      "sandbox",
       "offline_access",
     ],
   },
@@ -287,12 +294,12 @@ for (const scenario of [
     name: "configured projects",
     grants: {
       "context-chatgpt": {
-        read: ["synthetic:project:a"],
-        write: ["synthetic:project:a"],
+        read: ["garden"],
+        write: ["garden"],
         process: [],
       },
       "context-codex": {
-        read: ["synthetic:project:b"],
+        read: ["orchard"],
         write: [],
         process: [],
       },
@@ -301,8 +308,8 @@ for (const scenario of [
       "context:read",
       "context:write",
       "context:process",
-      "synthetic:project:a",
-      "synthetic:project:b",
+      "garden",
+      "orchard",
       "offline_access",
     ],
   },
@@ -317,9 +324,8 @@ for (const scenario of [
       CONTEXT_OWNER_SUBJECT: config.ownerSubject,
       CONTEXT_PORT: "0",
       CONTEXT_DB_PATH: join(directory, "context.db"),
-      ...(scenario.grants === undefined
-        ? {}
-        : { CONTEXT_CLIENT_GRANTS: JSON.stringify(scenario.grants) }),
+      CONTEXT_CLIENT_GRANTS: JSON.stringify(scenario.grants),
+      CONTEXT_AREAS: "sandbox,garden,orchard",
     });
     const service = await startService(production);
     try {
@@ -364,7 +370,7 @@ for (const scenario of [
           authorization_servers: [config.issuer],
           scopes_supported: scenario.scopes,
           bearer_methods_supported: ["header"],
-          resource_name: "Context synthetic pilot",
+          resource_name: "Context",
         });
       }
       const denied = await get("/mcp", "POST");

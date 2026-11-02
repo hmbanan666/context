@@ -14,19 +14,12 @@ import {
 const directory = await mkdtemp(join(tmpdir(), "context-package-eval-"));
 try {
   const methods = process.argv.includes("--baseline")
-    ? [
-        "phrase",
-        "memory-question",
-        "memory-keywords",
-        "memory-paged",
-        "project",
-      ]
+    ? ["phrase", "memory-question", "memory-keywords", "memory-paged"]
     : [
         "phrase",
         "memory-question",
         "memory-keywords",
         "memory-paged",
-        "project",
         "package",
       ];
   const rows: Array<{
@@ -55,33 +48,29 @@ try {
         const tool =
           method === "phrase"
             ? "recall"
-            : method === "project"
-              ? "project_context"
-              : method === "package"
-                ? "context_package"
-                : "memory_context";
+            : method === "package"
+              ? "context_package"
+              : "memory_context";
         const args =
           method === "phrase"
             ? { version: 1, scope, query: q.question, limit: 20 }
-            : method === "project"
-              ? { version: 1, scope, limit: 8, maxBytes: 4096 }
-              : method === "package"
-                ? {
-                    question: q.question,
-                    ...period,
-                    mode: "mode" in q ? q.mode : "search",
-                    limit: 8,
-                    maxBytes: 4096,
-                  }
-                : {
-                    ...period,
-                    query:
-                      method === "memory-keywords" || method === "memory-paged"
-                        ? q.keywords
-                        : q.question,
-                    limit: 8,
-                    maxBytes: 4096,
-                  };
+            : method === "package"
+              ? {
+                  question: q.question,
+                  ...period,
+                  mode: "mode" in q ? q.mode : "search",
+                  limit: 8,
+                  maxBytes: 4096,
+                }
+              : {
+                  ...period,
+                  query:
+                    method === "memory-keywords" || method === "memory-paged"
+                      ? q.keywords
+                      : q.question,
+                  limit: 8,
+                  maxBytes: 4096,
+                };
         let calls = 1;
         let errors = 0;
         const evidence = new Map<string, string>();

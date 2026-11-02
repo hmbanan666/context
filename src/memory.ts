@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { personalDataScope, recallSchema } from "./contracts.js";
+import { personalDataScope, recallSchema, scopeSchema } from "./contracts.js";
 import type { Material } from "./materials.js";
 import type { MemoryPosition, SourceStore } from "./store.js";
 
 export const memoryContextSchema = z
   .strictObject({
     version: z.literal(1).default(1),
+    scope: scopeSchema.default(personalDataScope),
     from: z.iso.datetime({ offset: true }).optional(),
     until: z.iso.datetime({ offset: true }).optional(),
     query: recallSchema.shape.query,
@@ -71,7 +72,7 @@ export function buildMemoryContext(
   const selection = createHash("sha256")
     .update(
       JSON.stringify([
-        personalDataScope,
+        request.scope,
         request.from ?? null,
         request.until ?? null,
         terms,
@@ -92,7 +93,7 @@ export function buildMemoryContext(
     }
   }
   const selected = sources.selectMemory({
-    scope: personalDataScope,
+    scope: request.scope,
     terms,
     ...(request.from === undefined ? {} : { from: request.from }),
     ...(request.until === undefined ? {} : { until: request.until }),
@@ -110,7 +111,7 @@ export function buildMemoryContext(
     ).toString("base64url");
   let context: MemoryContext = {
     version: 1,
-    scope: personalDataScope,
+    scope: request.scope,
     generatedAt: new Date().toISOString(),
     dateBasis: "source_created_at_else_captured_at",
     search: terms.length ? "any_keyword" : "timeline",

@@ -10,7 +10,6 @@ import {
   type ClientGrants,
   configuredDataScopes,
   operationScopes,
-  pilotDataScope,
 } from "./access.js";
 
 export interface OAuthConfig {
@@ -18,7 +17,6 @@ export interface OAuthConfig {
   readonly resource: string;
   readonly ownerSubject: string;
   readonly clientGrants?: ClientGrants;
-  readonly personalMemory?: boolean;
 }
 
 export function protectMcp(
@@ -52,9 +50,6 @@ export function protectMcp(
   };
 }
 
-export const pilotScope = pilotDataScope;
-export const oauthScopes = ["context:read", "context:write", pilotScope];
-
 export function createTokenVerifier(
   config: OAuthConfig,
   resolveKey?: JWTVerifyGetKey,
@@ -85,7 +80,7 @@ export function createTokenVerifier(
           typeof payload.iat !== "number" ||
           payload.exp - payload.iat > 300 ||
           typeof payload.azp !== "string" ||
-          !["context-chatgpt", "context-codex"].includes(payload.azp) ||
+          !Object.hasOwn(config.clientGrants ?? {}, payload.azp) ||
           typeof payload.scope !== "string"
         )
           throw new Error("Invalid claims");

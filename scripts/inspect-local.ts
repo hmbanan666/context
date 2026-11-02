@@ -9,7 +9,7 @@ import { startService } from "../src/server.js";
 
 const execute = promisify(execFile);
 const object = z.record(z.string(), z.unknown());
-const scope = "synthetic:inspector";
+const scope = "inspector";
 const capture = {
   version: 1,
   scope,

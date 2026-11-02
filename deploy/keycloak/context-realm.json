@@ -38,7 +38,7 @@
       "attributes": { "include.in.token.scope": "true" }
     },
     {
-      "name": "synthetic:hosted-pilot",
+      "name": "sandbox",
       "protocol": "openid-connect",
       "attributes": { "include.in.token.scope": "true" }
     },
@@ -48,17 +48,17 @@
       "attributes": { "include.in.token.scope": "true" }
     },
     {
-      "name": "synthetic:project-a",
+      "name": "garden",
       "protocol": "openid-connect",
       "attributes": { "include.in.token.scope": "true" }
     },
     {
-      "name": "synthetic:project-b",
+      "name": "orchard",
       "protocol": "openid-connect",
       "attributes": { "include.in.token.scope": "true" }
     },
     {
-      "name": "private:personal",
+      "name": "personal",
       "protocol": "openid-connect",
       "attributes": { "include.in.token.scope": "true" }
     }
@@ -91,11 +91,11 @@
         "offline_access",
         "context:read",
         "context:write",
-        "synthetic:hosted-pilot",
+        "sandbox",
         "context:process",
-        "synthetic:project-a",
-        "synthetic:project-b",
-        "private:personal"
+        "garden",
+        "orchard",
+        "personal"
       ],
       "protocolMappers": [
         {
@@ -126,11 +126,11 @@
         "offline_access",
         "context:read",
         "context:write",
-        "synthetic:hosted-pilot",
+        "sandbox",
         "context:process",
-        "synthetic:project-a",
-        "synthetic:project-b",
-        "private:personal"
+        "garden",
+        "orchard",
+        "personal"
       ],
       "protocolMappers": [
         {

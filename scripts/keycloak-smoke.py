@@ -103,7 +103,7 @@ def main():
             assert metadata["authorization_response_iss_parameter_supported"] is True
             print("Keycloak discovery and PKCE S256: passed", flush=True)
 
-            full_scope = "context:read context:write context:process synthetic:hosted-pilot synthetic:project-a synthetic:project-b private:personal"
+            full_scope = "context:read context:write context:process sandbox garden orchard personal"
 
             def authorize(verifier, client_id="context-codex", scope=full_scope, provider=None):
                 provider = metadata if provider is None else provider
@@ -179,7 +179,7 @@ def main():
             compatibility = provider_for("compatibility")
             legacy_request = "context:process context:write context:read"
             compatible = grant("context-chatgpt", legacy_request, compatibility)
-            assert "private:personal" in claims(compatible["access_token"])["scope"].split(), "Existing app cannot access personal memory"
+            assert "personal" in claims(compatible["access_token"])["scope"].split(), "Existing app cannot access personal memory"
             assert claims(compatible["refresh_token"])["typ"] == "Offline", "Existing app did not receive offline refresh"
             print("Existing ChatGPT scope list receives personal and offline defaults: passed", flush=True)
 
@@ -209,7 +209,7 @@ def main():
             rejected(lambda: renew("context-chatgpt", compatible, compatibility))
             # This profile does not alter the independent Codex client.
             unchanged_codex = grant("context-codex", legacy_request, compatibility)
-            assert "private:personal" not in unchanged_codex["scope"].split()
+            assert "personal" not in unchanged_codex["scope"].split()
             assert claims(unchanged_codex["refresh_token"])["typ"] == "Refresh"
             print("Existing app save/reopen after access and online session expiry, exact retry, read-only denial, rotation and Codex isolation: passed", flush=True)
 
@@ -363,8 +363,8 @@ def main():
             print("ChatGPT explicit offline grant revocation denies refresh: passed", flush=True)
             reduced_tokens = {}
             for name, scope in [
-                ("missingProjectToken", "context:read context:write context:process synthetic:hosted-pilot"),
-                ("missingProcessToken", "context:read context:write synthetic:hosted-pilot synthetic:project-a synthetic:project-b"),
+                ("missingProjectToken", "context:read context:write context:process sandbox"),
+                ("missingProcessToken", "context:read context:write sandbox garden orchard"),
             ]:
                 reduced_code = authorize(verifier, scope=scope)
                 reduced_tokens[name] = exchange({

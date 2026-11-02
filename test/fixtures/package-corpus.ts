@@ -1,7 +1,7 @@
 import type { KnowledgeStore } from "../../src/knowledge.js";
 import type { SourceStore } from "../../src/store.js";
 
-export const scope = "private:personal";
+export const scope = "personal";
 export const period = {
   from: "2026-10-01T00:00:00+02:00",
   until: "2026-11-01T00:00:00+01:00",
@@ -215,7 +215,7 @@ export function seedPackageCorpus(
   }
   sources.captureMaterial({
     version: 1,
-    scope: "synthetic:forbidden",
+    scope: "forbidden",
     origin: "fixture:package",
     idempotencyKey: "hidden",
     text: "Secret platinum submarine amber launch stories книги",

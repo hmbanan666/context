@@ -14,7 +14,7 @@ import { IdempotencyConflict, SourceStore } from "../src/store.js";
 
 const materialInput: CaptureMaterialInput = {
   version: 1,
-  scope: "synthetic:materials",
+  scope: "materials",
   text: "Synthetic idea: a paper observatory on the moon.",
   origin: "fixture:materials",
   idempotencyKey: "material-001",
@@ -28,7 +28,7 @@ const materialInput: CaptureMaterialInput = {
 
 const fileInput: CaptureFileInput = {
   version: 1,
-  scope: "synthetic:materials",
+  scope: "materials",
   origin: "fixture:materials-file",
   idempotencyKey: "file-001",
   filename: "synthetic-moon.md",
@@ -115,10 +115,10 @@ test("metadata is immutable, scoped and part of persistent idempotency", async (
         IdempotencyConflict,
       );
       assert.equal(
-        store.findMaterial(saved.material.source.id, "synthetic:other"),
+        store.findMaterial(saved.material.source.id, "other"),
         undefined,
       );
-      assert.deepEqual(store.list("synthetic:other"), []);
+      assert.deepEqual(store.list("other"), []);
       assert.deepEqual(
         store.findMaterial(saved.material.source.id, materialInput.scope),
         saved.material,
@@ -156,7 +156,7 @@ test("file capture retains exact original UTF-8 bytes, BOM and line endings", ()
       duplicate: true,
     });
     assert.equal(
-      store.readMaterialFile(saved.material.source.id, "synthetic:other"),
+      store.readMaterialFile(saved.material.source.id, "other"),
       undefined,
     );
     assert.equal(store.readMaterialFile("absent", fileInput.scope), undefined);
