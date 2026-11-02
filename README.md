@@ -68,6 +68,14 @@ existing destinations are refused. See [backup and restore](docs/deployment.md#b
 for all settings, retention, upload failure handling and auth rollback precautions.
 Client-side encryption and actual hosted off-host recovery remain unverified.
 
+## Import existing material
+
+Use `context import jsonl --source NAME --area AREA` inside the container; stdin
+is the default input. Operator-side GitHub and Codex collectors produce the same
+JSONL format. Imports redact secrets, preserve provenance and retain immutable
+revisions on change, with safe retries. See [imports](docs/imports.md) for the
+format, commands, limits and Grok Bot example. No new service or env vars are needed.
+
 ## Direction and current behavior
 
 - [Product spec and staged acceptance](docs/spec.md)

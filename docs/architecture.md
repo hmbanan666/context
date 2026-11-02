@@ -54,6 +54,11 @@ Sources, material metadata, original text-file bytes, checksums and retry identi
 are stored in SQLite. Capture is transactional and preserves input before optional
 interpretation. Today's capture does **not** implement the approved secret-redaction
 pipeline or hard-delete contract; do not infer those protections from the target spec.
+The owner-local [JSONL import path](imports.md) adds deterministic redaction for
+imports and both collectors, preserving source attribution in `source_imports`.
+Each changed external item becomes a new immutable source linked by source name
+and external ID; exact version retries reuse the retained source. Imports share
+the existing source/search tables and area-checked retrieval.
 
 The primary memory tools are:
 
