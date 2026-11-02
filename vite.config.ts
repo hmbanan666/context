@@ -3,7 +3,14 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
   fmt: {
     printWidth: 80,
-    ignorePatterns: ["**/*.md", "pnpm-lock.yaml", "dist/**", ".tools/**", ".output/**", "models/**"],
+    ignorePatterns: [
+      "**/*.md",
+      "pnpm-lock.yaml",
+      "dist/**",
+      ".tools/**",
+      ".output/**",
+      "models/**",
+    ],
     sortPackageJson: false,
   },
   test: {

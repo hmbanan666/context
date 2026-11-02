@@ -60,7 +60,9 @@ export interface EvalOptions {
 function version() {
   const packagePath = findPackageJSON(import.meta.url);
   if (!packagePath) throw new Error("Cannot locate the Context package");
-  const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as { version: string };
+  const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as {
+    version: string;
+  };
   let sha = process.env.GITHUB_SHA;
   if (!sha) {
     try {

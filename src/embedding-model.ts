@@ -68,7 +68,7 @@ export function localEmbedder(
 // excerpts. Offsets remain UTF-16 positions in the immutable original.
 export function textChunks(text: string) {
   const chunks: { text: string; offset: number }[] = [];
-  for (let start = 0; start < text.length; ) {
+  for (let start = 0; start < text.length;) {
     let end = Math.min(start + 256, text.length);
     if (end < text.length && /[\uDC00-\uDFFF]/u.test(text[end] ?? "")) end--;
     chunks.push({ text: text.slice(start, end), offset: start });

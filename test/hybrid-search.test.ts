@@ -385,9 +385,8 @@ test("rebuild invalidates in-flight embeddings and can be retried without changi
 test("owner rebuild CLI preserves originals and startup backfills automatically with scoped status", async () => {
   const { spawnSync } = await import("node:child_process");
   const { startService } = await import("../src/server.js");
-  const { Client, StreamableHTTPClientTransport } = await import(
-    "@modelcontextprotocol/client"
-  );
+  const { Client, StreamableHTTPClientTransport } =
+    await import("@modelcontextprotocol/client");
   const dir = await mkdtemp(join(tmpdir(), "hybrid-startup-"));
   const path = join(dir, "db");
   const f = await openPackageFixture(path);

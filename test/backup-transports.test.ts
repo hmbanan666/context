@@ -33,21 +33,19 @@ test("S3 sends a streaming object with the configured key and checksum metadata"
   const f = await fixture();
   t.onTestFinished(() => rm(f.directory, { recursive: true, force: true }));
   let sent = false;
-  vi.spyOn(S3Client.prototype, "send").mockImplementation(
-    async (input) => {
-      const command = input as PutObjectCommand;
-      assert.equal(command.input.Bucket, "fictional-backups");
-      assert.equal(command.input.Key, "daily/fixture.db");
-      assert.deepEqual(command.input.Metadata, { sha256: f.file.checksum });
-      assert.equal(command.input.ContentLength, f.bytes.length);
-      const chunks: Buffer[] = [];
-      for await (const chunk of command.input.Body as AsyncIterable<Buffer>)
-        chunks.push(chunk);
-      assert.deepEqual(Buffer.concat(chunks), f.bytes);
-      sent = true;
-      return {};
-    },
-  );
+  vi.spyOn(S3Client.prototype, "send").mockImplementation(async (input) => {
+    const command = input as PutObjectCommand;
+    assert.equal(command.input.Bucket, "fictional-backups");
+    assert.equal(command.input.Key, "daily/fixture.db");
+    assert.deepEqual(command.input.Metadata, { sha256: f.file.checksum });
+    assert.equal(command.input.ContentLength, f.bytes.length);
+    const chunks: Buffer[] = [];
+    for await (const chunk of command.input.Body as AsyncIterable<Buffer>)
+      chunks.push(chunk);
+    assert.deepEqual(Buffer.concat(chunks), f.bytes);
+    sent = true;
+    return {};
+  });
   await createBackupTarget(
     {
       kind: "s3",
@@ -102,22 +100,24 @@ test("SFTP pins the host key, streams a private partial file, checks size, and p
       callback();
     },
   };
-  vi.spyOn(Client.prototype, "connect").mockImplementation(
-    function (this: Client, options: ConnectConfig) {
-      assert.equal(options.hostHash, "sha256");
-      const verify = options.hostVerifier as (hash: string) => boolean;
-      assert.equal(verify("a".repeat(64)), true);
-      assert.equal(verify("b".repeat(64)), false);
-      queueMicrotask(() => this.emit("ready"));
-      return this;
-    },
-  );
-  vi.spyOn(Client.prototype, "sftp").mockImplementation(
-    function (this: Client, callback) {
-      callback(undefined, sftp as unknown as SFTPWrapper);
-      return this;
-    },
-  );
+  vi.spyOn(Client.prototype, "connect").mockImplementation(function (
+    this: Client,
+    options: ConnectConfig,
+  ) {
+    assert.equal(options.hostHash, "sha256");
+    const verify = options.hostVerifier as (hash: string) => boolean;
+    assert.equal(verify("a".repeat(64)), true);
+    assert.equal(verify("b".repeat(64)), false);
+    queueMicrotask(() => this.emit("ready"));
+    return this;
+  });
+  vi.spyOn(Client.prototype, "sftp").mockImplementation(function (
+    this: Client,
+    callback,
+  ) {
+    callback(undefined, sftp as unknown as SFTPWrapper);
+    return this;
+  });
   await createBackupTarget(config, 1000).upload(f.file);
   assert.deepEqual(Buffer.concat(chunks), f.bytes);
   assert.equal(renamed, true);

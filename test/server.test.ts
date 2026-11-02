@@ -37,9 +37,8 @@ test("built-in auth routes and CLI credentials work through the HTTP listener, i
   const { request } = await import("node:http");
   const { AuthStore } = await import("../src/auth-store.js");
   const { readConfig } = await import("../src/config.js");
-  const { Client, StreamableHTTPClientTransport } = await import(
-    "@modelcontextprotocol/client"
-  );
+  const { Client, StreamableHTTPClientTransport } =
+    await import("@modelcontextprotocol/client");
   const directory = await mkdtemp(join(process.cwd(), ".output-http-auth-"));
   const path = join(directory, "context.db");
   const config = readConfig({

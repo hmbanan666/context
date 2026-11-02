@@ -94,7 +94,9 @@ test("tidy preserves a duplicate decision when effective dates reverse on rerun"
 test("tidy never closes an existing duplicate chain, including branches into cycles", async (t) => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-02-01T00:00:00Z"));
-  t.onTestFinished(() => { vi.useRealTimers(); });
+  t.onTestFinished(() => {
+    vi.useRealTimers();
+  });
   const f = await fixture();
   try {
     const text =

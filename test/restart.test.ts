@@ -88,110 +88,117 @@ async function waitForPort(child: ChildProcess): Promise<number> {
   });
 }
 
-test("synthetic source survives two real service processes and retries", {
-  timeout: 20000,
-}, async () => {
-  const directory = await mkdtemp(join(tmpdir(), "context-restart-"));
-  const databasePath = join(directory, "nested", "context.db");
-  const env = childEnvironment(databasePath);
-  let capturedSource: Record<string, unknown> | undefined;
-  try {
-    const initial = new SourceStore(databasePath);
-    initial.insert(syntheticSource);
-    initial.close();
-    for (let restart = 0; restart < 2; restart++) {
-      const child = run(new URL("../dist/src/main.js", import.meta.url), env);
-      try {
-        const port = await waitForPort(child);
-        const health = await fetch(`http://127.0.0.1:${port}/health`);
-        assert.equal(health.status, 200);
-        assert.deepEqual(await health.json(), { status: "ok" });
-        const client = new Client({
-          name: "context-process-smoke",
-          version: "1.0.0",
-        });
+test(
+  "synthetic source survives two real service processes and retries",
+  {
+    timeout: 20000,
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "context-restart-"));
+    const databasePath = join(directory, "nested", "context.db");
+    const env = childEnvironment(databasePath);
+    let capturedSource: Record<string, unknown> | undefined;
+    try {
+      const initial = new SourceStore(databasePath);
+      initial.insert(syntheticSource);
+      initial.close();
+      for (let restart = 0; restart < 2; restart++) {
+        const child = run(new URL("../dist/src/main.js", import.meta.url), env);
         try {
-          await client.connect(
-            new StreamableHTTPClientTransport(
-              new URL(`http://127.0.0.1:${port}/mcp`),
-            ),
-          );
-          const saved = await client.callTool({
-            name: "capture",
-            arguments: {
-              version: 1,
-              scope: syntheticSource.scope,
-              text: syntheticSource.text,
-              origin: "fixture:process-smoke",
-              idempotencyKey: "process-smoke-001",
-            },
+          const port = await waitForPort(child);
+          const health = await fetch(`http://127.0.0.1:${port}/health`);
+          assert.equal(health.status, 200);
+          assert.deepEqual(await health.json(), { status: "ok" });
+          const client = new Client({
+            name: "context-process-smoke",
+            version: "1.0.0",
           });
-          assert.ok(!saved.isError);
-          const output = z
-            .record(z.string(), z.unknown())
-            .parse(saved.structuredContent);
-          const source = z.record(z.string(), z.unknown()).parse(output.source);
-          assert.equal(output.duplicate, restart === 1);
-          if (restart === 0) capturedSource = source;
-          else assert.deepEqual(source, capturedSource);
-          assert.equal(source.text, syntheticSource.text);
+          try {
+            await client.connect(
+              new StreamableHTTPClientTransport(
+                new URL(`http://127.0.0.1:${port}/mcp`),
+              ),
+            );
+            const saved = await client.callTool({
+              name: "capture",
+              arguments: {
+                version: 1,
+                scope: syntheticSource.scope,
+                text: syntheticSource.text,
+                origin: "fixture:process-smoke",
+                idempotencyKey: "process-smoke-001",
+              },
+            });
+            assert.ok(!saved.isError);
+            const output = z
+              .record(z.string(), z.unknown())
+              .parse(saved.structuredContent);
+            const source = z
+              .record(z.string(), z.unknown())
+              .parse(output.source);
+            assert.equal(output.duplicate, restart === 1);
+            if (restart === 0) capturedSource = source;
+            else assert.deepEqual(source, capturedSource);
+            assert.equal(source.text, syntheticSource.text);
+            assert.equal(
+              source.checksum,
+              "764a377a0b97c616c0d85f32c933f1be9c400b422a2581687778222efa45ae31",
+            );
+            const recalled = await client.callTool({
+              name: "recall",
+              arguments: {
+                version: 1,
+                scope: syntheticSource.scope,
+                id: source.id,
+              },
+            });
+            assert.deepEqual(
+              z
+                .record(z.string(), z.unknown())
+                .parse(recalled.structuredContent).sources,
+              [capturedSource],
+            );
+            const seeded = await client.callTool({
+              name: "recall",
+              arguments: {
+                version: 1,
+                scope: syntheticSource.scope,
+                query: "imaginary blue marbles",
+              },
+            });
+            const matches = z
+              .object({ sources: z.array(z.object({ id: z.string() })) })
+              .parse(seeded.structuredContent);
+            assert.deepEqual(
+              matches.sources.map((match) => match.id).sort(),
+              [syntheticSource.id, String(source.id)].sort(),
+            );
+          } finally {
+            await client.close();
+          }
+        } finally {
+          await stop(child);
+        }
+        const store = new SourceStore(databasePath);
+        try {
+          const record = store.find(syntheticSource.id, syntheticSource.scope);
+          assert.ok(record);
+          const { checksum, status, ...original } = record;
+          assert.deepEqual(original, syntheticSource);
           assert.equal(
-            source.checksum,
+            checksum,
             "764a377a0b97c616c0d85f32c933f1be9c400b422a2581687778222efa45ae31",
           );
-          const recalled = await client.callTool({
-            name: "recall",
-            arguments: {
-              version: 1,
-              scope: syntheticSource.scope,
-              id: source.id,
-            },
-          });
-          assert.deepEqual(
-            z.record(z.string(), z.unknown()).parse(recalled.structuredContent)
-              .sources,
-            [capturedSource],
-          );
-          const seeded = await client.callTool({
-            name: "recall",
-            arguments: {
-              version: 1,
-              scope: syntheticSource.scope,
-              query: "imaginary blue marbles",
-            },
-          });
-          const matches = z
-            .object({ sources: z.array(z.object({ id: z.string() })) })
-            .parse(seeded.structuredContent);
-          assert.deepEqual(
-            matches.sources.map((match) => match.id).sort(),
-            [syntheticSource.id, String(source.id)].sort(),
-          );
+          assert.equal(status, "unreviewed");
         } finally {
-          await client.close();
+          store.close();
         }
-      } finally {
-        await stop(child);
       }
-      const store = new SourceStore(databasePath);
-      try {
-        const record = store.find(syntheticSource.id, syntheticSource.scope);
-        assert.ok(record);
-        const { checksum, status, ...original } = record;
-        assert.deepEqual(original, syntheticSource);
-        assert.equal(
-          checksum,
-          "764a377a0b97c616c0d85f32c933f1be9c400b422a2581687778222efa45ae31",
-        );
-        assert.equal(status, "unreviewed");
-      } finally {
-        store.close();
-      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
     }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+  },
+);
 
 test("production startup fails before opening a listener or database", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-production-"));

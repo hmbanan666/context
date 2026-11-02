@@ -255,7 +255,8 @@ export class KnowledgeStore {
           )
           .get()
       ) {
-        this.#database.exec(`CREATE VIRTUAL TABLE knowledge_items_fts USING fts5(text, content='knowledge_items', content_rowid='rowid');
+        this.#database
+          .exec(`CREATE VIRTUAL TABLE knowledge_items_fts USING fts5(text, content='knowledge_items', content_rowid='rowid');
           CREATE TRIGGER knowledge_items_fts_insert AFTER INSERT ON knowledge_items BEGIN
             INSERT INTO knowledge_items_fts(rowid,text) VALUES(new.rowid,new.text);
           END;
