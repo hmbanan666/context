@@ -9,7 +9,7 @@ The [product spec](spec.md#stages-and-acceptance-criteria) defines acceptance;
 | --- | --- | --- |
 | 1 | Cleanup and self-contained operation: **1a** remove experiments; **1b** replace Keycloak and its PostgreSQL DB with built-in OAuth 2.1 AS, DCR, PKCE, password + passkey and CLI tokens; **1c** nightly backup with configurable SFTP/S3-compatible off-host copy. | In progress: 1a and 1b merged; 1c implemented in PR #21, not yet merged or deployed. |
 | 2 | Connect Grok Bot and server Codex; import Grok Bot transcripts, Codex sessions and GitHub PRs; establish private 20–30-question eval set and synthetic public equivalents, run after each change. | Planned |
-| 3 | Russian/English morphology and local semantic embeddings with SQLite; no paid embedding API. | Planned |
+| 3 | Russian/English morphology and local semantic embeddings with SQLite; no paid embedding API. | Implemented in the search branch; review and deployment pending. See [search](search.md). |
 | 4 | Pluggable understanding layer, deduplication, superseding/history, hard delete, daily inbox sorting and nightly evals. | Planned |
 | 5 | Core owner UI for search, inbox decisions, delete and clients/tokens; ChatGPT export import and Telegram. | Planned |
 

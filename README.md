@@ -9,13 +9,15 @@ PR #21, not yet merged or deployed.** The core now provides built-in OAuth 2.1, 
 owner login and CLI bearer tokens without Keycloak or its PostgreSQL database.
 Existing Keycloak connections must reconnect after the switch. The pilot's last
 recorded release remains unchanged; this PR does not inspect or migrate it.
-The approved one-command black box, local semantic search, understanding layer
+The approved one-command black box, understanding layer
 and full owner web UI remain staged targets; see [deployment](docs/deployment.md).
 
 The cleaned-up core provides `remember`, paged `memory_context` and
 bounded `context_package` retrieval over SQLite originals and existing knowledge.
-Search is lexical; morphology, local embeddings and unattended understanding are
-not yet delivered. Changing AI clients should preserve the owner's memory.
+Search now fuses exact FTS, RU/EN morphology and local E5 embeddings with automatic
+backfill and lexical fallback. Unattended understanding is not yet delivered.
+See [search and recovery](docs/search.md); no new environment variables are needed.
+Changing AI clients should preserve the owner's memory.
 
 ## Quick start today: local synthetic development
 
