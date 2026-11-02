@@ -43,10 +43,19 @@ rewritten. Pattern matching cannot identify every unlabeled secret.
 and retain changed external items as immutable revisions. Source and import
 identity commit together. Unchanged revisions skip safely on retries.
 
-The recommended MCP journey is `remember`, `context_package`, `read_material`.
-All 15 wire names remain: explicit-origin capture wrappers share store writers;
-legacy retrieval keeps exact-ID, phrase and cursor contracts. The
-[README tool table](../README.md#mcp-tools) lists the complete interface.
+MCP discovery lists only `search`, `remember`, `read` and `timeline`.
+`mcp-surface.ts` registers these thin adapters and overrides only `tools/list`;
+the SDK still validates and dispatches every old name through `tools/call` with
+its original schema and access checks. Existing text `remember` calls retain
+client provenance and retry identity; an optional file input uses the same file
+writer/redaction as `capture_file`. Grounded suggestions remain a distinct legacy
+write (`add_knowledge`). No storage or credential migration is required.
+
+`search` maps query/k/date inputs to the existing context package and points
+follow-up reads to `read`. `read` returns originals, file bytes or knowledge plus
+bounded incident relations in the authorized area. `timeline` uses the existing
+bounded source timeline, newest first by creation date else capture date; derived
+suggestions are not separate source events. See the [tool table](../README.md#mcp-tools).
 `memory.ts` pages original evidence; `context-package.ts` builds bounded evidence
 from sources/knowledge and one-hop relations. Both enforce area restrictions.
 Search combines exact and RU/EN stemmed FTS with local E5 embeddings. The image
