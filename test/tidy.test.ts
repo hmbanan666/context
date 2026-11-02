@@ -13,12 +13,27 @@ async function fixture() {
   const path = join(directory, "db");
   const sources = new SourceStore(path);
   const knowledge = new KnowledgeStore(path);
+  const db = new DatabaseSync(path);
   const add = (
     id: string,
     text: string,
     scope = "personal",
     capturedAt = "2026-01-01T00:00:00Z",
-  ) => sources.insert({ id, text, scope, capturedAt, origin: "fixture" });
+    type: "note" | "document" | null = "note",
+  ) => {
+    const source = sources.insert({
+      id,
+      text,
+      scope,
+      capturedAt,
+      origin: "fixture",
+    });
+    if (type)
+      db.prepare(
+        "INSERT INTO source_metadata (source_id,type) VALUES (?,?)",
+      ).run(id, type);
+    return source;
+  };
   return {
     directory,
     path,
@@ -36,11 +51,73 @@ async function fixture() {
       }).material.source;
     },
     async close() {
+      db.close();
       knowledge.close();
       sources.close();
       await rm(directory, { recursive: true, force: true });
     },
   };
+}
+
+for (const aType of ["note", "document", null] as const) {
+  for (const bType of ["note", "document", null] as const) {
+    test(`tidy supersede candidates require two notes: ${aType}/${bType}`, async () => {
+      const f = await fixture();
+      const index = new EmbeddingIndex(f.path, {
+        version: "fixture",
+        async embed() {
+          return Float32Array.from([1, 0]);
+        },
+      });
+      try {
+        f.add(
+          "old",
+          "Synthetic lunar agents limit 3",
+          "personal",
+          "2026-01-01T00:00:00Z",
+          bType,
+        );
+        f.add(
+          "new",
+          "Synthetic lunar agents limit 4",
+          "personal",
+          "2026-01-02T00:00:00Z",
+          aType,
+        );
+        while (await index.processOne()) {
+          /* synthetic vector preparation */
+        }
+        let calls = 0;
+        const run = await runTidy({
+          databasePath: f.path,
+          areas: ["personal"],
+          embeddingModel: "fixture",
+          llm: {
+            model: "fake",
+            async ask() {
+              calls++;
+              return [{ index: 0, current: "a" }];
+            },
+          },
+        });
+        const expected = aType === "note" && bType === "note" ? 1 : 0;
+        assert.equal(run.failures, 0);
+        assert.equal(run.outcome, "completed");
+        assert.equal(calls, expected);
+        assert.equal(run.pairs, expected);
+        assert.equal(run.supersedes, expected);
+        assert.deepEqual(
+          f.knowledge
+            .relations("personal")
+            .map(({ kind, fromId, toId }) => ({ kind, fromId, toId })),
+          expected ? [{ kind: "supersedes", fromId: "new", toId: "old" }] : [],
+        );
+      } finally {
+        await index.close();
+        await f.close();
+      }
+    });
+  }
 }
 test("tidy preserves a duplicate decision when effective dates reverse on rerun", async () => {
   const f = await fixture();

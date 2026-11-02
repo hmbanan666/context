@@ -259,7 +259,12 @@ These conservative guards keep `limit 3` / `limit 4` distinct even at cosine 1.
 Synthetic tests cover threshold boundaries and this numeric counterexample;
 private/real-model dedup precision has not been measured here.
 
-Model candidates are non-duplicate pairs with cosine ≥ 0.85, each at most 1,500
+Model candidates require both sources to have metadata type `note`; documents
+(including GitHub files/PRs and Codex reports) and untyped sources are excluded.
+Supersession requires a specific claim made false or obsolete (a changed value,
+reversed decision, or completed/replaced plan), not additional detail, an incident
+or event, an omitted rule in a summary, or related/complementary facts; doubt means null.
+Candidates are non-duplicate pairs with cosine ≥ 0.85, each at most 1,500
 characters, and at least one capture date since the last successful run (all on the
 first run). The model receives both texts and effective dates labelled a/b and
 returns indexed decisions `[{"index":0,"current":"a"|"b"|null},...]`; a choice more
