@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type CaptureInput, captureSchema } from "./contracts.js";
+import type { ImportProvenance } from "./import-format.js";
 import {
   type CaptureFileInput,
   type CaptureMaterialInput,
@@ -135,6 +136,15 @@ export class SourceStore {
           created_at TEXT,
           source_uri TEXT
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS source_imports (
+          source TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          source_id TEXT NOT NULL REFERENCES sources(id),
+          fingerprint TEXT NOT NULL,
+          provenance TEXT NOT NULL,
+          PRIMARY KEY (source, external_id, fingerprint)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS source_imports_source_id ON source_imports(source_id);
         CREATE TABLE IF NOT EXISTS source_files (
           source_id TEXT PRIMARY KEY NOT NULL REFERENCES sources(id),
           filename TEXT NOT NULL,
@@ -184,6 +194,33 @@ export class SourceStore {
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
     return { material, duplicate: saved.duplicate };
+  }
+
+  // Only the validated, redacted import boundary calls this owner-local writer.
+  importMaterial(
+    input: CaptureMaterialInput,
+    provenance: ImportProvenance,
+  ): { source: Source; duplicate: boolean; changed: boolean } {
+    const request = captureMaterialSchema.parse(input);
+    const metadata = materialMetadata(
+      request.metadata,
+      request.metadata?.type ?? "note",
+    );
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify([
+          this.#materialFingerprint("material", request, metadata),
+          provenance.source,
+          provenance.externalId,
+          provenance.kind ?? null,
+          Object.entries(provenance.metadata).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
+        ]),
+      )
+      .digest("hex");
+    const saved = this.#capture(request, fingerprint, { metadata }, provenance);
+    return { ...saved, changed: saved.changed ?? false };
   }
 
   captureFile(input: CaptureFileInput): {
@@ -241,14 +278,21 @@ export class SourceStore {
     request: Pick<CaptureInput, "text" | "origin" | "scope" | "idempotencyKey">,
     fingerprint: string,
     material?: StoredMaterial,
-  ): { source: Source; duplicate: boolean } {
+    imported?: ImportProvenance,
+  ): { source: Source; duplicate: boolean; changed?: boolean } {
     this.#database.exec("BEGIN IMMEDIATE");
     try {
-      const existing = this.#database
-        .prepare(`
+      const existing = imported
+        ? this.#database
+            .prepare(
+              "SELECT fingerprint, source_id FROM source_imports WHERE source = ? AND external_id = ? AND fingerprint = ?",
+            )
+            .get(imported.source, imported.externalId, fingerprint)
+        : this.#database
+            .prepare(`
         SELECT fingerprint, source_id FROM capture_requests WHERE scope = ? AND request_key = ?
       `)
-        .get(request.scope, request.idempotencyKey);
+            .get(request.scope, request.idempotencyKey);
       if (existing) {
         if (existing.fingerprint !== fingerprint) {
           throw new IdempotencyConflict(
@@ -260,6 +304,13 @@ export class SourceStore {
         this.#database.exec("COMMIT");
         return { source, duplicate: true };
       }
+      const changed = imported
+        ? !!this.#database
+            .prepare(
+              "SELECT 1 FROM source_imports WHERE source = ? AND external_id = ? LIMIT 1",
+            )
+            .get(imported.source, imported.externalId)
+        : false;
       const source = this.insert({
         id: randomUUID(),
         text: request.text,
@@ -299,13 +350,26 @@ export class SourceStore {
             );
         }
       }
-      this.#database
-        .prepare(`
+      if (imported) {
+        this.#database
+          .prepare(
+            "INSERT INTO source_imports (source, external_id, source_id, fingerprint, provenance) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(
+            imported.source,
+            imported.externalId,
+            source.id,
+            fingerprint,
+            JSON.stringify(imported),
+          );
+      } else
+        this.#database
+          .prepare(`
         INSERT INTO capture_requests (scope, request_key, fingerprint, source_id) VALUES (?, ?, ?, ?)
       `)
-        .run(request.scope, request.idempotencyKey, fingerprint, source.id);
+          .run(request.scope, request.idempotencyKey, fingerprint, source.id);
       this.#database.exec("COMMIT");
-      return { source, duplicate: false };
+      return { source, duplicate: false, ...(imported ? { changed } : {}) };
     } catch (error) {
       this.#database.exec("ROLLBACK");
       throw error;
@@ -390,7 +454,19 @@ export class SourceStore {
         }
       : { type: "note" };
     const file = this.#fileDescriptor(id);
-    return { source, metadata, ...(file ? { file } : {}) };
+    const imported = this.#database
+      .prepare("SELECT provenance FROM source_imports WHERE source_id = ?")
+      .get(id);
+    return {
+      source,
+      metadata,
+      ...(file ? { file } : {}),
+      ...(imported
+        ? {
+            import: JSON.parse(String(imported.provenance)) as ImportProvenance,
+          }
+        : {}),
+    };
   }
 
   #fileDescriptor(id: string): MaterialFileDescriptor | undefined {

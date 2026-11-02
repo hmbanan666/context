@@ -119,6 +119,16 @@ Old work tables are unused; historical review rows preserve knowledge status.
 No startup code drops or rewrites domain rows. Rollback needs matching code and
 provider configuration; never replace concurrent writes with an old snapshot.
 
+## Import existing archives
+
+Run `context import jsonl --source NAME --area AREA` inside the container using
+its existing `CONTEXT_DB_PATH` and `CONTEXT_AREAS`. Feed stdin or `--file PATH`.
+GitHub/Codex collectors run on the operator machine; they need no database access.
+See [imports](imports.md) for commands, redaction, immutable revisions and results.
+No new environment variables, services or volumes are required. The additive
+`source_imports` table/index ships with the code and is covered by SQLite backups.
+Deployment and real-data ingestion remain distinct owner actions.
+
 ## Backup and restore today
 
 After building, use a local synthetic database and new private filenames:

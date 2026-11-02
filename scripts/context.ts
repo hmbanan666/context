@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { AuthStore } from "../src/auth-store.js";
 import { readConfig } from "../src/config.js";
+import { runImport } from "./import-jsonl.js";
 
 async function passwordInput() {
   if (!process.stdin.isTTY) {
@@ -50,6 +51,10 @@ async function passwordInput() {
 }
 async function main() {
   const [kind, action, name, ...args] = process.argv.slice(2);
+  if (kind === "import" && action === "jsonl") {
+    await runImport(process.argv.slice(4));
+    return;
+  }
   const config = readConfig(process.env);
   if (!config.oauth)
     throw new Error("CLI requires CONTEXT_AUTH=oauth and CONTEXT_PUBLIC_URL");
@@ -138,6 +143,13 @@ async function main() {
 }
 // Do not serialize raw errors: they may contain credentials or request data.
 void main().catch(() => {
+  if (process.argv[2] === "import") {
+    process.stderr.write(
+      '{"type":"error","reason":"import_failed_check_arguments_configuration_or_io"}\n',
+    );
+    process.exitCode = 1;
+    return;
+  }
   process.stderr.write(
     "Context command failed; check arguments, protected configuration and owner state.\n",
   );

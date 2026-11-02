@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { captureSchema, scopeSchema } from "./contracts.js";
+import type { ImportProvenance } from "./import-format.js";
 import type { Source } from "./store.js";
 
 const nonblank = (max: number) =>
@@ -135,6 +136,7 @@ export interface MaterialFileDescriptor {
 
 export interface Material {
   readonly source: Source;
+  readonly import?: ImportProvenance;
   readonly metadata: MaterialMetadata;
   readonly file?: MaterialFileDescriptor;
 }
