@@ -145,6 +145,19 @@ successfully retrieves the synthetic backup/restore paraphrases in the resource
 benchmark without shared English search terms. Fake-embedder integration tests
 separately verify RU/EN paraphrase plumbing and access isolation deterministically.
 
+## Merged synthetic eval harness
+
+With the same frozen question file and k=10, `npm run eval:retrieval` at baseline
+`7370702` reports hit@1 / expected-match recall@10 / MRR of **0.333333** each.
+The rebased search branch reports **0.666667** each. Both runs complete with
+**zero isolation violations**. Exact RU/EN cases remain correct, and both
+inflection cases now pass; the two paraphrase cases remain misses. The denied-area
+case passes and the placeholder is skipped in both runs.
+
+This command seeds no vectors and the read-only eval MCP handler does not attach
+an embedder. These numbers measure exact/stemmed retrieval and isolation, not E5
+paraphrase quality. The real-model measurements above are separate. The PR records
+the exact evaluated head, question-file hash and observed latency for both runs.
+
 Private eval questions, actual hosted OAuth save/reopen/ask after inactivity and
-Docker execution were not verified locally. The parallel eval harness is tracked
-separately; any before/after results available at review time belong in the PR.
+Docker execution were not verified locally; container checks run in GitHub CI.
