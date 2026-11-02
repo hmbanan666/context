@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { EmbeddingIndex } from "../src/embedding-index.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { SourceStore } from "../src/store.js";
 import { runTidy } from "../src/tidy.js";
@@ -23,6 +24,16 @@ async function fixture() {
     sources,
     knowledge,
     add,
+    capture(text: string, createdAt: string) {
+      return sources.captureMaterial({
+        version: 1,
+        scope: "personal",
+        origin: "fixture",
+        idempotencyKey: text.trim().replaceAll(" ", "-"),
+        text,
+        metadata: { createdAt },
+      }).material.source;
+    },
     async close() {
       knowledge.close();
       sources.close();
@@ -33,12 +44,13 @@ async function fixture() {
 test("tidy without a key deduplicates within areas, preserves originals, and dry-run writes nothing", async () => {
   const f = await fixture();
   try {
-    const original = f.add("original", "Synthetic lunar garden note");
-    const copy = f.add(
-      "copy",
+    const copy = f.capture(
       "  Synthetic   lunar garden note  ",
-      "personal",
       "2026-01-02T00:00:00Z",
+    );
+    const original = f.capture(
+      "Synthetic lunar garden note",
+      "2026-01-01T00:00:00Z",
     );
     f.add("foreign", original.text, "vault");
     const options = { databasePath: f.path, areas: ["personal", "vault"] };
@@ -62,6 +74,134 @@ test("tidy without a key deduplicates within areas, preserves originals, and dry
     assert.ok(!history.includes("lunar"));
     assert.ok(JSON.parse(history.trim().split("\n")[0] ?? "").lastSuccessfulAt);
   } finally {
+    await f.close();
+  }
+});
+
+for (const [name, aDate, bDate, choice, skipped] of [
+  ["batched imports", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "b", 0],
+  ["equal dates", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "b", 0],
+  [
+    "exactly one minute apart",
+    "2026-01-01T00:01:00Z",
+    "2026-01-01T00:00:00Z",
+    "b",
+    0,
+  ],
+  [
+    "older b contradicts clear dates",
+    "2026-01-01T00:01:00.001Z",
+    "2026-01-01T00:00:00Z",
+    "b",
+    1,
+  ],
+  [
+    "older a contradicts clear dates",
+    "2026-01-01T00:00:00Z",
+    "2026-01-02T00:00:00Z",
+    "a",
+    1,
+  ],
+  ["no supersession", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", null, 0],
+] as const) {
+  test(`tidy uses effective dates and model direction: ${name}`, async (t) => {
+    t.mock.timers.enable({
+      apis: ["Date"],
+      now: Date.parse("2026-02-01T00:00:00Z"),
+    });
+    const f = await fixture();
+    const index = new EmbeddingIndex(f.path, {
+      version: "fixture",
+      async embed() {
+        return Float32Array.from([1, 0]);
+      },
+    });
+    try {
+      const current = f.capture("Synthetic lunar agents limit 4", bDate);
+      const other = f.capture("Synthetic lunar agents limit 3", aDate);
+      assert.equal(current.capturedAt, other.capturedAt);
+      while (await index.processOne()) {
+        /* synthetic vector preparation */
+      }
+      const run = await runTidy({
+        databasePath: f.path,
+        areas: ["personal"],
+        embeddingModel: "fixture",
+        llm: {
+          model: "fake",
+          async ask(_instruction: string, data: unknown) {
+            assert.deepEqual(data, {
+              a: { text: other.text, effectiveDate: aDate },
+              b: { text: current.text, effectiveDate: bDate },
+            });
+            return { current: choice };
+          },
+        },
+      });
+      assert.equal(run.failures, 0);
+      assert.equal(run.outcome, "completed");
+      assert.equal(run.skipped, skipped);
+      const expected = choice !== null && !skipped;
+      assert.equal(run.supersedes, expected ? 1 : 0);
+      const relations = f.knowledge.relations("personal");
+      assert.equal(relations.length, expected ? 1 : 0);
+      if (expected) {
+        assert.equal(relations[0]?.fromId, current.id);
+        assert.equal(relations[0]?.toId, other.id);
+      }
+    } finally {
+      await index.close();
+      await f.close();
+    }
+  });
+}
+
+test("tidy filters both watermark bounds by effective date with capture-date fallback", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-01-02T00:00:00Z"),
+  });
+  const f = await fixture();
+  const index = new EmbeddingIndex(f.path, {
+    version: "fixture",
+    async embed() {
+      return Float32Array.from([1, 0]);
+    },
+  });
+  let calls = 0;
+  const options = {
+    databasePath: f.path,
+    areas: ["personal"],
+    embeddingModel: "fixture",
+    llm: {
+      model: "fake",
+      async ask() {
+        calls++;
+        return { current: null };
+      },
+    },
+  };
+  try {
+    assert.equal(
+      (await runTidy(options)).lastSuccessfulAt,
+      "2026-01-02T00:00:00.000Z",
+    );
+    t.mock.timers.setTime(Date.parse("2026-01-04T00:00:00Z"));
+    f.add("fallback", "Synthetic lunar agents limit 1");
+    f.capture("Synthetic lunar agents limit 2", "2026-01-01T00:00:00Z");
+    f.capture("Synthetic lunar agents limit 3", "2026-01-03T00:00:00Z");
+    f.capture("Synthetic lunar agents limit 4", "2026-01-05T00:00:00Z");
+    while (await index.processOne()) {
+      /* synthetic vector preparation */
+    }
+    const run = await runTidy(options);
+    // Only Jan 3 paired with either Jan 1 source lies inside the window.
+    assert.equal(run.pairs, 2);
+    assert.equal(calls, 2);
+    assert.equal(run.failures, 0);
+    assert.equal(run.lastSuccessfulAt, "2026-01-04T00:00:00.000Z");
+  } finally {
+    await index.close();
     await f.close();
   }
 });
@@ -100,7 +240,7 @@ test("tidy uses vectors for conservative dedup and model updates, retries failur
       async ask(_instruction: string, data: unknown) {
         calls++;
         assert.ok(!JSON.stringify(data).includes("limit 8"));
-        return invalid ? { supersedes: "yes" } : { supersedes: true };
+        return invalid ? { current: "yes" } : { current: "a" };
       },
     };
     const options = {
@@ -287,7 +427,7 @@ test("capped model pairs resume and missing vectors do not advance the successfu
         model: "fake",
         async ask() {
           calls++;
-          return { supersedes: false };
+          return { current: null };
         },
       },
     };
