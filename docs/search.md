@@ -71,17 +71,15 @@ inflections; it is not full lemmatization and cannot resolve every word form.
   inference queue serializes model calls with at most eight pending calls. Query
   embedding waits at most two seconds before lexical fallback. Retry claims and
   rebuild invalidation support concurrent service/CLI use without duplicate vectors.
-- Storage is capped at 50,000 chunks. Cosine search streams 256-row batches, keeps
-  at most ten distinct vector records per source/knowledge list and yields between batches.
+- Storage is capped at 50,000 chunks. Cosine search streams 256-row batches,
+  keeps the top 20 distinct vector records per source/knowledge list with cosine
+  at least 0.80, and yields between batches. There is no best-score gap filter.
   Exact, stemmed and vector lists each apply area/date filters before ranking and
   fusion; knowledge also checks source-area provenance and rejected status.
-  E5 candidates must reach cosine 0.78 and fall within 0.01 of the best eligible
-  score in their source/knowledge list, capped at ten records per list. These
-  model-specific bounds admit weaker cross-language paraphrases while suppressing
-  distant neighbours; exact/stemmed matches remain eligible regardless. See the
-  calibration below for measured benefits and remaining misses.
-  Reciprocal rank fusion uses `1 / (60 + rank)` across those three lists. Packages
-  still interleave source and knowledge candidates and expand only one relation hop.
+  Reciprocal rank fusion uses `weight / (60 + rank)`: exact and stemmed lists
+  have weight 1 each; the vector list has fixed weight 5. Exact/stemmed matches
+  remain eligible regardless of cosine. Packages still interleave source and
+  knowledge candidates and expand only one relation hop.
 - `skipLibCheck` skips upstream declaration-file validation because Transformers.js
   4.3.2/tokenizers declarations contain incompatible NodeNext imports and unrelated
   image-processor overrides. Strict checking of project code remains enabled.
@@ -143,11 +141,11 @@ All three runs had zero tool errors and no package responses over 4,096 bytes.
 The inflection case improves; the bounded period overview and broad English
 paraphrase “Who overcame adversity?” remain incomplete. Before adding the
 similarity floor, unrestricted positive cosine neighbours raised recall to 0.968
-but reduced precision to 0.34 and failed the absent-evidence question. The fixed
-floor avoids that regression, at the cost of weaker paraphrases. The model also
-successfully retrieves the synthetic backup/restore paraphrases in the resource
-benchmark without shared English search terms. Fake-embedder integration tests
-separately verify RU/EN paraphrase plumbing and access isolation deterministically.
+but reduced precision to 0.34 and failed the absent-evidence question. These are
+historical measurements, not results for the current tuning. A 0.80 floor does
+not guarantee absent evidence produces an empty package: weak vector neighbours
+above it are accepted candidates and still need source-grounded interpretation.
+Fake-embedder tests verify retrieval rules and access isolation deterministically.
 
 ## Merged synthetic eval harness
 
@@ -177,28 +175,10 @@ borrows the service's model; standalone eval opens the index read-only and warms
 its own model before measuring queries. History includes search mode/model,
 semantic availability and vector-only versus lexical-only question counts.
 
-A separate **real-model** calibration on Node 24.21.0 used the pinned q8 E5 model,
-12 fictional short Russian questions against English passages of 191–211
-characters, plus six unrelated Russian questions. Runtime fetch was disabled.
-The expected-passage cosines were 0.79964, 0.82382, 0.78673, 0.80160, 0.82003,
-0.78001, 0.78965, 0.79411, 0.79709, 0.80171, 0.80158 and 0.76239. Eleven expected
-passages ranked first; the last ranked second. Unrelated queries' best scores
-ranged from **0.67577 to 0.74782**.
-
-| Rule | Expected passages admitted / 12 | Irrelevant passages admitted | Unrelated queries with hits / 6 |
-| --- | ---: | ---: | ---: |
-| Previous floor 0.80 | 5 | 0 | 0 |
-| Floor 0.76, within 0.02 of best, cap 10 | 12 | 2 | 0 |
-| **Chosen: floor 0.78, within 0.01 of best, cap 10** | **11** | **0** | **0** |
-
-The last pair remains a miss; the model is not universally cross-lingual. These
-small synthetic calibration numbers are not a guarantee of private-corpus
-precision. Replaying the older ten-question package corpus with the real model
-preserved **8/10 complete evidence answers**, expected-source recall **0.857**,
-and the empty absent-evidence answer. Mean precision fell **0.900 → 0.833**:
-one boundary question gained two irrelevant source cards via derived evidence.
-The looser 0.76 rule added noise to several questions and was rejected. Broad
-“Who overcame adversity?” still misses its expected source.
+The earlier synthetic calibration used 12 fictional RU questions with EN passages
+and six unrelated queries. It selected a 0.78 floor, 0.01 best-score gap and cap
+10. The real-corpus calibration below supersedes that rule. The following
+resource measurements were taken with the earlier configuration.
 
 For resource measurement, repeat the twelve synthetic vectors to **14,550 stored
 chunks**, leaving source text unchanged, then launch the actual CLI as a separate
@@ -212,8 +192,8 @@ sources for Russian queries. Load/control time is excluded from query latency.
 
 The owner-reported server RSS (~505 MiB) plus this CLI peak exceeds 1 GiB;
 Compose therefore uses **1536m**, with no new environment variables or volumes.
-Actual hosted cgroup usage, concurrent backup/capture and private quality remain
-unverified. Nightly eval has no second model allocation.
+Actual hosted cgroup usage and concurrent backup/capture remain unverified.
+Nightly eval has no second model allocation.
 
 Reproduce offline after downloading the public model once:
 
@@ -229,3 +209,22 @@ It is deliberately separate from `npm run check`; tests use fake embedders.
 Keep downloaded weights outside the default `models/` directory when running
 model-free checks: process-start tests launch the real service and otherwise
 load those optional weights.
+
+## Real-corpus calibration (2026-11-02)
+
+The architect reported 34 private RU/EN questions over approximately 1,750
+imported sources (GitHub docs/PRs, Codex task reports and short assistant memory
+notes), at k=10 through the same protected MCP path. Only aggregate results are
+recorded here; this implementation task did not rerun the private evaluation.
+
+| Retrieval | hit@1 | Any-expected-hit@10 | MRR |
+| --- | ---: | ---: | ---: |
+| Lexical only | 0.294 | 0.559 | 0.351 |
+| Previous hybrid | 0.353 | 0.647 | 0.441 |
+| Chosen: floor 0.80, cap 20, vector RRF weight 5 | 0.353 | 0.794 | 0.479 |
+
+All runs had zero isolation violations. Hundreds of sources exceeded cosine
+0.80 for any query, while the 0.01 gap admitted only 1–3 vector candidates.
+Removing the gap lets vectors contribute; weight 5 compensates for exact and
+stemmed lists rewarding the same lexical evidence twice. Absolute cosine is
+not a reliable relevance threshold on this corpus; weak neighbours can remain.

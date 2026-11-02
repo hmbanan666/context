@@ -9,12 +9,10 @@ import {
 } from "./search-lexical.js";
 
 const MAX_CHUNKS = 50_000;
-// Measured with the pinned E5 model: RU/EN paraphrases can fall below 0.8.
-// Keep a noise floor and only close neighbours of the best eligible record.
-// Lexical hits never depend on these model-specific bounds (see docs/search.md).
-const MIN_COSINE = 0.78;
-const MAX_SCORE_GAP = 0.01;
-const MAX_VECTOR_CANDIDATES = 10;
+// Calibrated on the private RU/EN corpus (see docs/search.md).
+// Lexical hits never depend on these model-specific bounds.
+const MIN_COSINE = 0.8;
+const MAX_VECTOR_CANDIDATES = 20;
 const LEASE_MS = 600_000;
 export interface SemanticSelection {
   scope: string;
@@ -405,11 +403,8 @@ export class EmbeddingIndex {
     const ranked = [...top.values()].sort(
       (a, b) => b.score - a.score || a.id.localeCompare(b.id),
     );
-    const best = ranked[0]?.score ?? 1;
     return {
-      hits: ranked
-        .filter((hit) => hit.score >= best - MAX_SCORE_GAP)
-        .map(({ id, offset }) => ({ id, offset })),
+      hits: ranked.map(({ id, offset }) => ({ id, offset })),
       reasons: scanned === MAX_CHUNKS ? ["vector_scan_limit"] : [],
     };
   }

@@ -270,13 +270,17 @@ test("standalone eval opens vectors read-only and reports model failure in outpu
   }
 });
 
-test("cross-language candidates below 0.8 survive while weaker neighbours stay out", async () => {
+test("semantic candidates use a 0.80 floor, top 20 cap and outweigh duplicate lexical evidence", async () => {
   const dir = await mkdtemp(join(process.cwd(), ".output-eval-"));
   const path = join(dir, "db");
   const f = await openPackageFixture(path, {
     version: "synthetic-eval-v1",
     async embed(text, purpose) {
-      const score = text.includes("copies") ? 0.795 : 0.782;
+      const score = text.includes("vault")
+        ? 0.8
+        : text.includes("copies")
+          ? 0.9
+          : 0.795;
       return Float32Array.from(
         purpose === "query" ? [1, 0] : [score, Math.sqrt(1 - score ** 2)],
       );
@@ -313,7 +317,7 @@ test("cross-language candidates below 0.8 survive while weaker neighbours stay o
       ),
       [source.id],
     );
-    for (let i = 0; i < 12; i++)
+    for (let i = 0; i < 25; i++)
       f.store.capture({
         version: 1,
         scope: "personal",
@@ -330,7 +334,17 @@ test("cross-language candidates below 0.8 survive while weaker neighbours stay o
     });
     assert.equal(
       (capped.structuredContent as { sources: unknown[] }).sources.length,
-      10,
+      20,
+    );
+    const fused = await client.callTool({
+      name: "context_package",
+      arguments: { question: "unrelated", limit: 1 },
+    });
+    assert.deepEqual(
+      (fused.structuredContent as { sources: { id: string }[] }).sources.map(
+        (s) => s.id,
+      ),
+      [source.id],
     );
   } finally {
     await f.close();
