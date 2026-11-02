@@ -59,8 +59,7 @@ test("MCP client captures, retries, searches and recalls an unchanged source aft
     client = await connect(`http://127.0.0.1:${service.address.port}`);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const name of ["capture", "recall"]) assert.ok(names.includes(name));
-    assert.equal(names.includes("approve"), false);
+    assert.deepEqual(names.sort(), ["read", "remember", "search", "timeline"]);
     const saved = await client.callTool({
       name: "capture",
       arguments: capture,
@@ -101,6 +100,25 @@ test("MCP client captures, retries, searches and recalls an unchanged source aft
       arguments: { version: 1, scope, id: source.id },
     });
     assert.deepEqual(payload(recalled).sources, [source]);
+    const read = await client.callTool({
+      name: "read",
+      arguments: { scope, id: source.id },
+    });
+    assert.deepEqual(
+      z.object({ source: sourceSchema }).parse(payload(read).material).source,
+      source,
+    );
+    const found = await client.callTool({
+      name: "search",
+      arguments: { scope, query: "cobalt fox" },
+    });
+    assert.deepEqual(
+      z
+        .array(z.object({ id: z.string() }))
+        .parse(payload(found).sources)
+        .map((s) => s.id),
+      [source.id],
+    );
     const retry = await client.callTool({
       name: "capture",
       arguments: capture,
