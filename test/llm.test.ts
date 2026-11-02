@@ -28,7 +28,7 @@ test("OpenAI-compatible client requires key and model, validates JSON and never 
         choices: [
           {
             message: {
-              content: calls === 1 ? '{"supersedes":true}' : "invalid",
+              content: calls === 1 ? '{"items":[]}' : "invalid",
             },
           },
         ],
@@ -38,7 +38,7 @@ test("OpenAI-compatible client requires key and model, validates JSON and never 
   assert.ok(client);
   assert.deepEqual(
     await client?.ask("Return JSON", { text: `token sk-${"a".repeat(40)}` }),
-    { supersedes: true },
+    { items: [] },
   );
   await assert.rejects(() => client.ask("Return JSON", {}));
 });

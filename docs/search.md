@@ -253,29 +253,23 @@ numeric/negation tokens. Tidy uses the source creation date when present, otherw
 the capture date, for direction and oldest-first canonical choice, with insertion
 order breaking canonical ties. Existing duplicate decisions take precedence over
 date changes; tidy skips pairs linked in either direction and links that would
-close a duplicate chain into a cycle. Watermark windows use capture time so newly
-imported old notes are considered.
+close a duplicate chain into a cycle.
 These conservative guards keep `limit 3` / `limit 4` distinct even at cosine 1.
 Synthetic tests cover threshold boundaries and this numeric counterexample;
 private/real-model dedup precision has not been measured here.
 
-Model candidates require both sources to have metadata type `note`; documents
-(including GitHub files/PRs and Codex reports) and untyped sources are excluded.
-Supersession requires a specific claim made false or obsolete (a changed value,
-reversed decision, or completed/replaced plan), not additional detail, an incident
-or event, an omitted rule in a summary, or related/complementary facts; doubt means null.
-Candidates are non-duplicate pairs with cosine ≥ 0.85, each at most 1,500
-characters, and at least one capture date since the last successful run (all on the
-first run). The model receives both texts and effective dates labelled a/b and
-returns indexed decisions `[{"index":0,"current":"a"|"b"|null},...]`; a choice more
-than one minute older than the other is skipped without failure, otherwise a non-null choice links current → other.
-Numeric changes rejected by dedup remain eligible even above 0.97.
-At most 200 pairs are checked per run, in batches of up to 25. Superseding and
-inbox sorting share a hard cap of 12 LLM calls for every processor. Content-free
-history records `processor` and `llmCalls`, and retains insertion-position pair
-and inbox cursors and a window end for capped runs; later runs finish that window
-before advancing the success watermark. Failed/invalid model output skips a pair and is counted.
-Missing vectors or invalid entries prevent advancing the model watermark; capped
-windows finish their remaining pages before a clean replay retries skipped work.
-Switching processor, model or the selected area set starts its own watermark. Deterministic dedup always checks all
-selected sources and relation writes are idempotent. Topic distillation is deferred.
+Automatic LLM supersession was removed after owner-reported live runs produced
+only **3 correct proposals out of 12** across three runs, even with note-only
+filtering and a stricter prompt. Notes can contain several claims; replacing a
+whole record can hide claims that remain valid. Clients that know the context
+supersede explicitly through `remember` with `supersedes`; search demotion and
+existing history links are unchanged.
+
+Tidy keeps deterministic dedup and optional LLM inbox sorting, with up to 25
+items per call and a hard cap of 12 calls per run for either processor. An
+insertion-position inbox cursor resumes capped runs; uncertain or failed items
+are revisited after the cursor wraps. Sorting needs no vectors. Content-free
+history records processor, model, counts, duration and the last completed run's
+time; old supersession fields are ignored when reading history. Deterministic
+dedup always checks all selected sources and relation writes are idempotent.
+Topic distillation is deferred.

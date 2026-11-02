@@ -235,7 +235,7 @@ context tidy --area inbox
 ```
 
 Dry-run reports proposed relation/move counts and writes neither SQLite nor
-history; configured model steps still call the selected processor. Normal runs
+history; configured inbox sorting still calls the selected processor. Normal runs
 append counts (including `llmCalls`), processor, outcome, duration, model and
 last-success time to `/app/data/tidy/history.jsonl`. Preserve that file separately if needed; the SQLite
 snapshot contains relations/moved areas but not either JSONL history file.
@@ -253,10 +253,10 @@ The OpenAI-compatible API remains the default (`CONTEXT_PROCESSOR` unset or
 Configuring a remote endpoint authorizes sending redacted source text there for
 these steps. Keys and source/model response text never appear in tidy history or
 logs. No new dependency, timer, service or volume is needed. Standalone tidy reads
-stored E5 vectors without loading another model. Missing vectors leave LLM runs
-partial so later indexing cannot strand unprocessed facts. Model errors also
-leave the successful watermark unchanged. Uncertain/conflicting inbox routing
-stays for the owner; a destination with broader existing read grants is skipped.
+stored E5 vectors without loading another model. Inbox sorting does not
+require vectors. Failed or capped runs leave the last-success time unchanged.
+Uncertain/conflicting inbox routing stays for the owner; a destination with
+broader existing read grants is skipped.
 
 ### Optional Codex subscription processor
 
@@ -271,7 +271,7 @@ tidy doing dedup only. Subscription/model availability and login refresh after
 inactivity still need a live check; synthetic tests do not establish them.
 Each tidy run first checks `codex login status` once, with a five-second timeout
 and discarded output. A failed check skips model steps with `llmCalls: 0`;
-dedup still runs and the successful watermark does not advance.
+dedup still runs and the last-success time does not advance.
 
 On the host, install a static Codex executable compatible with the container's
 Linux architecture (not the npm launcher). Set `CONTEXT_CODEX_BIN` to its absolute
@@ -295,6 +295,7 @@ Root filesystem read-only, `cap_drop: ALL` and `no-new-privileges` remain;
 no SSH or Docker socket is mounted. The CLI alone handles its auth files, including
 refresh. [Codex CLI reference](https://developers.openai.com/codex/cli/reference).
 
-Both processors batch up to 25 supersede pairs or inbox items per call, with a
-shared hard limit of 12 calls per tidy run. Counts include failed calls. Cursors
-retain leftover work for the next night; invalid entries are skipped and counted.
+Both processors batch up to 25 inbox items per call, with a hard limit of 12
+calls per tidy run. Counts include failed calls. An inbox cursor retains leftover
+work for the next night; invalid entries are skipped and counted, then retried
+after the cursor wraps. Old supersession fields in history JSONL are ignored.

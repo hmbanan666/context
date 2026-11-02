@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -19,7 +19,6 @@ async function fixture() {
     text: string,
     scope = "personal",
     capturedAt = "2026-01-01T00:00:00Z",
-    type: "note" | "document" | null = "note",
   ) => {
     const source = sources.insert({
       id,
@@ -28,10 +27,10 @@ async function fixture() {
       capturedAt,
       origin: "fixture",
     });
-    if (type)
-      db.prepare(
-        "INSERT INTO source_metadata (source_id,type) VALUES (?,?)",
-      ).run(id, type);
+    db.prepare("INSERT INTO source_metadata (source_id,type) VALUES (?,?)").run(
+      id,
+      "note",
+    );
     return source;
   };
   return {
@@ -59,66 +58,6 @@ async function fixture() {
   };
 }
 
-for (const aType of ["note", "document", null] as const) {
-  for (const bType of ["note", "document", null] as const) {
-    test(`tidy supersede candidates require two notes: ${aType}/${bType}`, async () => {
-      const f = await fixture();
-      const index = new EmbeddingIndex(f.path, {
-        version: "fixture",
-        async embed() {
-          return Float32Array.from([1, 0]);
-        },
-      });
-      try {
-        f.add(
-          "old",
-          "Synthetic lunar agents limit 3",
-          "personal",
-          "2026-01-01T00:00:00Z",
-          bType,
-        );
-        f.add(
-          "new",
-          "Synthetic lunar agents limit 4",
-          "personal",
-          "2026-01-02T00:00:00Z",
-          aType,
-        );
-        while (await index.processOne()) {
-          /* synthetic vector preparation */
-        }
-        let calls = 0;
-        const run = await runTidy({
-          databasePath: f.path,
-          areas: ["personal"],
-          embeddingModel: "fixture",
-          llm: {
-            model: "fake",
-            async ask() {
-              calls++;
-              return [{ index: 0, current: "a" }];
-            },
-          },
-        });
-        const expected = aType === "note" && bType === "note" ? 1 : 0;
-        assert.equal(run.failures, 0);
-        assert.equal(run.outcome, "completed");
-        assert.equal(calls, expected);
-        assert.equal(run.pairs, expected);
-        assert.equal(run.supersedes, expected);
-        assert.deepEqual(
-          f.knowledge
-            .relations("personal")
-            .map(({ kind, fromId, toId }) => ({ kind, fromId, toId })),
-          expected ? [{ kind: "supersedes", fromId: "new", toId: "old" }] : [],
-        );
-      } finally {
-        await index.close();
-        await f.close();
-      }
-    });
-  }
-}
 test("tidy preserves a duplicate decision when effective dates reverse on rerun", async () => {
   const f = await fixture();
   try {
@@ -310,148 +249,7 @@ test("tidy without a key deduplicates within areas, preserves originals, and dry
   }
 });
 
-for (const [name, aDate, bDate, choice, skipped] of [
-  ["batched imports", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "b", 0],
-  ["equal dates", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "b", 0],
-  [
-    "exactly one minute apart",
-    "2026-01-01T00:01:00Z",
-    "2026-01-01T00:00:00Z",
-    "b",
-    0,
-  ],
-  [
-    "older b contradicts clear dates",
-    "2026-01-01T00:01:00.001Z",
-    "2026-01-01T00:00:00Z",
-    "b",
-    1,
-  ],
-  [
-    "older a contradicts clear dates",
-    "2026-01-01T00:00:00Z",
-    "2026-01-02T00:00:00Z",
-    "a",
-    1,
-  ],
-  ["no supersession", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", null, 0],
-] as const) {
-  test(`tidy uses effective dates and model direction: ${name}`, async (t) => {
-    t.mock.timers.enable({
-      apis: ["Date"],
-      now: Date.parse("2026-02-01T00:00:00Z"),
-    });
-    const f = await fixture();
-    const index = new EmbeddingIndex(f.path, {
-      version: "fixture",
-      async embed() {
-        return Float32Array.from([1, 0]);
-      },
-    });
-    try {
-      const current = f.capture("Synthetic lunar agents limit 4", bDate);
-      const other = f.capture("Synthetic lunar agents limit 3", aDate);
-      assert.equal(current.capturedAt, other.capturedAt);
-      while (await index.processOne()) {
-        /* synthetic vector preparation */
-      }
-      const run = await runTidy({
-        databasePath: f.path,
-        areas: ["personal"],
-        embeddingModel: "fixture",
-        llm: {
-          model: "fake",
-          async ask(_instruction: string, data: unknown) {
-            assert.deepEqual(data, [
-              {
-                index: 0,
-                a: { text: other.text, effectiveDate: aDate },
-                b: { text: current.text, effectiveDate: bDate },
-              },
-            ]);
-            return [{ index: 0, current: choice }];
-          },
-        },
-      });
-      assert.equal(run.failures, 0);
-      assert.equal(run.outcome, "completed");
-      assert.equal(run.skipped, skipped);
-      const expected = choice !== null && !skipped;
-      assert.equal(run.supersedes, expected ? 1 : 0);
-      const relations = f.knowledge.relations("personal");
-      assert.equal(relations.length, expected ? 1 : 0);
-      if (expected) {
-        assert.equal(relations[0]?.fromId, current.id);
-        assert.equal(relations[0]?.toId, other.id);
-      }
-    } finally {
-      await index.close();
-      await f.close();
-    }
-  });
-}
-
-test("tidy windows use capture time so newly imported old notes are considered", async (t) => {
-  t.mock.timers.enable({
-    apis: ["Date"],
-    now: Date.parse("2026-01-02T00:00:00Z"),
-  });
-  const f = await fixture();
-  const index = new EmbeddingIndex(f.path, {
-    version: "fixture",
-    async embed() {
-      return Float32Array.from([1, 0]);
-    },
-  });
-  let calls = 0;
-  const options = {
-    databasePath: f.path,
-    areas: ["personal"],
-    embeddingModel: "fixture",
-    llm: {
-      model: "fake",
-      async ask(_instruction: string, data: unknown) {
-        calls++;
-        return (data as { index: number }[]).map(({ index }) => ({
-          index,
-          current: null,
-        }));
-      },
-    },
-  };
-  try {
-    assert.equal(
-      (await runTidy(options)).lastSuccessfulAt,
-      "2026-01-02T00:00:00.000Z",
-    );
-    t.mock.timers.setTime(Date.parse("2026-01-04T00:00:00Z"));
-    f.add("fallback", "Synthetic lunar agents limit 1");
-    f.capture("Synthetic lunar agents limit 2", "2026-01-01T00:00:00Z");
-    f.capture("Synthetic lunar agents limit 3", "2026-01-03T00:00:00Z");
-    f.capture("Synthetic lunar agents limit 4", "2026-01-05T00:00:00Z");
-    f.add(
-      "future-capture",
-      "Synthetic lunar agents limit 5",
-      "personal",
-      "2026-01-05T00:00:00Z",
-    );
-    while (await index.processOne()) {
-      /* synthetic vector preparation */
-    }
-    const run = await runTidy(options);
-    // All three imports arrived Jan 4, including the old and future authored notes.
-    // Their six pairs qualify; a future capture does not.
-    assert.equal(run.pairs, 6);
-    assert.equal(calls, 1);
-    assert.equal(run.failures, 0);
-    assert.equal(run.lastSuccessfulAt, "2026-01-04T00:00:00.000Z");
-  } finally {
-    await index.close();
-    await f.close();
-  }
-});
-
-test("tidy uses vectors for conservative dedup and model updates, retries failures without advancing success", async () => {
+test("tidy deduplicates with vectors without asking a model to supersede notes", async () => {
   const { EmbeddingIndex } = await import("../src/embedding-index.js");
   const f = await fixture();
   const index = new EmbeddingIndex(f.path, {
@@ -485,14 +283,13 @@ test("tidy uses vectors for conservative dedup and model updates, retries failur
     while (await index.processOne()) {
       /* synthetic vector preparation */
     }
-    let invalid = true;
     let calls = 0;
     const llm = {
       model: "fake",
       async ask(_instruction: string, data: unknown) {
         calls++;
         assert.ok(!JSON.stringify(data).includes("limit 8"));
-        return [{ index: 0, current: invalid ? "yes" : "a" }];
+        return [{ index: 0, current: "a" }];
       },
     };
     const options = {
@@ -501,23 +298,22 @@ test("tidy uses vectors for conservative dedup and model updates, retries failur
       embeddingModel: "fixture",
       llm,
     };
-    const failed = await runTidy(options);
-    assert.equal(failed.duplicates, 1);
-    assert.equal(failed.failures, 1);
-    assert.equal(failed.outcome, "partial");
-    assert.equal(failed.lastSuccessfulAt, null);
-    invalid = false;
     const run = await runTidy(options);
-    assert.equal(run.supersedes, 1);
-    const update = f.knowledge
-      .relations("personal")
-      .find((r) => r.kind === "supersedes");
-    assert.equal(update?.fromId, "new");
-    assert.equal(update?.toId, "old");
-    assert.deepEqual(update?.creator, { kind: "model", name: "fake" });
-    const before = calls;
-    assert.equal((await runTidy(options)).supersedes, 0);
-    assert.equal(calls, before);
+    assert.equal(run.duplicates, 1);
+    assert.equal(run.failures, 0);
+    assert.equal(run.outcome, "completed");
+    assert.equal(calls, 0);
+    assert.deepEqual(
+      f.knowledge.relations("personal").map(({ kind, fromId, toId }) => ({
+        kind,
+        fromId,
+        toId,
+      })),
+      [{ kind: "duplicates", fromId: "copy", toId: "new" }],
+    );
+    assert.ok(f.sources.find("old", "personal"));
+    assert.equal((await runTidy(options)).duplicates, 0);
+    assert.equal(calls, 0);
   } finally {
     await index.close();
     await f.close();
@@ -673,56 +469,6 @@ test("tidy CLI dry-run reports synthetic counts without changing database bytes 
   }
 });
 
-test("capped model pairs resume and missing vectors do not advance the successful watermark", async () => {
-  const { EmbeddingIndex } = await import("../src/embedding-index.js");
-  const f = await fixture();
-  const index = new EmbeddingIndex(f.path, {
-    version: "fixture",
-    async embed() {
-      return Float32Array.from([1, 0]);
-    },
-  });
-  try {
-    for (let i = 1; i <= 21; i++)
-      f.add(`fact-${i}`, `Synthetic lunar agents limit ${i}`);
-    let calls = 0;
-    const options = {
-      databasePath: f.path,
-      areas: ["personal"],
-      embeddingModel: "fixture",
-      llm: {
-        model: "fake",
-        async ask(_instruction: string, data: unknown) {
-          calls++;
-          return (data as { index: number }[]).map(({ index }) => ({
-            index,
-            current: null,
-          }));
-        },
-      },
-    };
-    const pending = await runTidy(options);
-    assert.equal(pending.lastSuccessfulAt, null);
-    assert.equal(pending.vectorsMissing, 21);
-    while (await index.processOne()) {
-      /* synthetic preparation */
-    }
-    const first = await runTidy(options);
-    assert.equal(first.pairs, 200);
-    assert.equal(first.capped, true);
-    assert.equal(first.lastSuccessfulAt, null);
-    const second = await runTidy(options);
-    assert.equal(second.pairs, 10);
-    assert.equal(second.capped, false);
-    assert.ok(second.lastSuccessfulAt);
-    assert.equal(calls, 9);
-    assert.equal((await runTidy(options)).pairs, 0);
-  } finally {
-    await index.close();
-    await f.close();
-  }
-});
-
 test("near-duplicate cosine gate is conservative and concurrent reruns add one relation", async () => {
   const { EmbeddingIndex } = await import("../src/embedding-index.js");
   const f = await fixture();
@@ -775,38 +521,43 @@ test("near-duplicate cosine gate is conservative and concurrent reruns add one r
 });
 
 for (const processor of ["codex", "openai"] as const) {
-  test(`${processor} batches both jobs within 12 calls and resumes untouched work`, async () => {
+  test(`${processor} batches inbox sorting within 12 calls and resumes legacy history`, async () => {
     const { createLlm } = await import("../src/llm.js");
     const { fakeCodex } = await import("./fake-codex.js");
     const fake = await fakeCodex(
       `
 assert.ok(Array.isArray(data) && data.length <= 25);
 fs.appendFileSync(process.env.HOME + '/calls.jsonl', JSON.stringify(data) + '\\n');
-respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, confidence:0}));
+respond(data.map(({index}) => ({index, area:null, confidence:0})));
 `,
       `fs.appendFileSync(process.env.HOME + '/preflights', '1'); process.exit(0);`,
     );
     const f = await fixture();
-    const index = new EmbeddingIndex(f.path, {
-      version: "fixture",
-      async embed() {
-        return Float32Array.from([1, 0]);
-      },
-    });
     const apiBatches: unknown[][] = [];
     try {
-      for (let i = 1; i <= 21; i++)
-        f.add(`fact-${i}`, `Synthetic lunar limit ${i}`);
-      // Long inbox sources are sorted but are not short-fact supersede candidates.
-      for (let i = 1; i <= 110; i++)
-        f.add(
-          `inbox-${i}`,
-          `Synthetic inbox ${i} ${"note ".repeat(301)}`,
-          "inbox",
-        );
-      while (await index.processOne()) {
-        /* synthetic vector preparation */
-      }
+      f.add("previously-sorted", "Synthetic uncertain inbox note", "inbox");
+      await mkdir(join(f.directory, "tidy"));
+      await writeFile(
+        join(f.directory, "tidy/history.jsonl"),
+        `${JSON.stringify({
+          areas: ["inbox", "personal"],
+          model: "fixture",
+          ...(processor === "codex" ? { processor } : {}),
+          dryRun: false,
+          capped: true,
+          inboxAfter: 1,
+          lastSuccessfulAt: "2025-01-01T00:00:00Z",
+          supersedes: 1,
+          pairs: 200,
+          pairAfter: { area: "personal", row: 999, priorRow: 998 },
+          windowEnd: "2025-01-02T00:00:00Z",
+          windowIncomplete: true,
+          vectorsMissing: 2,
+          failures: 1,
+        })}\n`,
+      );
+      for (let i = 1; i <= 320; i++)
+        f.add(`inbox-${i}`, `Synthetic inbox note ${i}`, "inbox");
       const llm = createLlm(
         {
           ...fake.env,
@@ -817,18 +568,18 @@ respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, 
         async (_url, init) => {
           const data = JSON.parse(
             JSON.parse(String(init?.body)).messages[1].content,
-          ) as { index: number; a?: unknown }[];
+          ) as { index: number }[];
           apiBatches.push(data);
           return Response.json({
             choices: [
               {
                 message: {
                   content: JSON.stringify(
-                    data.map(({ index, a }) =>
-                      a
-                        ? { index, current: null }
-                        : { index, area: null, confidence: 0 },
-                    ),
+                    data.map(({ index }) => ({
+                      index,
+                      area: null,
+                      confidence: 0,
+                    })),
                   ),
                 },
               },
@@ -840,23 +591,20 @@ respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, 
       const options = {
         databasePath: f.path,
         areas: ["inbox", "personal"],
-        embeddingModel: "fixture",
         llm,
       };
       const first = await runTidy(options);
       assert.equal(first.processor, processor);
       assert.equal(first.llmCalls, 12);
       assert.equal(first.capped, true);
-      assert.equal(first.uncertain, 110);
-      assert.equal(first.pairs, 175);
+      assert.equal(first.lastSuccessfulAt, "2025-01-01T00:00:00Z");
+      assert.equal(first.uncertain, 300);
       assert.equal(first.failures, 0);
       const second = await runTidy(options);
-      assert.equal(second.llmCalls, 2);
-      assert.equal(second.pairs, 35);
-      assert.equal(second.uncertain, 0);
+      assert.equal(second.llmCalls, 1);
+      assert.equal(second.uncertain, 20);
       assert.equal(second.capped, false);
-      assert.ok(second.lastSuccessfulAt);
-      assert.equal(second.windowEnd, first.windowEnd);
+      assert.equal(second.lastSuccessfulAt, second.timestamp);
       const batches: unknown[][] =
         processor === "codex"
           ? (await readFile(join(fake.directory, "calls.jsonl"), "utf8"))
@@ -869,7 +617,7 @@ respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, 
           await readFile(join(fake.directory, "preflights"), "utf8"),
           "11",
         );
-      assert.equal(batches.length, 14);
+      assert.equal(batches.length, 13);
       assert.ok(batches.every((batch) => batch.length <= 25));
       assert.equal(batches.flat().length, 320);
       assert.equal(
@@ -881,9 +629,8 @@ respond(data.map(({index, a}) => a ? {index, current:null} : {index, area:null, 
         "utf8",
       );
       assert.ok(!history.includes("Synthetic"));
-      assert.equal(JSON.parse(history.split("\n")[0] ?? "").llmCalls, 12);
+      assert.equal(JSON.parse(history.split("\n")[1] ?? "").llmCalls, 12);
     } finally {
-      await index.close();
       await f.close();
       await fake.close();
     }
@@ -911,16 +658,10 @@ for (const [name, body] of [
     ].includes(name ?? "");
     const fake = await fakeCodex(body ?? "", preflightFails ? body : undefined);
     const f = await fixture();
-    const index = new EmbeddingIndex(f.path, {
-      version: "fixture",
-      async embed() {
-        return Float32Array.from([1, 0]);
-      },
-    });
     try {
       if (name === "missing binary") await rm(join(fake.directory, "codex"));
-      const old = f.add("old", "Synthetic limit 1");
-      const newer = f.add("new", "Synthetic limit 2");
+      const old = f.add("old", "Synthetic limit 1", "inbox");
+      const newer = f.add("new", "Synthetic limit 2", "inbox");
       f.add(
         "duplicate-a",
         "Synthetic repeated note describing lunar garden watering schedules and seasonal observations.",
@@ -931,14 +672,10 @@ for (const [name, body] of [
         "Synthetic repeated note describing lunar garden watering schedules and seasonal observations.",
         "vault",
       );
-      while (await index.processOne()) {
-        /* synthetic vector preparation */
-      }
       const started = performance.now();
       const run = await runTidy({
         databasePath: f.path,
-        areas: ["personal", "vault"],
-        embeddingModel: "fixture",
+        areas: ["inbox", "personal", "vault"],
         llm: createCodexLlm(
           fake.env,
           "fixture",
@@ -950,10 +687,9 @@ for (const [name, body] of [
       assert.equal(run.llmCalls, preflightFails ? 0 : 1);
       assert.equal(run.failures, 1);
       assert.equal(run.duplicates, 1);
-      assert.equal(run.supersedes, 0);
       assert.equal(run.lastSuccessfulAt, null);
-      assert.deepEqual(f.sources.find(old.id, "personal"), old);
-      assert.deepEqual(f.sources.find(newer.id, "personal"), newer);
+      assert.deepEqual(f.sources.find(old.id, "inbox"), old);
+      assert.deepEqual(f.sources.find(newer.id, "inbox"), newer);
       const history = await readFile(
         join(f.directory, "tidy/history.jsonl"),
         "utf8",
@@ -961,7 +697,6 @@ for (const [name, body] of [
       assert.ok(!history.includes("synthetic-private-diagnostic"));
       assert.ok(!history.includes("Synthetic"));
     } finally {
-      await index.close();
       await f.close();
       await fake.close();
     }
@@ -1002,30 +737,22 @@ test("Codex batch output skips invalid, duplicate and missing indexes while appl
   }
 });
 
-test("invalid entries in a capped window do not starve later pairs or advance success", async () => {
+test("invalid inbox entries are retried after capped sorting resumes and wraps", async () => {
   const f = await fixture();
-  const index = new EmbeddingIndex(f.path, {
-    version: "fixture",
-    async embed() {
-      return Float32Array.from([1, 0]);
-    },
-  });
   let invalid = true;
   try {
-    for (let i = 0; i < 21; i++) f.add(`fact-${i}`, `Synthetic limit ${i}`);
-    while (await index.processOne()) {
-      /* synthetic vector preparation */
-    }
+    for (let i = 0; i < 301; i++)
+      f.add(`inbox-${i}`, `Synthetic routing ${i}`, "inbox");
     const options = {
       databasePath: f.path,
-      areas: ["personal"],
-      embeddingModel: "fixture",
+      areas: ["inbox", "personal"],
       llm: {
         model: "fake",
         async ask(_instruction: string, data: unknown) {
           const result = (data as { index: number }[]).map(({ index }) => ({
             index,
-            current: null,
+            area: "personal",
+            confidence: 1,
           }));
           if (invalid) {
             result.shift();
@@ -1037,16 +764,18 @@ test("invalid entries in a capped window do not starve later pairs or advance su
     };
     const first = await runTidy(options);
     assert.equal(first.failures, 1);
-    assert.equal(first.pairs, 200);
+    assert.equal(first.moved, 299);
+    assert.equal(first.capped, true);
+    assert.equal(first.lastSuccessfulAt, null);
     const second = await runTidy(options);
-    assert.equal(second.pairs, 10);
+    assert.equal(second.moved, 1);
     assert.equal(second.capped, false);
-    assert.equal(second.lastSuccessfulAt, null);
-    // A clean replay revisits the skipped entry before the watermark advances.
-    assert.equal((await runTidy(options)).pairs, 200);
-    assert.ok((await runTidy(options)).lastSuccessfulAt);
+    assert.ok(f.sources.find("inbox-0", "inbox"));
+    const retry = await runTidy(options);
+    assert.equal(retry.moved, 1);
+    assert.equal(retry.failures, 0);
+    assert.ok(f.sources.find("inbox-0", "personal"));
   } finally {
-    await index.close();
     await f.close();
   }
 });
