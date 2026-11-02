@@ -348,3 +348,71 @@ test("eval matches a returned knowledge excerpt with its grounded source rank", 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("import and eval CLI coexist and match imported external IDs and URLs", async () => {
+  const dir = await mkdtemp(join(process.cwd(), ".output-eval-"));
+  try {
+    const path = join(dir, "context.db");
+    new SourceStore(path).close();
+    new KnowledgeStore(path).close();
+    const env = {
+      ...process.env,
+      CONTEXT_DB_PATH: path,
+      CONTEXT_AREAS: "garden",
+    };
+    const imported = spawnSync(
+      process.execPath,
+      [
+        "dist/scripts/context.js",
+        "import",
+        "jsonl",
+        "--source",
+        "synthetic",
+        "--area",
+        "garden",
+      ],
+      {
+        env,
+        encoding: "utf8",
+        input: `${JSON.stringify({ id: "fictional-iris-01", text: "The fictional cobalt iris needs shade.", url: "https://fictional.example/iris" })}\n`,
+      },
+    );
+    assert.equal(imported.status, 0, imported.stderr);
+    const questions = join(dir, "questions.json");
+    await writeFile(
+      questions,
+      JSON.stringify({
+        questions: [
+          {
+            id: "imported01",
+            question: "cobalt iris",
+            areas: ["garden"],
+            read_areas: ["garden"],
+            expected: [
+              { source_external_id: "fictional-iris-01" },
+              { source_external_id: "https://fictional.example/iris" },
+            ],
+          },
+        ],
+      }),
+    );
+    const evaluated = spawnSync(
+      process.execPath,
+      [
+        "dist/scripts/context.js",
+        "eval",
+        "run",
+        "--questions",
+        questions,
+        "--json",
+      ],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(evaluated.status, 0, evaluated.stderr);
+    const summary = JSON.parse(evaluated.stdout);
+    assert.equal(summary.metrics.hit_at_k, 1);
+    assert.equal(summary.metrics.isolation_violations, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

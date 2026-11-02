@@ -28,7 +28,7 @@ const packageResult = z.object({
 });
 export interface EvalHit {
   id: string;
-  externalId: string | null;
+  externalIds: string[];
   excerpts: string[];
 }
 
@@ -70,7 +70,7 @@ export async function retrieveForEval(
       }),
     );
     const sourceInfo = metadata.prepare(
-      "SELECT s.scope, m.source_uri FROM sources s LEFT JOIN source_metadata m ON m.source_id = s.id WHERE s.id = ?",
+      "SELECT s.scope, m.source_uri, i.external_id FROM sources s LEFT JOIN source_metadata m ON m.source_id = s.id LEFT JOIN source_imports i ON i.source_id = s.id WHERE s.id = ?",
     );
     const itemInfo = metadata.prepare(
       "SELECT scope FROM knowledge_items WHERE id = ?",
@@ -140,7 +140,7 @@ export async function retrieveForEval(
         if (question.areas.includes(area))
           lists.push(
             result.sources.map((source) => {
-              const uri = sourceInfo.get(source.id)?.source_uri;
+              const info = sourceInfo.get(source.id);
               return {
                 id: source.id,
                 excerpts: [
@@ -149,7 +149,9 @@ export async function retrieveForEval(
                     .filter((item) => item.sourceIds.includes(source.id))
                     .map((item) => item.excerpt.text),
                 ],
-                externalId: typeof uri === "string" ? uri : null,
+                externalIds: [info?.external_id, info?.source_uri].filter(
+                  (id): id is string => typeof id === "string",
+                ),
               };
             }),
           );

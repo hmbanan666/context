@@ -67,7 +67,7 @@ export function scoreEval(question: EvalQuestion, hits: EvalHit[]) {
     "source_id" in expected
       ? hit.id === expected.source_id
       : "source_external_id" in expected
-        ? hit.externalId === expected.source_external_id
+        ? hit.externalIds.includes(expected.source_external_id)
         : hit.excerpts.some((excerpt) => excerpt.includes(expected.substring));
   const ranks = question.expected.map(
     (expected) => hits.findIndex((hit) => matches(expected, hit)) + 1,

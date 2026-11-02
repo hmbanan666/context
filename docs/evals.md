@@ -67,9 +67,11 @@ retrieval-quality averages. Searching an area outside `read_areas` must produce
 an MCP access denial, even if that area appears in `areas`.
 
 `source_id` matches the immutable source ID. `source_external_id` matches the
-source's existing **`metadata.sourceUri` exactly**, including case; use the stable
-source URL supplied on capture/import. There is no separate external-ID column
-in the current source schema. `substring` is a literal, case-sensitive match in
+imported **external ID** (`source_imports.external_id`) or **`metadata.sourceUri`
+exactly**, including case. Use the imported item's `id` or stable source URL;
+matching is still limited to returned sources in authorized areas. External IDs
+can repeat across import sources, so use `source_id` or a distinct URL when a
+question needs one specific source. `substring` is a literal, case-sensitive match in
 a returned **source or knowledge excerpt**, not a search through the full stored
 original. A knowledge excerpt is scored with each of its cited source cards.
 These rules are fixed across search implementations.
