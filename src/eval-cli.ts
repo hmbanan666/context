@@ -58,8 +58,12 @@ export async function evalCommand(args: string[], env: NodeJS.ProcessEnv) {
 }
 
 export function formatRun(run: EvalRun) {
+  const { lexical, ...diagnostics } = run.diagnostics ?? {};
+  const control = lexical
+    ? `\n  lexical control: hit@1 ${lexical.hit_at_1} hit@${run.k} ${lexical.hit_at_k} mrr ${lexical.mrr}`
+    : "";
   const search = run.search
     ? `search: ${run.search.mode}; semantic: ${run.search.semantic}; model: ${run.search.model}`
     : "search: unrecorded (legacy row)";
-  return `${run.timestamp} ${run.id} ${run.outcome}\n  ${search}\n  ${JSON.stringify(run.diagnostics ?? {})}\n  ${JSON.stringify(run.metrics)}\n  ${run.questions.map((q) => `${q.id}:${q.pass === null ? "skip" : q.pass ? "pass" : "fail"}`).join(" ")}`;
+  return `${run.timestamp} ${run.id} ${run.outcome}\n  ${search}\n  ${JSON.stringify(diagnostics)}\n  ${JSON.stringify(run.metrics)}${control}\n  ${run.questions.map((q) => `${q.id}:${q.pass === null ? "skip" : q.pass ? "pass" : "fail"}`).join(" ")}`;
 }
