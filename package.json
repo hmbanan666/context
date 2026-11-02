@@ -24,18 +24,22 @@
     "eval:context-package": "npm run build && node dist/test/evaluate-context-package.js",
     "check": "npm run lint && npm run typecheck && npm test",
     "context": "node dist/scripts/context.js",
-    "test:oauth": "npm run build && node --test dist/test/oauth.test.js"
+    "test:oauth": "npm run build && node --test dist/test/oauth.test.js",
+    "backup": "node dist/scripts/backup.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
     "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "24.19.2",
+    "@types/ssh2": "1.15.6",
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1161.0",
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/server": "2.4.0",
     "@simplewebauthn/server": "14.0.0",
+    "ssh2": "1.17.0",
     "zod": "4.6.7"
   },
   "bin": {
