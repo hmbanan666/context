@@ -191,11 +191,29 @@ for (const overlay of [false, true]) {
   assert.equal(codex.read_only, true);
   assert.deepEqual(codex.cap_drop, ["ALL"]);
   assert.deepEqual(codex.security_opt, ["no-new-privileges:true"]);
-  assert.equal(codex.volumes.length, overlay ? 4 : 3);
+  assert.equal(codex.volumes.length, overlay ? 5 : 4);
   const binary = codex.volumes.find((v) => v.target === "/usr/local/bin/codex");
   assert.equal(binary?.source, "/opt/synthetic/codex");
   assert.equal(binary?.read_only, true);
   assert.equal(binary?.bind?.create_host_path ?? false, false);
+  const caBundle = codex.volumes.find(
+    (v) => v.target === "/etc/ssl/certs/ca-certificates.crt",
+  );
+  assert.equal(caBundle?.source, "/etc/ssl/certs/ca-certificates.crt");
+  assert.equal(caBundle?.read_only, true);
+  assert.equal(caBundle?.bind?.create_host_path ?? false, false);
+  const customCaBundle = render(
+    overlay,
+    {
+      CONTEXT_CODEX_BIN: "/opt/synthetic/codex",
+      CONTEXT_CODEX_HOME: "/opt/synthetic/context-login",
+      CONTEXT_CODEX_CA_BUNDLE: "/opt/synthetic/ca-certificates.crt",
+    },
+    true,
+  ).services.context.volumes.find((v) => v.target === caBundle?.target);
+  assert.equal(customCaBundle?.source, "/opt/synthetic/ca-certificates.crt");
+  assert.equal(customCaBundle?.read_only, true);
+  assert.equal(customCaBundle?.bind?.create_host_path ?? false, false);
   const login = codex.volumes.find((v) => v.target === "/app/codex");
   assert.equal(login?.source, "/opt/synthetic/context-login");
   assert.equal(login?.read_only ?? false, false);

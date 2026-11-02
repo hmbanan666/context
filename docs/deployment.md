@@ -286,9 +286,12 @@ sudo chown -R 1000:1000 "$CONTEXT_CODEX_HOME"
 ```
 
 Append `-f deploy/codex.yaml` after `-f deploy/compose.yaml` and, if used,
-`-f deploy/dokploy.yaml`. The overlay adds only the read-only binary mount at
-`/usr/local/bin/codex` and the writable login directory at `/app/codex`, used by
-uid 1000. Root filesystem read-only, `cap_drop: ALL` and `no-new-privileges` remain;
+`-f deploy/dokploy.yaml`. The overlay mounts the binary read-only at
+`/usr/local/bin/codex`, the writable login directory at `/app/codex` for uid 1000,
+and the host CA bundle read-only at `/etc/ssl/certs/ca-certificates.crt` for static
+Codex TLS (host path defaults to the same path; override with
+`CONTEXT_CODEX_CA_BUNDLE`; the file must exist because `create_host_path: false`).
+Root filesystem read-only, `cap_drop: ALL` and `no-new-privileges` remain;
 no SSH or Docker socket is mounted. The CLI alone handles its auth files, including
 refresh. [Codex CLI reference](https://developers.openai.com/codex/cli/reference).
 
