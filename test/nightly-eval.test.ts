@@ -53,6 +53,18 @@ test("nightly backup triggers eval afterward using the same schedule and persist
       await readFile(join(dir, "backups", "status.json"), "utf8"),
     );
     assert.equal(backup.outcome, "success");
+    const tidy = JSON.parse(
+      (await readFile(join(dir, "tidy/history.jsonl"), "utf8")).trim(),
+    );
+    assert.equal(tidy.outcome, "completed");
+    assert.ok(
+      Date.parse(tidy.timestamp) >=
+        Date.parse(backup.startedAt) + Math.floor(backup.durationMs),
+    );
+    assert.ok(
+      Date.parse(rows[0]?.timestamp ?? "") >=
+        Date.parse(tidy.timestamp) + tidy.durationMs - 1,
+    );
     assert.ok(
       Date.parse(rows[0]?.timestamp ?? "") >=
         Date.parse(backup.startedAt) + Math.floor(backup.durationMs),

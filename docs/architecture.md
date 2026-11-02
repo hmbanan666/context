@@ -61,8 +61,7 @@ from sources/knowledge and one-hop relations. Both enforce area restrictions.
 Search combines exact and RU/EN stemmed FTS with local E5 embeddings. The image
 includes the model; startup and writes backfill derived vectors in the background,
 with lexical fallback on model failure. Area/date filters precede fusion.
-See [search](search.md) for bounds, rebuild and measured resources. This refactor
-preserves those search internals.
+See [search](search.md) for bounds, rebuild and measured resources. Relation-aware retrieval collapses duplicates and ranks superseded history last.
 
 `knowledge.ts` stores source-grounded suggestions and relations, redacting their
 text/provenance before persistence. Historical review rows remain readable; there
@@ -81,19 +80,36 @@ read-only opening modes; a separate metadata lookup audits the actual area of
 returned sources, items and relations. Results contain content-free metrics, search metadata and
 question IDs, appended to `evals/history.jsonl` beside the database.
 
-The existing nightly backup callback runs eval afterward if `evals/questions.yaml`
-exists. No independent timer, settings, worker or job store is added. This delivers
-retrieval measurement and that narrow automation step; it does not claim private
-question-set acceptance, answer grading or the remaining stage 4 capabilities.
+The nightly callback runs backup → tidy → eval (if `evals/questions.yaml` exists).
+A backup failure still permits tidy/eval; a busy backup defers the callback. There
+is no independent timer. Eval can assert expected evidence `outranks` history;
+results retain only a per-question boolean, not matching text.
 
 ## Processing and recovery
 
-`jobs.ts` retains processing leases, retries and durable validated/redacted output.
-`processor.ts` coordinates interpretation after source capture. The optional
-operator-run `memory:process` command uses the existing restricted Codex adapter;
-the runtime image has no Codex installation or subscription credentials. Unattended
-understanding, sorting, superseding and hard delete remain future work. Capture
-and source retrieval need no model.
+`tidy.ts` processes each area independently: deterministic exact/vector dedup,
+optional model superseding, then confident inbox sorting. `knowledge_relations`
+accepts source or knowledge endpoints, with `duplicates` added by a transactional
+CHECK/FK table migration preserving historical rows and retry keys. Both endpoints
+and evidence must share the relation's area. A supersedes B means A is current;
+A duplicates B means B is canonical. Sources and their text/checksums remain intact.
+
+`llm.ts` is a bounded, provider-agnostic fetch client shared by tidy and the
+operator-run `memory:process` command. The version-pinned Codex adapter is removed.
+`jobs.ts` still owns explicit processing leases and durable validated output.
+No key means dedup only; no inference provider is needed for capture or reading.
+Tidy history is content-free JSONL beside eval history, including the successful
+watermark, model, counts and duration. Distilled per-topic knowledge and hard
+delete are future slices, not claims of complete stage 4 acceptance.
+
+Inbox moves are transactional metadata changes. FTS/stemmed rows retain their
+rowids/text and enforce area by joining sources; embedding scopes move and active
+embedding leases are invalidated. Sources with knowledge, relations (including
+provenance references), or processing jobs stay in inbox. Existing client/token
+read grants must not gain access through the destination. Historical capture and
+import request identities remain reserved: former-area retries fail closed rather
+than revealing the moved source or recreating a copy. Import/file metadata is
+source-ID keyed and follows the source without rewriting content.
 
 Backups run in-process. The scheduler handles calendar dates; the runner verifies
 snapshots, coordinates CLI/scheduled locking and retains local files; transports

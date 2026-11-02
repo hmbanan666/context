@@ -1,4 +1,5 @@
 import { runEvalAfterBackup } from "./automatic-eval.js";
+import { runTidyAfterBackup } from "./automatic-tidy.js";
 import { readBackupConfig } from "./backup-config.js";
 import { BackupRunner, readBackupStatus } from "./backup-runner.js";
 import { type BackupClock, startBackupScheduler } from "./backup-scheduler.js";
@@ -26,6 +27,7 @@ export async function startAutomaticBackups(
         const status = await runner.run(day);
         console.log(JSON.stringify({ event: "backup", ...status }));
         if (status.outcome === "busy") return false;
+        await runTidyAfterBackup(databasePath, env);
         await runEvalAfterBackup(databasePath, env, embeddings);
         return true;
       },

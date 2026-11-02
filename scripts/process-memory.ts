@@ -1,9 +1,9 @@
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { extractWithCodex } from "../src/codex-extractor.js";
 import { scopeSchema } from "../src/contracts.js";
 import { JobStore } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
+import { createLlm, llmExtractor } from "../src/llm.js";
 import { processNext } from "../src/processor.js";
 import { SourceStore } from "../src/store.js";
 
@@ -20,6 +20,8 @@ async function main(): Promise<void> {
   scopeSchema.parse(scope);
   const path = resolve(database);
   if (!(await stat(path)).isFile()) throw new Error("database_unavailable");
+  const client = createLlm(process.env);
+  if (!client) throw new Error("model_not_configured");
   const sources = new SourceStore(path);
   let knowledge: KnowledgeStore | undefined;
   let jobs: JobStore | undefined;
@@ -34,7 +36,7 @@ async function main(): Promise<void> {
         knowledge,
         jobs,
         scope,
-        extractWithCodex,
+        llmExtractor(client),
       );
       if (!job) break;
       if (job.status !== "completed") process.exitCode = 1;

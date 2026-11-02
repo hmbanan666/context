@@ -128,10 +128,9 @@ are also possible through authorized agents via MCP.
 - Keep SQLite. Add Russian and English morphology to FTS and semantic search
   using a small local embedding model on the server, without a paid embedding API.
   Keep indexes derived, rebuildable and subject to the same area access rules.
-- Make the understanding processor pluggable. Default options use the owner's
-  subscription/API: Codex CLI on a ChatGPT plan or an OpenAI/Anthropic API key.
-  A local LLM is a fallback option. Verify supported execution and credential
-  lifecycles; never silently switch to paid API use or circumvent subscription terms.
+- Make the understanding processor pluggable. Use an explicitly configured OpenAI-compatible
+  chat-completions endpoint, including local models (ADR 0005). Verify supported
+  execution and credentials; never silently switch to paid API use or circumvent subscription terms.
 - Switching processors preserves sources, provenance, history and client rights.
   Failures are visible and retryable without duplicate derived items. The processor
   and local embedding model serve different purposes and can change independently.
@@ -251,7 +250,7 @@ nightly evaluation as well as the existing after-change runs.
 Acceptance: answers start with derived knowledge and verify against accessible
 sources; evals show grounded benefit over the retrieval baseline. Changing or
 failing the processor leaves sources intact and retries safe. Demonstrate a
-supported subscription/API path and local LLM option; mark any unavailable path
+supported compatible API path and local LLM option; mark any unavailable path
 unverified. A new fact supersedes the old current fact without losing history;
 proposals never become owner approval by inference. Daily sorting respects area
 policy and ambiguous items await owner decisions. Hard delete removes the record

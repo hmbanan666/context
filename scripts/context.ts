@@ -3,6 +3,7 @@ import { AuthStore } from "../src/auth-store.js";
 import { readConfig } from "../src/config.js";
 import { evalCommand } from "../src/eval-cli.js";
 import { runIndexCommand } from "../src/index-command.js";
+import { tidyCommand } from "../src/tidy-cli.js";
 import { runImport } from "./import-jsonl.js";
 
 async function passwordInput() {
@@ -52,6 +53,10 @@ async function passwordInput() {
   }
 }
 async function main() {
+  if (process.argv[2] === "tidy") {
+    await tidyCommand(process.argv.slice(3), process.env);
+    return;
+  }
   if (process.argv[2] === "eval") {
     await evalCommand(process.argv.slice(3), process.env);
     return;

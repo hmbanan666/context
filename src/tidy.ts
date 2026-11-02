@@ -1,0 +1,483 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
+import { DatabaseSync } from "node:sqlite";
+import { setImmediate as yieldLoop } from "node:timers/promises";
+import { z } from "zod";
+import { E5_VERSION } from "./embedding-model.js";
+import { KnowledgeStore } from "./knowledge.js";
+import type { Llm } from "./llm.js";
+
+// Conservative synthetic calibration; see docs/search.md. Never merge a
+// changed number/negation merely because its semantic vector is almost equal.
+const DUPLICATE_COSINE = 0.97;
+const SUPERSEDE_COSINE = 0.85;
+const MAX_PAIRS = 200;
+const MAX_FACT_LENGTH = 1500;
+const supersedeSchema = z.strictObject({ supersedes: z.boolean() });
+const sortSchema = z.strictObject({
+  area: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+});
+interface TidySource {
+  row: number;
+  id: string;
+  text: string;
+  scope: string;
+  captured_at: string;
+  checksum: string;
+}
+export interface TidyOptions {
+  databasePath: string;
+  areas: string[];
+  area?: string;
+  dryRun?: boolean;
+  llm?: Llm;
+  embeddingModel?: string;
+}
+export interface TidyRun {
+  timestamp: string;
+  durationMs: number;
+  outcome: "completed" | "partial" | "failed";
+  dryRun: boolean;
+  areas: string[];
+  llm: "configured" | "not_configured";
+  model: string | null;
+  lastSuccessfulAt: string | null;
+  sources: number;
+  vectorsMissing: number;
+  duplicates: number;
+  supersedes: number;
+  pairs: number;
+  moved: number;
+  uncertain: number;
+  skipped: number;
+  failures: number;
+  capped: boolean;
+  pairAfter: { area: string; row: number; priorRow: number } | null;
+  windowEnd: string;
+}
+async function previousRun(
+  path: string,
+  areas: string[],
+  model: string | null,
+) {
+  const stream = createReadStream(path, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  let previous: TidyRun | undefined;
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const run = JSON.parse(line) as TidyRun;
+        if (
+          JSON.stringify(run.areas) === JSON.stringify(areas) &&
+          run.model === model &&
+          !run.dryRun
+        )
+          previous = run;
+      } catch {
+        /* Ignore an interrupted final append; never interpret source content. */
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
+  return previous;
+}
+function normalize(text: string) {
+  return text.normalize("NFKC").trim().replace(/\s+/gu, " ");
+}
+function cosine(a?: number[], b?: number[]) {
+  if (!a || !b || a.length !== b.length) return -1;
+  return a.reduce((n, v, i) => n + v * (b[i] ?? 0), 0);
+}
+function nearText(a: string, b: string) {
+  if (Math.min(a.length, b.length) / Math.max(a.length, b.length) < 0.95)
+    return false;
+  const guards = (s: string) =>
+    s
+      .toLowerCase()
+      .match(
+        /\d+(?:[.,]\d+)*|\b(?:not|no|never|without)\b|(?<!\p{L})(?:не|нет|без)(?!\p{L})/gu,
+      )
+      ?.join(" ") ?? "";
+  if (guards(a) !== guards(b)) return false;
+  const words = (s: string) =>
+    new Set(s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+  const aa = words(a),
+    bb = words(b);
+  return (
+    [...aa].filter((w) => bb.has(w)).length / new Set([...aa, ...bb]).size >=
+    0.95
+  );
+}
+function vectors(db: DatabaseSync, scope: string, model: string) {
+  const values = new Map<string, number[]>();
+  for (const row of db
+    .prepare(
+      "SELECT record_id,vector FROM embedding_chunks WHERE scope=? AND kind='sources' AND model=? ORDER BY record_id,chunk",
+    )
+    .iterate(scope, model)) {
+    if (!(row.vector instanceof Uint8Array) || row.vector.byteLength % 4)
+      continue;
+    const bytes = Buffer.from(row.vector);
+    const vector =
+      values.get(String(row.record_id)) ??
+      Array<number>(bytes.length / 4).fill(0);
+    if (vector.length * 4 !== bytes.length) continue;
+    for (let i = 0; i < vector.length; i++)
+      vector[i] = (vector[i] ?? 0) + bytes.readFloatLE(i * 4);
+    values.set(String(row.record_id), vector);
+  }
+  for (const [id, value] of values) {
+    const norm = Math.hypot(...value);
+    if (!norm || !Number.isFinite(norm)) values.delete(id);
+    else
+      values.set(
+        id,
+        value.map((n) => n / norm),
+      );
+  }
+  return values;
+}
+
+export async function runTidy(options: TidyOptions): Promise<TidyRun> {
+  const areas = options.areas
+    .filter((a) => !options.area || a === options.area)
+    .sort();
+  if (!areas.length || (options.area && !options.areas.includes(options.area)))
+    throw new Error("Unknown tidy area");
+  const directory = join(dirname(options.databasePath), "tidy");
+  const history = join(directory, "history.jsonl");
+  const model = options.llm?.model ?? null;
+  const previous = await previousRun(history, areas, model);
+  const timestamp = new Date().toISOString();
+  const run: TidyRun = {
+    timestamp,
+    durationMs: 0,
+    outcome: "completed",
+    dryRun: !!options.dryRun,
+    areas,
+    llm: options.llm ? "configured" : "not_configured",
+    model,
+    lastSuccessfulAt: previous?.lastSuccessfulAt ?? null,
+    sources: 0,
+    vectorsMissing: 0,
+    duplicates: 0,
+    supersedes: 0,
+    pairs: 0,
+    moved: 0,
+    uncertain: 0,
+    skipped: 0,
+    failures: 0,
+    capped: false,
+    pairAfter:
+      previous?.capped && !previous.failures && !previous.vectorsMissing
+        ? previous.pairAfter
+        : null,
+    windowEnd:
+      previous?.capped && !previous.failures && !previous.vectorsMissing
+        ? previous.windowEnd
+        : timestamp,
+  };
+  const start = performance.now();
+  let knowledge: KnowledgeStore | undefined;
+  let db: DatabaseSync | undefined;
+  try {
+    knowledge = new KnowledgeStore(options.databasePath, {
+      readOnly: !!options.dryRun,
+    });
+    db = new DatabaseSync(options.databasePath, {
+      readOnly: !!options.dryRun,
+      timeout: 5000,
+    });
+    const connection = db;
+    const relations = knowledge;
+    const plannedRelations = new Set<string>();
+    const relation = (
+      kind: "duplicates" | "supersedes",
+      newer: TidySource,
+      older: TidySource,
+    ) => {
+      plannedRelations.add(newer.id);
+      plannedRelations.add(older.id);
+      if (
+        connection
+          .prepare(
+            "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind=? AND from_id=? AND to_id=?",
+          )
+          .get(newer.scope, kind, newer.id, older.id)
+      )
+        return;
+      if (!options.dryRun) {
+        const saved = relations.relate({
+          version: 1,
+          scope: newer.scope,
+          idempotencyKey: `tidy:${createHash("sha256")
+            .update(JSON.stringify([kind, newer.id, older.id]))
+            .digest("hex")}`,
+          kind,
+          fromId: newer.id,
+          toId: older.id,
+          sourceRefs: [{ sourceId: newer.id }, { sourceId: older.id }],
+          creator:
+            kind === "duplicates"
+              ? { kind: "user", name: "context-tidy" }
+              : { kind: "model", name: model ?? "context-tidy" },
+        });
+        if (saved.duplicate) return;
+      }
+      run[kind]++;
+    };
+    const cursor = run.pairAfter;
+    for (const area of areas) {
+      const sources = db
+        .prepare(
+          "SELECT rowid AS row,id,text,scope,captured_at,checksum FROM sources WHERE scope=? ORDER BY rowid",
+        )
+        .all(area) as unknown as TidySource[];
+      sources.sort(
+        (a, b) =>
+          Date.parse(a.captured_at) - Date.parse(b.captured_at) ||
+          a.row - b.row,
+      );
+      run.sources += sources.length;
+      const embeddings = vectors(
+        db,
+        area,
+        options.embeddingModel ?? E5_VERSION,
+      );
+      const state = knowledge.retrievalRelations(area);
+      const copies = new Set<string>();
+      const normalized = new Map<string, TidySource>();
+      const canonicals: TidySource[] = [];
+      for (const [index, source] of sources.entries()) {
+        if (index % 32 === 0) await yieldLoop();
+        const text = normalize(source.text);
+        let canonical = normalized.get(text);
+        if (!canonical)
+          canonical = canonicals.find(
+            (other) =>
+              nearText(text, normalize(other.text)) &&
+              cosine(embeddings.get(source.id), embeddings.get(other.id)) >=
+                DUPLICATE_COSINE,
+          );
+        if (canonical) {
+          relation("duplicates", source, canonical);
+          copies.add(source.id);
+        } else {
+          normalized.set(text, source);
+          canonicals.push(source);
+        }
+      }
+      if (!options.llm) continue;
+      run.vectorsMissing += sources.filter(
+        (source) =>
+          source.text.length <= MAX_FACT_LENGTH && !embeddings.has(source.id),
+      ).length;
+      // Resume by immutable row positions, not list offsets: another run may
+      // move a source out of inbox while this capped window is unfinished.
+      const pairSources = [...sources].sort((a, b) => a.row - b.row);
+      for (const [i, laterRow] of pairSources.entries()) {
+        if (i % 32 === 0) await yieldLoop();
+        for (const priorRow of pairSources.slice(0, i)) {
+          const [newer, older] =
+            Date.parse(laterRow.captured_at) >= Date.parse(priorRow.captured_at)
+              ? [laterRow, priorRow]
+              : [priorRow, laterRow];
+          if (
+            [newer, older].some(
+              (source) =>
+                source.text.length > MAX_FACT_LENGTH ||
+                copies.has(source.id) ||
+                state.canonical(source.id) !== source.id,
+            ) ||
+            Date.parse(newer.captured_at) > Date.parse(run.windowEnd) ||
+            (run.lastSuccessfulAt &&
+              Date.parse(newer.captured_at) < Date.parse(run.lastSuccessfulAt))
+          )
+            continue;
+          if (
+            cursor &&
+            (area < cursor.area ||
+              (area === cursor.area &&
+                (laterRow.row < cursor.row ||
+                  (laterRow.row === cursor.row &&
+                    priorRow.row <= cursor.priorRow))))
+          )
+            continue;
+          const similarity = cosine(
+            embeddings.get(newer.id),
+            embeddings.get(older.id),
+          );
+          if (similarity < SUPERSEDE_COSINE) continue;
+          // High-cosine numeric changes rejected by the dedup guards remain candidates.
+          if (run.pairs >= MAX_PAIRS) {
+            run.capped = true;
+            continue;
+          }
+          run.pairs++;
+          run.pairAfter = { area, row: laterRow.row, priorRow: priorRow.row };
+          if (
+            db
+              .prepare(
+                "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind='supersedes' AND from_id=? AND to_id=?",
+              )
+              .get(area, newer.id, older.id)
+          )
+            continue;
+          try {
+            const answer = supersedeSchema.parse(
+              await options.llm.ask(
+                'Does newer explicitly replace or update the SAME statement in older? Different subjects, proposals, questions and mere related facts do not replace one another. Return {"supersedes":true|false}.',
+                { older: older.text, newer: newer.text },
+              ),
+            );
+            if (answer.supersedes) relation("supersedes", newer, older);
+          } catch {
+            run.failures++;
+          }
+        }
+      }
+      if (area === "inbox") {
+        for (const source of sources) {
+          if (
+            plannedRelations.has(source.id) ||
+            copies.has(source.id) ||
+            !movable(db, source.id)
+          ) {
+            run.skipped++;
+            continue;
+          }
+          try {
+            const destinations = options.areas.filter(
+              (a) => a !== "inbox" && safeDestination(connection, a),
+            );
+            if (!destinations.length) {
+              run.skipped++;
+              continue;
+            }
+            const answer = sortSchema.parse(
+              await options.llm.ask(
+                'Choose a destination from areas only if the source clearly belongs there. Return {"area":"name"|null,"confidence":0.0}. When uncertain use null. Area is an access boundary, not just a topic.',
+                { areas: destinations, text: source.text },
+              ),
+            );
+            if (
+              !answer.area ||
+              answer.confidence < 0.8 ||
+              !destinations.includes(answer.area)
+            ) {
+              run.uncertain++;
+              continue;
+            }
+            if (options.dryRun) run.moved++;
+            else if (moveInbox(db, source.id, answer.area)) run.moved++;
+            else run.skipped++;
+          } catch {
+            run.failures++;
+          }
+        }
+      }
+    }
+    if (!run.capped) run.pairAfter = null;
+    if (run.failures || run.capped || run.vectorsMissing)
+      run.outcome = "partial";
+    else if (!options.dryRun) run.lastSuccessfulAt = run.windowEnd;
+  } catch {
+    run.outcome = "failed";
+    run.failures++;
+  } finally {
+    db?.close();
+    knowledge?.close();
+  }
+  run.durationMs = Math.round(performance.now() - start);
+  if (!options.dryRun) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await appendFile(history, `${JSON.stringify(run)}\n`, { mode: 0o600 });
+  }
+  return run;
+}
+function hasTable(db: DatabaseSync, name: string) {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE name=?").get(name);
+}
+function movable(db: DatabaseSync, id: string) {
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM knowledge_items k,json_each(k.source_refs) ref WHERE json_extract(ref.value,'$.sourceId')=? LIMIT 1",
+      )
+      .get(id)
+  )
+    return false;
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM knowledge_relations r WHERE from_id=? OR to_id=? OR EXISTS (SELECT 1 FROM json_each(r.source_refs) ref WHERE json_extract(ref.value,'$.sourceId')=?) LIMIT 1",
+      )
+      .get(id, id, id)
+  )
+    return false;
+  // Durable/in-flight processing output could otherwise recreate old-area knowledge.
+  if (
+    hasTable(db, "processing_jobs") &&
+    db
+      .prepare("SELECT 1 FROM processing_jobs WHERE source_id=? LIMIT 1")
+      .get(id)
+  )
+    return false;
+  return true;
+}
+function safeDestination(db: DatabaseSync, area: string) {
+  // Existing client AND token grants are independent bounds. Do not broaden
+  // disclosure for either, including refreshable tokens with narrower rights.
+  for (const table of ["auth_clients", "auth_tokens"]) {
+    if (!hasTable(db, table)) continue;
+    if (
+      db
+        .prepare(`SELECT 1 FROM ${table} WHERE COALESCE(json_extract(data,'$.revoked'),0)=0
+      AND EXISTS (SELECT 1 FROM json_each(data,'$.grants.read') WHERE value=?)
+      AND NOT EXISTS (SELECT 1 FROM json_each(data,'$.grants.read') WHERE value='inbox') LIMIT 1`)
+        .get(area)
+    )
+      return false;
+  }
+  return true;
+}
+function moveInbox(db: DatabaseSync, id: string, area: string) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!movable(db, id) || !safeDestination(db, area)) {
+      db.exec("ROLLBACK");
+      return false;
+    }
+    const changed = db
+      .prepare("UPDATE sources SET scope=? WHERE id=? AND scope='inbox'")
+      .run(area, id).changes;
+    if (!changed) {
+      db.exec("ROLLBACK");
+      return false;
+    }
+    db.prepare(
+      "UPDATE embedding_chunks SET scope=? WHERE kind='sources' AND record_id=?",
+    ).run(area, id);
+    // Invalidate an active lease: its worker read the old area before this move.
+    db.prepare(
+      "UPDATE embedding_jobs SET scope=?,status='queued',lease=NULL,attempts=0,next_at=0,error=NULL WHERE kind='sources' AND record_id=?",
+    ).run(area, id);
+    // FTS/stemmed tables store only rowid/text; both join sources for area.
+    // Capture/import identities retain their original request fingerprint. A
+    // retry from the former area must fail closed, never recreate or disclose it.
+    db.exec("COMMIT");
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}

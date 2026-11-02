@@ -228,3 +228,34 @@ All runs had zero isolation violations. Hundreds of sources exceeded cosine
 Removing the gap lets vectors contribute; weight 5 compensates for exact and
 stemmed lists rewarding the same lexical evidence twice. Absolute cosine is
 not a reliable relevance threshold on this corpus; weak neighbours can remain.
+
+## Current memory and nightly consolidation
+
+After hybrid fusion, one scope-indexed relation lookup per result set resolves
+canonical chains and superseded IDs. Duplicate cards collapse to a readable
+canonical even if only the copy matched; canonical cards appear once. Cycles
+retain the original hit. Current candidates precede every historical candidate,
+and history cards carry `supersededBy`. The same policy applies to literal-phrase
+recall; exact-ID reads still return the requested original. Existing candidate,
+area, provenance, date and byte bounds remain. Canonicals outside the requested
+date range do not replace a hit. Raw matching coverage counts still describe
+pre-collapse candidates, not unique displayed cards.
+
+Tidy uses stored same-model E5 chunk vectors, averaged and renormalized per source;
+it does not load a second model. Exact NFKC/whitespace-normalized text equality
+(including identical checksums) needs no vectors. Near duplicates require cosine
+**≥ 0.97**, length ratio **≥ 0.95**, token-set overlap **≥ 0.95**, and unchanged
+numeric/negation tokens. Oldest capture wins, with insertion order breaking ties.
+These conservative guards keep `limit 3` / `limit 4` distinct even at cosine 1.
+Synthetic tests cover threshold boundaries and this numeric counterexample;
+private/real-model dedup precision has not been measured here.
+
+Model candidates are non-duplicate pairs with cosine ≥ 0.85, each at most 1,500
+characters, and at least one capture since the last successful run (all on the
+first run). Numeric changes rejected by dedup remain eligible even above 0.97.
+At most 200 pairs are checked per run. Content-free history retains an insertion-position cursor
+and window end for capped runs; later runs finish that window before advancing
+the success watermark. Failed/invalid model output skips a pair and is counted.
+Missing vectors prevent advancing the model watermark. Switching model or the
+selected area set starts its own watermark. Deterministic dedup always checks all
+selected sources and relation writes are idempotent. Topic distillation is deferred.
