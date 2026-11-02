@@ -2,7 +2,8 @@
 
 Context is a personal context engine for one owner and their authorized clients.
 These terms describe the approved product direction; they do not imply that a
-capability has shipped. See the [spec](docs/spec.md) for requirements and stages.
+capability has shipped. Current capture/import paths share pattern-based secret
+redaction; automatic understanding and hard delete remain targets. See the [spec](docs/spec.md) for requirements and stages.
 
 ## Language
 

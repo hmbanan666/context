@@ -34,7 +34,7 @@ test("nightly backup triggers eval afterward using the same schedule and persist
   const env = {
     CONTEXT_AREAS: "garden,vault",
     CONTEXT_BACKUP_DIR: join(dir, "backups"),
-    CONTEXT_BACKUP_TIMEZONE: "Europe/Berlin",
+    TZ: "Europe/Berlin",
   };
   try {
     await mkdir(directory);
@@ -90,7 +90,7 @@ test("nightly backup skips absent questions and backup off disables both jobs", 
     seedEvalCorpus(path);
     const env = {
       CONTEXT_BACKUP_DIR: join(dir, "backups"),
-      CONTEXT_BACKUP_TIMEZONE: "UTC",
+      TZ: "UTC",
     };
     const scheduler = await startAutomaticBackups(path, env, clock);
     await scheduler.stop();

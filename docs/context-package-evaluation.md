@@ -1,3 +1,7 @@
+> Historical lexical evaluation evidence. Commands and deployment descriptions
+> below describe the original snapshot, not the current installation. Use
+> `npm run check` and the current README for setup.
+
 # Context Package MVP: reproducible synthetic comparison
 
 Date: 28 October 2026. Baseline: main `a2afdc620cab6aaa0c6d847b63051b8a56600593`.

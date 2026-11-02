@@ -34,7 +34,7 @@ const targetSchema = z.discriminatedUnion("kind", [
 export type BackupTargetConfig = z.infer<typeof targetSchema>;
 
 const configSchema = z.object({
-  directory: text.default("./backups"),
+  directory: text.default("./data/backups"),
   at: z
     .string()
     .regex(/^(?:off|(?:[01]\d|2[0-3]):[0-5]\d)$/)
@@ -80,16 +80,11 @@ export function readBackupConfig(env: NodeJS.ProcessEnv): BackupConfig {
   const parsed = configSchema.safeParse({
     directory: env.CONTEXT_BACKUP_DIR,
     at: env.CONTEXT_BACKUP_AT,
-    timeZone:
-      env.CONTEXT_BACKUP_TIMEZONE ??
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timeZone: env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     keep: env.CONTEXT_BACKUP_KEEP,
-    timeoutMs: env.CONTEXT_BACKUP_TIMEOUT_MS,
     target,
   });
   if (!parsed.success)
-    throw new Error(
-      "Invalid backup configuration; check CONTEXT_BACKUP settings",
-    );
+    throw new Error("Invalid backup configuration; check backup settings");
   return parsed.data;
 }

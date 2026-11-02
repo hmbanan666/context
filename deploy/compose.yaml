@@ -6,18 +6,13 @@ services:
       context: ..
     restart: unless-stopped
     environment:
-      NODE_ENV: production
-      CONTEXT_AUTH: oauth
-      CONTEXT_PUBLIC_URL: https://${CONTEXT_HOST:?Set the public Context hostname}/mcp
-      CONTEXT_DB_PATH: /app/data/context.db
+      CONTEXT_PUBLIC_URL: ${CONTEXT_PUBLIC_URL:?Set the public HTTPS MCP URL}
       CONTEXT_AREAS: ${CONTEXT_AREAS:-personal}
-      CONTEXT_BACKUP_DIR: /app/backups
-      CONTEXT_BACKUP_TIMEZONE: ${CONTEXT_BACKUP_TIMEZONE:-UTC}
+      TZ: ${TZ:-UTC}
+      CONTEXT_BACKUP_DIR: ${CONTEXT_BACKUP_DIR:-/app/data/backups}
       CONTEXT_BACKUP_AT: ${CONTEXT_BACKUP_AT:-03:30}
       CONTEXT_BACKUP_KEEP: ${CONTEXT_BACKUP_KEEP:-7}
       CONTEXT_BACKUP_TARGET: ${CONTEXT_BACKUP_TARGET:-none}
-      CONTEXT_BACKUP_TIMEOUT_MS: ${CONTEXT_BACKUP_TIMEOUT_MS:-300000}
-      # Only the selected target is validated; unused settings may be empty.
       CONTEXT_BACKUP_S3_ENDPOINT: ${CONTEXT_BACKUP_S3_ENDPOINT:-}
       CONTEXT_BACKUP_S3_REGION: ${CONTEXT_BACKUP_S3_REGION:-}
       CONTEXT_BACKUP_S3_BUCKET: ${CONTEXT_BACKUP_S3_BUCKET:-}
@@ -30,37 +25,15 @@ services:
       CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH: ${CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH:-}
       CONTEXT_BACKUP_SFTP_REMOTE_DIR: ${CONTEXT_BACKUP_SFTP_REMOTE_DIR:-}
       CONTEXT_BACKUP_SFTP_HOST_KEY_SHA256: ${CONTEXT_BACKUP_SFTP_HOST_KEY_SHA256:-}
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
       - sources:/app/data
-      - backups:/app/backups
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 1g
-    networks: [dokploy]
-    labels:
-      traefik.enable: "true"
-      traefik.docker.network: ${CONTEXT_PROXY_NETWORK:?Set the isolated Context proxy network}
-      traefik.http.routers.context.rule: Host(`${CONTEXT_HOST:?Set the public Context hostname}`)
-      traefik.http.routers.context.priority: "10"
-      traefik.http.routers.context.entrypoints: websecure
-      traefik.http.routers.context.middlewares: context-security,context-rate
-      traefik.http.routers.context.tls.certresolver: letsencrypt
-      traefik.http.routers.context-http.rule: Host(`${CONTEXT_HOST:?Set the public Context hostname}`)
-      traefik.http.routers.context-http.entrypoints: web
-      traefik.http.routers.context-http.middlewares: context-https
-      traefik.http.middlewares.context-https.redirectscheme.scheme: https
-      traefik.http.middlewares.context-security.headers.stsseconds: "31536000"
-      traefik.http.middlewares.context-rate.ratelimit.average: "20"
-      traefik.http.middlewares.context-rate.ratelimit.burst: "40"
-      traefik.http.services.context.loadbalancer.server.port: "3000"
-
-networks:
-  dokploy:
-    external: true
-    name: ${CONTEXT_PROXY_NETWORK:?Set the isolated Context proxy network}
 
 volumes:
   sources:
-  backups:

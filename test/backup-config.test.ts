@@ -11,7 +11,7 @@ test("nightly local defaults and explicit off-host configuration fail closed", (
   for (const env of [
     { CONTEXT_BACKUP_AT: "24:00" },
     { CONTEXT_BACKUP_KEEP: "0" },
-    { CONTEXT_BACKUP_TIMEZONE: "invalid/zone" },
+    { TZ: "invalid/zone" },
     { CONTEXT_BACKUP_TARGET: "other" },
     { CONTEXT_BACKUP_TARGET: "s3" },
     { CONTEXT_BACKUP_TARGET: "sftp" },

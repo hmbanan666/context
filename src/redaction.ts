@@ -33,3 +33,15 @@ export function redactMetadata(
     ]),
   );
 }
+
+// Apply the same filter to every string in validated ingest data. Validate again
+// afterwards: identities/filenames that cannot contain the marker fail closed.
+export function redactFields<T>(value: T): T {
+  if (typeof value === "string") return redact(value) as T;
+  if (Array.isArray(value)) return value.map(redactFields) as T;
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactFields(item)]),
+    ) as T;
+  return value;
+}

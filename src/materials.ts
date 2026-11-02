@@ -1,20 +1,11 @@
 import { z } from "zod";
-import { captureSchema, scopeSchema } from "./contracts.js";
+import {
+  captureSchema,
+  nonblankText as nonblank,
+  scopeSchema,
+} from "./contracts.js";
 import type { ImportProvenance } from "./import-format.js";
 import type { Source } from "./store.js";
-
-const nonblank = (max: number) =>
-  z
-    .string()
-    .min(1)
-    .max(max)
-    .refine(
-      (value) =>
-        value.trim().length > 0 &&
-        !value.includes("\0") &&
-        !/[\uD800-\uDFFF]/u.test(value),
-      "Use nonblank, well-formed Unicode without NUL characters",
-    );
 
 export const materialMetadataSchema = z.strictObject({
   type: z.enum(["note", "document"]).optional(),

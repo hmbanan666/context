@@ -26,7 +26,7 @@ export function registerProcessingTools(
     "queue_processing",
     {
       description:
-        "Queue one persisted synthetic source for explicit operator-launched local model processing. Does not authorize decisions or run a model inside MCP.",
+        "Queue one persisted source for explicit operator-launched local model processing. Does not authorize decisions or run a model inside MCP.",
       inputSchema: enqueueProcessingSchema,
       ...oauthMetadata(protectedMode, [
         "context:read",

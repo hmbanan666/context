@@ -6,7 +6,6 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
-COPY fixtures ./fixtures
 RUN npm run build && node dist/scripts/download-search-model.js /app/models && npm prune --omit=dev
 
 FROM node:24.22.1-bookworm-slim

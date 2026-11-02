@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { operationScopes } from "./access.js";
 import {
   type AuthStore,
   type BrowserSession,
@@ -12,6 +11,7 @@ import {
   secret,
   type TokenRecord,
 } from "./auth-store.js";
+import { operationScopes } from "./contracts.js";
 
 export interface OAuthConfig {
   readonly resource: string;

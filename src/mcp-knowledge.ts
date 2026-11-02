@@ -43,7 +43,7 @@ export function registerKnowledgeTools(
     "add_knowledge",
     {
       description:
-        "Save a suggested idea, observation or decision proposal grounded in same-scope sources. Creator fields are claims, never owner approval.",
+        "Save a secret-redacted suggested idea, observation or decision proposal grounded in same-scope sources. Creator fields are claims, never owner approval.",
       inputSchema: addKnowledgeSchema,
       ...oauthMetadata(protectedMode, ["context:write"]),
       annotations: {

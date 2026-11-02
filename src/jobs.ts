@@ -1,25 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { scopeSchema } from "./contracts.js";
+import {
+  identifierSchema as identifier,
+  nonblankText as nonblank,
+  scopeSchema,
+} from "./contracts.js";
+import { redactFields } from "./redaction.js";
 import { IdempotencyConflict } from "./store.js";
 
-const identifier = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[a-zA-Z0-9._:-]+$/);
-const nonblank = (maximum: number) =>
-  z
-    .string()
-    .min(1)
-    .max(maximum)
-    .refine(
-      (value) =>
-        value.trim().length > 0 &&
-        !value.includes("\0") &&
-        !/[\uD800-\uDFFF]/u.test(value),
-    );
 export const enqueueProcessingSchema = z.strictObject({
   version: z.literal(1),
   scope: scopeSchema,
@@ -205,7 +194,9 @@ export class JobStore {
     job: ProcessingJob;
     duplicate: boolean;
   } {
-    const request = enqueueProcessingSchema.parse(input);
+    const request = enqueueProcessingSchema.parse(
+      redactFields(enqueueProcessingSchema.parse(input)),
+    );
     const hash = createHash("sha256")
       .update(
         JSON.stringify([
@@ -348,7 +339,9 @@ export class JobStore {
     leaseToken: string,
     output: ProcessingOutput,
   ): ProcessingJob {
-    const parsed = processingOutputSchema.parse(output);
+    const parsed = processingOutputSchema.parse(
+      redactFields(processingOutputSchema.parse(output)),
+    );
     return this.#transaction(() => {
       const job = this.#leased(id, scope, leaseToken);
       const source = this.#database

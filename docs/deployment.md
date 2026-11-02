@@ -1,291 +1,218 @@
-# Current deployment and recovery
+# Hosting, client access and recovery
 
-**Stages 1a and 1b merged; stage 1c prepared in PR #21 (2 November 2026).**
-The backup slice is not yet merged or deployed. The pilot's last recorded
-status comes from [PR #19](https://github.com/hmbanan666/context/pull/19), not a new inspection.
-The repository no longer includes identity services; this PR does not change
-the live installation.
-Merge, deployment and live changes remain distinct approval/action steps.
+The [README](../README.md) is the installation guide and single environment-variable
+reference. Context needs one container behind HTTPS and persistent SQLite storage.
+On 2 November 2026 the owner confirms built-in OAuth/ChatGPT, eval #27 and hybrid
+search #28 are deployed. This refactor has not accessed or changed production.
 
-## Current protected setup
+## Existing installations
 
-The core now provides built-in OAuth 2.1 and owner password + passkey login, with
-memory and auth state in SQLite. [Base Compose](../deploy/compose.yaml) contains
-only Context and its data/backup volumes; Keycloak, its PostgreSQL database,
-bootstrap and realm files are removed. The [hosting overlay](../deploy/dokploy.yaml)
-keeps Context network isolation. Compose uses `CONTEXT_HOST` and
-`CONTEXT_PROXY_NETWORK` for an existing HTTPS proxy. No proxy or server was changed.
-See the [README](../README.md#quick-start-today-local-synthetic-development) for
-local synthetic development. The fully automatic one-command product remains a target.
+Keep the database volume, owner/passkeys, `CONTEXT_PUBLIC_URL`, area names and
+existing proxy routes. No auth table, token/client format, issuer, URL or database
+migration changes in the simplicity refactor. Existing OAuth clients need no
+reconnect. New captures are redacted; old records and their checksums stay intact.
+Retries of old secret-free requests are unchanged. A retry whose old stored
+fingerprint includes now-redacted secrets can conflict; this does not rewrite or
+remove the original. Do not blindly generate a new key for such a retry.
 
-After building with the pinned Node/npm versions, configure protected access:
+The base `deploy/compose.yaml` is the generic one-volume setup with a loopback
+port. **Behind Traefik, e.g. Dokploy, also use `deploy/dokploy.yaml`** (Compose
+2.24.4+). The overlay removes all published ports, overrides the service network
+with the existing external proxy network, and restores the HTTPS/HTTP redirect,
+HSTS and rate-limit labels. Traefik connects to internal port 3000; no host port
+3000 is reserved. It adds `backups:/app/backups` and fixes
+`CONTEXT_BACKUP_DIR=/app/backups`. Base timezone and backup settings are inherited.
+
+Keep the existing `-p` project name: Compose uses it for the existing `_sources`
+and `_backups` volume names. Do not change that name or remove volumes on upgrade.
+The deployment command remains:
 
 ```sh
-export CONTEXT_AUTH=oauth
-export CONTEXT_PUBLIC_URL=https://context.example/mcp
-export CONTEXT_DB_PATH=./data/context.db
-export CONTEXT_AREAS=personal,garden
-npm run context -- owner init
-NODE_ENV=production npm start
+docker compose -p YOUR_EXISTING_PROJECT --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/dokploy.yaml up -d --build
 ```
 
-The packaged/image CLI is `context`; in a checkout use `npm run context -- ...`.
-`owner init` reads a password twice without terminal echo, or once from stdin for
-automation, and refuses to overwrite an existing owner. Never put passwords in
-arguments. First OAuth login enrolls a passkey after password verification; later
-logins require both. Use a current browser with native WebAuthn JSON support.
-There is no password-only fallback or passkey recovery/management UI in this slice;
-retain the enrolled/synced passkey and private backups. Do not reset auth by
-removing the memory database.
+The private `deploy/.env` for this overlay must contain your public MCP URL,
+hostname and proxy network. Example (fictional hostname/network):
 
-- Resource/audience is the exact HTTPS `CONTEXT_PUBLIC_URL` ending in `/mcp`;
-  issuer and passkey origin are its origin. Discovery is at
-  `/.well-known/oauth-protected-resource/mcp` (also the root alias) and
-  `/.well-known/oauth-authorization-server`. Forward `/mcp`, `/auth/*`, `/oauth/*`
-  and `/.well-known/*` to Context with the public Host header. Prevent direct
-  public HTTP access to the backend. Do not log Authorization/Cookie headers,
-  request bodies or callback queries containing codes; Context logs no credentials.
-- DCR supports `none`, `client_secret_basic` and `client_secret_post`; omitted
-  method defaults to Basic per RFC 7591. Public/native clients should request
-  `none`; existing public registry entries stay public. Unknown optional metadata
-  is ignored. Confidential secrets are returned once, valid until revocation
-  (`client_secret_expires_at: 0`); only hashes persist, separately from listings.
-  Lost secrets require new registration and revocation of the old client.
-- Token exchange, refresh and revocation enforce the registered method. Basic
-  credentials use form encoding before Base64; POST secrets belong in the form
-  body, never the URL. Missing/wrong credentials or method downgrades fail with
-  `invalid_client`; mixed authentication methods are rejected. S256 PKCE and exact
-  resource binding remain mandatory for every client.
-- Callbacks must exactly match registered HTTPS, IP-loopback HTTP or hierarchical
-  private-use app URIs, including `cursor://anysphere.cursor-mcp/oauth/callback`
-  and `com.example.fictional:/oauth/callback`. No wildcards, fragments, userinfo,
-  executable/file schemes (`javascript:`, `data:`, `file:`) or arbitrary HTTP.
-  Consent shows the self-declared name, callback and requested area/operation
-  pairs; the owner narrows rights and selects a default write area. Registration
-  and possession of a client secret do not grant memory access.
-- Access tokens last five minutes. `CONTEXT_REFRESH_SECONDS` defaults to 86400
-  (range 300–2592000). Separately consented `CONTEXT_OFFLINE_SECONDS` defaults to
-  2592000 (up to 31536000 and at least the normal lifetime). Refresh rotates once;
-  reuse revokes the whole family, including access tokens. Rotation cannot extend
-  the original absolute deadline. Expired/revoked families require reconnecting.
-- Owner sessions last ten minutes with Secure/HttpOnly/host-only SameSite=Lax
-  cookies, CSRF and exact Origin checks. Auth bodies are limited to 16 KiB.
-  Single-owner per-minute limits are login 10, token 120, DCR 10,
-  authorization/passkeys 30 and revocation 60; MCP allows 60 per client. Limits
-  reset on restart. Capacity is 256 active clients and 1024 browser sessions;
-  revoke unwanted clients to free registry capacity.
-- `CONTEXT_AREAS` defines 1–8 areas (default `personal`). Unknown/ungranted areas
-  fail closed; automatic inbox classification is not implemented. Production
-  requires protected configuration; local no-auth mode is loopback/dev/test only.
-  Export settings explicitly; [`.env.example`](../.env.example) is not auto-loaded.
+```dotenv
+CONTEXT_PUBLIC_URL=https://context.example/mcp
+CONTEXT_HOST=context.example
+CONTEXT_PROXY_NETWORK=existing-context-proxy
+CONTEXT_AREAS=personal,projects,inbox
+TZ=Europe/Berlin
+CONTEXT_BACKUP_AT=03:30
+CONTEXT_BACKUP_KEEP=7
+CONTEXT_BACKUP_TARGET=none
+```
 
-Headless credentials share OAuth's area checks and live revocation:
+`CONTEXT_HOST` must match the URL's hostname. Keep the existing URL unchanged.
+The overlay supplies the backup directory; the image defaults the database to
+`/app/data/context.db`. No owner password or bearer token belongs in this file.
+No `CONTEXT_AUTH` setting is needed.
+
+For off-host copies, replace `none` with `s3` or `sftp` and set the matching
+`CONTEXT_BACKUP_S3_*` or `CONTEXT_BACKUP_SFTP_*` variables listed in the
+[README](../README.md#settings). Both Compose variants forward every supported
+target setting, including nonstandard SFTP ports and an empty S3 prefix. SFTP
+also needs its existing private read-only key-file mount retained in a private
+override; setting a path alone does not mount the key. Remove the obsolete
+`CONTEXT_BACKUP_TIMEZONE`, refresh-lifetime and upload-timeout tuning variables.
+
+Validate without contacting a daemon or starting containers:
 
 ```sh
-context token create fictional-worker --read personal,garden --write garden --default-write garden --expires 90d
+docker compose -p YOUR_EXISTING_PROJECT --env-file deploy/.env \
+  -f deploy/compose.yaml -f deploy/dokploy.yaml config --quiet
+```
+
+For an existing separate backup volume, keep `CONTEXT_BACKUP_DIR=/app/backups`
+and its mount. New installs put backups in `/app/data/backups` on the data volume.
+If a previous checkout used the default `./backups`, explicitly set
+`CONTEXT_BACKUP_DIR=./backups` to retain its snapshots and scheduler status.
+Never recreate a volume or initialize an owner to perform this upgrade.
+
+Removed tuning: refresh deadlines are fixed at the previous defaults (one day,
+or 30 days with offline consent), upload timeout at five minutes. Stored token
+expiry/family deadlines are untouched. Replace `CONTEXT_BACKUP_TIMEZONE` with `TZ`
+if used. Old Keycloak/grants flags have no effect; current grants come exclusively
+from SQLite. `CONTEXT_AUTH=oauth` is still accepted but is unnecessary with a URL.
+
+## Authentication
+
+Forward `/mcp`, `/auth/*`, `/oauth/*` and `/.well-known/*` to port 3000 using the
+public Host header. The exact HTTPS MCP URL is the token audience; its origin is
+the issuer, WebAuthn origin and RP host. Discovery supports RFC 9728/8414. Avoid
+logging bearer/cookie headers, request bodies or authorization callback queries.
+
+DCR supports public `none` and confidential `client_secret_basic`/
+`client_secret_post` clients (Basic by default). Registered redirects match
+exactly: HTTPS, IP-loopback HTTP and hierarchical private-use callbacks are
+supported. S256 PKCE and resource binding are required. Registration grants no
+memory rights; the owner consents to bounded areas/operations. Confidential
+secrets print once and are stored as hashes; method downgrade is rejected.
+
+`context owner init` reads a password twice with terminal echo disabled, or once
+from stdin for automation. It refuses to overwrite an initialized owner. First
+OAuth login requires passkey enrollment; subsequent logins require password and
+passkey. Use a browser with native WebAuthn JSON support. Retain a synced passkey:
+there is no passkey recovery/management UI. Never delete the database to reset login.
+
+Access tokens last five minutes. Refresh authorization lasts one day, or 30 days
+with separately consented `offline_access`; rotation retains the original family
+deadline. Replay of a consumed code or refresh token revokes that family.
+
+Inside the container (or `npm run context -- ...` in a built checkout):
+
+```sh
+context token create coding-agent --read projects --write projects --default-write projects
 context client list
 context token list
 context token revoke TOKEN_ID
 context client revoke CLIENT_ID
 ```
 
-Tokens print once; only hashes persist. Expiry defaults to 90 days and is bounded
-to one year (`m`, `h`, `d` durations). Optional `--process area` additionally needs
-read/write rights. Reusing a CLI client name adds rights to its registry but never
-broadens older tokens; revoked names cannot be reused. Listings expose IDs, rights,
-redirects, default write area and timestamps, never credentials. Revocation takes
-effect on the next request; revoking an OAuth token revokes its whole family.
-Expired OAuth families are pruned after their final access lifetime; CLI history
-remains listed. Protected `remember` uses the credential's default write area.
+Tokens print once and expire in 90 days by default; `--expires` accepts bounded
+`m`, `h`, `d` durations up to one year. Optional `--process projects` also requires
+read/write rights. Reusing a CLI client name can add rights to its registry but
+never broadens older tokens. Revoked names cannot be reused. Revocation is checked
+on every request. CLI commands use owner filesystem authority, not network login.
 
-**Migration/reconnect:** existing ChatGPT/Codex and other Keycloak-issuer
-connections stop working after this release and must reconnect once through
-standard MCP OAuth. Keep the SQLite volume and legacy area names. Remove
-`CONTEXT_OAUTH_ISSUER`, `CONTEXT_OWNER_SUBJECT` and `CONTEXT_CLIENT_GRANTS` (old
-settings fail startup), initialize the owner and approve new registry grants.
-New client IDs change MCP provenance; replaying old writes through a new client
-is not a migration tool. Sources, knowledge, files and retry rows are unaffected.
-Keycloak containers and their dedicated database can be removed after the switch
-under the applicable owner approval; retain private backups for rollback. This
-PR does not perform that migration or delete live containers/volumes.
+## Backups
 
-The 1a compatibility rules still apply: remove `CONTEXT_PERSONAL_MEMORY`, replace
-local `CONTEXT_LOCAL_SCOPES` with `CONTEXT_AREAS`, and opt in with
-`CONTEXT_LOCAL_MCP=enabled`. Retain original areas such as `private:personal` and
-use their original `scope` for reads/retries. Removed tools are `knowledge_history`,
-`work_context` and `project_context`; removed scripts are `knowledge:review`,
-`work` and `work:probe`. Use memory/context tools; `capture`/`recall` remain.
-Old work tables are unused; historical review rows preserve knowledge status.
-No startup code drops or rewrites domain rows. Rollback needs matching code and
-provider configuration; never replace concurrent writes with an old snapshot.
+At 03:30 local time, Context takes an online SQLite snapshot, checks integrity,
+restores it to a separate temporary file, and verifies that copy. Seven generated
+snapshots are retained by default. Sources, files, knowledge, jobs, retry identity,
+indexes and all `auth_*` tables travel together. Configuration and external
+credentials need separate recovery. Allow space for retention plus two temporary
+full copies. Backup errors do not stop capture/search.
 
-## Import existing archives
-
-Run `context import jsonl --source NAME --area AREA` inside the container using
-its existing `CONTEXT_DB_PATH` and `CONTEXT_AREAS`. Feed stdin or `--file PATH`.
-GitHub/Codex collectors run on the operator machine; they need no database access.
-See [imports](imports.md) for commands, redaction, immutable revisions and results.
-No new environment variables, services or volumes are required. The additive
-`source_imports` table/index ships with the code and is covered by SQLite backups.
-Deployment and real-data ingestion remain distinct owner actions.
-
-## Backup and restore today
-
-After building, use a local synthetic database and new private filenames:
+Scheduling checks every 30 seconds, catches up once after today's scheduled time,
+and persists the attempted calendar date. An interrupted run retries on restart;
+a completed failure waits until the next night or a manual retry. SQLite locking
+coordinates CLI and scheduled runs. Use one local backup directory per database.
 
 ```sh
-npm run database -- backup ./data/context.db ./backups/context-snapshot.db
-npm run database -- restore ./backups/context-snapshot.db ./data/restored.db
+# Inside the running container:
+node dist/scripts/backup.js run
+node dist/scripts/backup.js status
+# In a built checkout: npm run backup / npm run backup -- status
 ```
 
-Online backup includes committed WAL pages, sources, derived records, jobs,
-indexes, retries, owner password hash, passkey public keys, client secret hashes
-and token hashes.
-Commands check integrity and refuse to overwrite destinations. Restore offline
-to an absent file without WAL/SHM sidecars; stop the service before switching
-`CONTEXT_DB_PATH`. Verify source IDs/checksums, provenance, retries, search and
-access denial. Never copy a live SQLite file while ignoring its WAL.
+Status distinguishes a verified local snapshot from an uploaded copy. A failed
+upload keeps the local snapshot. Retrying creates and sends a fresh complete
+snapshot, not a queue of previous failures. Status and snapshots are mode `0600`;
+new backup directories are `0700`. Logs contain metadata and stages, not records,
+credentials or raw remote errors. Invalid target configuration disables scheduling
+with a configuration failure; inspect timestamps because status may describe an
+older run.
 
-Restoring auth state also rolls back revocations/refresh rotation: revoke restored
-credentials and require reconnect/reissue before external access if the snapshot
-predates revocations. During a Keycloak rollback window, retain its separate
-private identity database backup; realm JSON is not a database backup. Backup
-contents and credentials stay outside Git. Future hard-delete acceptance must
-address retention and restore reconciliation.
+Optional targets use the [README settings](../README.md#settings):
 
-### Nightly schedule and off-host delivery
+- **S3:** an existing private bucket and HTTPS endpoint, path-style single PUT,
+  streaming uploads. Set a remote lifecycle policy; Context only prunes local copies.
+- **SFTP:** an existing private absolute directory, a mounted unencrypted key file,
+  and a trusted SHA-256 host-key fingerprint (64 hex digits). Uploads use a private
+  `.part` file, verify size and rename. Arrange cleanup of stale partial/old files.
 
+Both transfer over TLS/SSH and store plain SQLite snapshots. Client-side encryption
+is explicitly out of scope ([ADR 0009](adr/0009-nightly-off-host-backups.md)).
+A same-host copy cannot survive host loss, and an upload acknowledgement alone is
+not a remote recovery drill.
 
-The Context process makes a SQLite online snapshot nightly, checks `quick_check`,
-restores it into a temporary separate file and opens/checks that restored copy.
-Only verified snapshots become `context-<UTC timestamp>-<UUID>.db` files. Originals,
-BLOBs, indexes, retry keys and every `auth_*` table stay together. No host cron or identity provider is
-needed for backups. This implementation is release preparation, not live activation.
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `CONTEXT_BACKUP_DIR` | `./backups` | Dedicated writable, persistent local directory; `/app/backups` in the image's working directory. |
-| `CONTEXT_BACKUP_AT` | `03:30` | Daily local `HH:MM`; `off` disables scheduling but allows the CLI. |
-| `CONTEXT_BACKUP_TIMEZONE` | Process timezone | IANA timezone, e.g. `Europe/Berlin`; containers normally use UTC. |
-| `CONTEXT_BACKUP_KEEP` | `7` | Retain 1–3650 verified local snapshots, including manual runs. |
-| `CONTEXT_BACKUP_TARGET` | `none` | `none` (local only), `s3`, or `sftp`. |
-| `CONTEXT_BACKUP_TIMEOUT_MS` | `300000` | Whole upload deadline, 1000–3600000 ms. |
-| `CONTEXT_BACKUP_S3_ENDPOINT` | Required for S3 | HTTPS S3-compatible endpoint without embedded credentials/query/fragment; path-style addressing. |
-| `CONTEXT_BACKUP_S3_REGION` | Required for S3 | Signing region accepted by the target. |
-| `CONTEXT_BACKUP_S3_BUCKET` | Required for S3 | Existing private bucket. |
-| `CONTEXT_BACKUP_S3_PREFIX` | `context/` | Object key prefix; empty is allowed. |
-| `CONTEXT_BACKUP_S3_ACCESS_KEY` / `CONTEXT_BACKUP_S3_SECRET_KEY` | Required for S3 | Dedicated credentials, supplied privately through the environment. |
-| `CONTEXT_BACKUP_SFTP_HOST` / `CONTEXT_BACKUP_SFTP_PORT` | Host required / `22` | SFTP destination. |
-| `CONTEXT_BACKUP_SFTP_USER` | Required for SFTP | Dedicated remote account. |
-| `CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH` | Required for SFTP | Readable mounted private key; encrypted private keys are not supported in this slice. |
-| `CONTEXT_BACKUP_SFTP_REMOTE_DIR` | Required for SFTP | Existing private absolute directory with write/rename rights. |
-| `CONTEXT_BACKUP_SFTP_HOST_KEY_SHA256` | Required for SFTP | Trusted SHA-256 host-key fingerprint as 64 hex digits; mismatches fail closed. |
-
-[Base Compose](../deploy/compose.yaml) passes these settings to Context and fixes
-`CONTEXT_BACKUP_DIR=/app/backups` on the existing backup volume. Its timezone
-default is UTC. Unused S3/SFTP variables may be empty; only the selected target's
-required fields are validated. An empty SFTP port uses 22. An unset S3 prefix
-uses `context/`; explicitly empty means the bucket root. No optional env file is
-required. For SFTP, add a read-only key-file mount through a private Compose
-override and set `CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH` to that container path.
-The base file does not mount or discover host keys/credentials automatically.
-
-After startup, the scheduler checks every 30 seconds. If today's time has passed,
-it catches up once; it does not replay all missed days. Completed and failed
-scheduled attempts persist their local calendar date across restarts. An
-interrupted attempt is retried after restart. A daylight-saving gap runs at the
-first later local minute; a repeated hour does not duplicate the daily attempt.
-A lock coordinates scheduled and CLI backups and releases automatically on exit.
-Use one local backup directory per database, on a filesystem with SQLite locking.
-
-Retention runs after verification and before upload. It removes only generated
-snapshot names, preserving unrelated files and the current snapshot even after
-clock changes. Failed uploads keep that verified local snapshot. The next nightly
-attempt sends a fresh complete snapshot; `npm run backup` retries immediately
-with a new snapshot. There is no queue of old failed uploads. S3 uses a streaming
-single PUT (up to the provider's single-object PUT limit); SFTP streams a private
-`.part` file, checks its size, then renames it. Remote retention is **not** applied:
-configure the bucket lifecycle or remote cleanup, including abandoned `.part`
-files. An upload acknowledgement is not a remote restore drill.
+Restore offline into a **new** destination, never over the live database:
 
 ```sh
-npm run build
-npm run backup                # verified snapshot, retention, configured upload
-npm run backup -- status      # owner-only last result; nonzero unless successful
-npm run database -- restore ./backups/CHOSEN-SNAPSHOT.db ./data/recovered.db
+node dist/scripts/database.js restore /app/data/backups/CHOSEN.db /app/data/recovered.db
+# Existing two-volume installs use /app/backups/CHOSEN.db instead.
+# In a checkout: npm run database -- restore SOURCE NEW_DESTINATION
 ```
 
-In the image, use `node dist/scripts/backup.js run` / `status` and
-`node dist/scripts/database.js restore SOURCE NEW_DESTINATION`. These CLI commands
-use filesystem access as owner authority; they do not require MCP or OAuth.
-Restore refuses an existing destination or its WAL/SHM sidecars. It never selects
-or replaces the live database. Stop Context before deliberately switching its
-database path to a recovered file. For an off-host restore, download the snapshot,
-compare SHA-256 with the recorded checksum, then use the same restore command.
-
-`status.json` and snapshots are mode `0600`; newly created backup directories are
-`0700`. Status is local only, read through the CLI; public `/health` stays unchanged.
-Logs contain only backup metadata (name, bytes, SHA-256, timestamps, duration,
-stage and outcome), never raw errors, records, endpoints or credentials. Failures
-do not stop capture/recall. Invalid backup configuration disables scheduling and
-logs `stage: configuration`; it never silently falls back to local-only success.
-The last status file may then describe an older attempt; check its timestamp and
-startup logs. Filesystem failures that prevent writing status are logged too.
-
-Persist the backup directory separately from the container's disposable layer.
-Budget for retained snapshots plus two temporary full database copies during
-verification. `none` does not protect against host loss. Transfers use TLS or SSH;
-**client-side backup encryption is a follow-up**. Local and remote files contain
-the complete SQLite database, so keep both destinations private. Configuration and external credentials need separate recovery; this backup copies
-SQLite, including the built-in authentication state, only. No real remote-storage or hosted recovery claim
-is made by the synthetic tests.
+For an off-host copy, download it privately and compare SHA-256 with the recorded
+checksum first. Restore rejects existing files and WAL/SHM sidecars. Stop Context
+before deliberately switching its database path. Reconcile credentials revoked
+since the snapshot before reopening access. The future hard-delete feature must
+also define deletion reconciliation; it is not implemented today.
 
 ## Retrieval evaluation
 
-The owner CLI supports `context eval run [--questions PATH] [--k 10] [--json]`
-and `context eval history [--limit 10] [--json]`. Put private questions at
-`/app/data/evals/questions.yaml`; summary rows append to
-`/app/data/evals/history.jsonl` on the existing data volume. The main database
-is opened read-only. No new environment variables, auth credentials, volumes or
-scheduler configuration are required. Nightly eval runs immediately after the
-existing scheduled backup attempt when the file exists; backup scheduling off
-also disables eval. The SQLite backup does not include these separate files.
-See [eval schema, metrics, privacy and limits](evals.md). Hosted private quality
-and performance under the container memory limit have not been measured here.
-
-## Verification and limits
-
-Run `npm ci` and `npm run check` with pinned Node/npm. Checks cover source/knowledge
-preservation, auth/CLI, software-authenticator passkeys, official SDK OAuth/MCP,
-confidential clients, exact native callbacks, expiry, replay/revocation, HTTP
-limits and backup/restore. `npm run test:oauth` replaces the removed Keycloak
-provider smoke test. GitHub CI also builds the image
-and runs `npm run test:container` with disposable synthetic data. Docker is not
-available in this work environment and was not invoked locally; use CI evidence.
-Review Markdown links and current/target consistency separately from Biome.
-
-Actual hosted ChatGPT/Claude/Cursor linking, physical/synced passkeys, proxy routing
-and real next-day save → reopen → ask remain unverified. No live acceptance or
-migration is claimed. See [spec acceptance](spec.md#testing-decisions); discovery
-and fixture tests do not replace actual-client journeys. Protocol references:
-[MCP authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization)
-and [WebAuthn verification](https://simplewebauthn.dev/docs/packages/server).
+`context eval run` and `context eval history` use the main database read-only.
+Private questions live at `/app/data/evals/questions.yaml`; numeric results and
+question IDs append to `/app/data/evals/history.jsonl`. When questions exist, eval
+runs after scheduled backup attempts, sharing the same schedule and restart
+behavior. No extra settings or volumes are required. The SQLite backup does not
+include these separate files; preserve them privately if needed. See [evals](evals.md).
 
 ## Search model and memory
 
-The image bakes in quantized multilingual E5 at build time. Runtime model access
-is local only; no new environment variables, credentials or volumes are needed.
-Startup and capture/import automatically queue backfill. Missing/unavailable
-models log a safe failure and search falls back to exact plus RU/EN stemmed FTS.
+The image includes quantized multilingual E5. Runtime loading is local only;
+no model credentials, environment settings or additional volume are needed.
+Startup and writes backfill automatically. `context index rebuild` repairs derived
+FTS/vectors from preserved originals. Capture does not wait for embeddings.
 
-Base Compose now uses `mem_limit: 1g`: local synthetic measurements reached
-671 MiB RSS, so the previous 512 MiB limit is too small. Image build needs network
-access to fetch the pinned public model; runtime does not. Run
-`context index rebuild` inside the container only when derived indexes need repair;
-it rebuilds lexical data and queues vectors without loading another model. Read
-area-scoped progress via MCP `processing_status`. See [search](search.md) for
-measurements, retry behavior, bounded coverage and local development instructions.
+The merged search implementation recommends **1 GiB**, retained in Compose and the
+README: its synthetic measurements reached roughly 661–671 MiB RSS. Do not reuse the earlier
+512 MiB limit for that workload. The owner confirms search is deployed; this task
+has not inspected its current limits. This refactor adds no memory requirement. See [search](search.md)
+for measured bounds; live concurrency and capacity remain unverified.
 
-No migration of the production container was performed. Before release, verify
-the image build and the normal authenticated save → reopen → ask journey; merge
-and deployment still require separate owner approval.
+## Development and verification
+
+For synthetic loopback development only:
+
+```sh
+npm ci && npm run build
+CONTEXT_LOCAL_MCP=enabled npm start
+```
+
+No-auth mode rejects bearer headers and cannot start in production. With neither
+URL nor local opt-in, development exposes health only. Run `npm run check` for
+lint, types and all tests; the test runner pins UTC itself. CI additionally runs
+`node dist/test/validate-compose.js` against synthetic base/overlay configurations
+(no daemon), builds Docker and runs the one-volume restart/restore smoke test.
+The Compose check asserts no hosted port binding, stable volume names, proxy
+network/labels, timezone and local/S3/SFTP backup configuration.
+
+This refactor's tests cannot establish physical passkey compatibility, hosted
+inactivity/next-day refresh, real off-host recovery or a production resource
+measurement. Retest save → reopen → ask after a separately approved deployment.

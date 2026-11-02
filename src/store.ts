@@ -16,6 +16,7 @@ import {
   type MaterialMetadata,
 } from "./materials.js";
 import type { PackageSelection } from "./package-query.js";
+import { redact, redactFields } from "./redaction.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 
 export interface SourceInput {
@@ -163,7 +164,9 @@ export class SourceStore {
   }
 
   capture(input: CaptureInput): { source: Source; duplicate: boolean } {
-    const request = captureSchema.parse(input);
+    const request = captureSchema.parse(
+      redactFields(captureSchema.parse(input)),
+    );
     const fingerprint = createHash("sha256")
       .update(
         JSON.stringify([
@@ -181,7 +184,9 @@ export class SourceStore {
     material: Material;
     duplicate: boolean;
   } {
-    const request = captureMaterialSchema.parse(input);
+    const request = captureMaterialSchema.parse(
+      redactFields(captureMaterialSchema.parse(input)),
+    );
     const metadata = materialMetadata(
       request.metadata,
       request.metadata?.type ?? "note",
@@ -202,7 +207,9 @@ export class SourceStore {
     input: CaptureMaterialInput,
     provenance: ImportProvenance,
   ): { source: Source; duplicate: boolean; changed: boolean } {
-    const request = captureMaterialSchema.parse(input);
+    const request = captureMaterialSchema.parse(
+      redactFields(captureMaterialSchema.parse(input)),
+    );
     const metadata = materialMetadata(
       request.metadata,
       request.metadata?.type ?? "note",
@@ -228,7 +235,13 @@ export class SourceStore {
     material: Material;
     duplicate: boolean;
   } {
-    const request = captureFileSchema.parse(input);
+    const original = captureFileSchema.parse(input);
+    const request = captureFileSchema.parse({
+      ...redactFields(original),
+      contentBase64: Buffer.from(
+        redact(decodeMaterialFile(original.contentBase64).text),
+      ).toString("base64"),
+    });
     const { bytes, text } = decodeMaterialFile(request.contentBase64);
     const metadata = materialMetadata(request.metadata, "document");
     const file = {

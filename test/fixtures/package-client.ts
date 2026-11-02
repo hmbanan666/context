@@ -2,13 +2,13 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import type { ClientGrants } from "../../src/access.js";
 import { protectMcp } from "../../src/auth.js";
 import { EmbeddingIndex } from "../../src/embedding-index.js";
 import type { Embedder } from "../../src/embedding-model.js";
 import { KnowledgeStore } from "../../src/knowledge.js";
 import { createContextMcp } from "../../src/mcp.js";
 import { SourceStore } from "../../src/store.js";
+import type { ClientGrants } from "./auth.js";
 import { fixtureAuth } from "./auth.js";
 
 const scope = "personal";

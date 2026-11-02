@@ -14,7 +14,6 @@ export function evalConfig(env: NodeJS.ProcessEnv): EvalOptions {
   if (
     !databasePath.trim() ||
     databasePath === ":memory:" ||
-    !directory.trim() ||
     new Set(areas).size !== areas.length
   )
     throw new Error("Invalid eval configuration");

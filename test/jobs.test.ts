@@ -496,3 +496,32 @@ test("backup restore resumes saved output and partial knowledge writes without n
     await rm(f.directory, { recursive: true, force: true });
   }
 });
+
+test("durable processing output redacts generated secrets before retry replay", async () => {
+  const f = await fixture();
+  try {
+    f.jobs.enqueue(f.input);
+    const claimed = f.jobs.claim(scope);
+    assert.ok(claimed);
+    const generated = {
+      items: [
+        {
+          kind: "observation" as const,
+          text: "token=ghp_fictionalModelSecret123",
+          quote: "violet lamp",
+        },
+      ],
+    };
+    f.jobs.saveOutput(claimed.job.id, scope, claimed.leaseToken, generated);
+    f.advance(PROCESSING_LEASE_MS + 1);
+    const resumed = f.jobs.claim(scope);
+    assert.ok(resumed);
+    assert.equal(resumed.job.output?.items[0]?.text, "token=[REDACTED]");
+    f.jobs.saveOutput(resumed.job.id, scope, resumed.leaseToken, generated);
+  } finally {
+    f.jobs.close();
+    f.knowledge.close();
+    f.sources.close();
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});

@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+export const operationScopes = [
+  "context:read",
+  "context:write",
+  "context:process",
+] as const;
+export type OperationScope = (typeof operationScopes)[number];
+
 export const personalDataScope = "personal";
 
 // Colons remain valid so existing databases can retain their original area names.
@@ -13,12 +20,12 @@ export const scopeSchema = z
       message: "An area cannot be an OAuth operation or refresh scope",
     },
   );
-const identifier = z
+export const identifierSchema = z
   .string()
   .min(1)
   .max(128)
   .regex(/^[a-zA-Z0-9._:-]+$/);
-const nonblank = (max: number) =>
+export const nonblankText = (max: number) =>
   z
     .string()
     .min(1)
@@ -31,18 +38,18 @@ const nonblank = (max: number) =>
 
 export const captureSchema = z.strictObject({
   version: z.literal(1),
-  text: nonblank(8192),
-  origin: nonblank(256),
+  text: nonblankText(8192),
+  origin: nonblankText(256),
   scope: scopeSchema,
-  idempotencyKey: identifier,
+  idempotencyKey: identifierSchema,
 });
 
 export const recallSchema = z
   .strictObject({
     version: z.literal(1),
     scope: scopeSchema,
-    id: identifier.optional(),
-    query: nonblank(256).optional(),
+    id: identifierSchema.optional(),
+    query: nonblankText(256).optional(),
     limit: z.number().int().min(1).max(20).default(10),
   })
   .refine((input) => (input.id === undefined) !== (input.query === undefined), {
