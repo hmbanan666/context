@@ -511,7 +511,7 @@ export class AuthorizationServer {
       ? this.config.areas.filter((a) => p.scopes.includes(a))
       : [];
     return page(
-      `<h2>Authorize ${escapeHtml(client.name)}</h2><p>Client names are self-declared. Check the callback before granting access:</p><p>${escapeHtml(p.redirect)}</p><form method="post" action="/oauth/consent">${csrfInput(session)}${choices}<label>Default write area <select name="default_write"><option value="">None (read only)</option>${writable.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")}</select></label>${p.scopes.includes("offline_access") && client.refresh ? '<p><label><input type="checkbox" name="offline" value="yes">Allow bounded offline access</label></p>' : ""}<button name="decision" value="allow">Allow selected rights</button><button name="decision" value="deny">Deny</button></form>`,
+      `<h2>Authorize ${escapeHtml(client.name)}</h2><p>Client names are self-declared. Check the callback before granting access:</p><p>${escapeHtml(p.redirect)}</p><form method="post" action="/oauth/consent">${csrfInput(session)}${choices}<label>Default write area <select name="default_write"><option value="">None (read only)</option>${writable.map((a, index) => `<option value="${escapeHtml(a)}"${index === 0 ? " selected" : ""}>${escapeHtml(a)}</option>`).join("")}</select></label>${p.scopes.includes("offline_access") && client.refresh ? '<p><label><input type="checkbox" name="offline" value="yes">Allow bounded offline access</label></p>' : ""}<button name="decision" value="allow">Allow selected rights</button><button name="decision" value="deny">Deny</button></form>`,
     );
   }
   private async passkey(request: Request): Promise<Response> {

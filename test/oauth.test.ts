@@ -219,6 +219,7 @@ test("owner enrolls a passkey; DCR → PKCE → consent → SDK MCP save/read �
       authorization(clientId, verifier),
     );
     assert.match(html, /Fictional &lt;worker&gt;/);
+    assert.match(html, /<option value="personal" selected>/);
     const consent = new URLSearchParams({
       csrf: browser.csrf,
       read: "garden",
