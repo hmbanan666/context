@@ -86,6 +86,10 @@ test("protected MCP applies area and operation grants to every read, write, proc
   try {
     const codex = await connect("fictional-reader");
     const reads = [
+      ["search", { query: "secret" }],
+      ["read", { id: sb.id }],
+      ["read", { id: kb.id }],
+      ["timeline", {}],
       ["recall", { id: sb.id }],
       ["recall", { query: "secret" }],
       ["read_material", { id: sb.id }],
@@ -100,9 +104,18 @@ test("protected MCP applies area and operation grants to every read, write, proc
     for (const [name, args] of reads) {
       const result = await codex.callTool({
         name,
-        arguments: { version: 1, scope: b, ...args },
+        arguments: {
+          ...(["search", "timeline"].includes(name) ? {} : { version: 1 }),
+          scope: b,
+          ...args,
+        },
       });
       assert.equal(result.isError, true, name);
+      assert.match(
+        JSON.stringify(result.structuredContent),
+        /insufficient_scope|forbidden_scope/,
+        name,
+      );
       assert.equal(JSON.stringify(result).includes(sb.text), false, name);
       assert.equal(JSON.stringify(result).includes(sb.id), false, name);
     }
@@ -110,6 +123,17 @@ test("protected MCP applies area and operation grants to every read, write, proc
       [
         "remember",
         { text: "Fictional denied", idempotencyKey: "blocked-note" },
+      ],
+      [
+        "remember",
+        {
+          file: {
+            filename: materialInput.filename,
+            mediaType: materialInput.mediaType,
+            contentBase64: materialInput.contentBase64,
+          },
+          idempotencyKey: "blocked-remember-file",
+        },
       ],
       [
         "capture",
@@ -160,6 +184,11 @@ test("protected MCP applies area and operation grants to every read, write, proc
         arguments: { ...args, version: 1, scope: a },
       });
       assert.equal(result.isError, true, name);
+      assert.match(
+        JSON.stringify(result.structuredContent),
+        /insufficient_scope|forbidden_scope/,
+        name,
+      );
     }
     const context = await codex.callTool({
       name: "context_package",
@@ -177,10 +206,22 @@ test("protected MCP applies area and operation grants to every read, write, proc
       Buffer.byteLength(JSON.stringify(context.structuredContent)) <= 2048,
     );
     const tools = (await codex.listTools()).tools;
-    assert.equal(tools.length, 15);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+      "read",
+      "remember",
+      "search",
+      "timeline",
+    ]);
     for (const name of ["work_context", "project_context", "knowledge_history"])
       assert.ok(!tools.some((tool) => tool.name === name));
     assert.ok(tools.every((tool) => tool._meta?.securitySchemes !== undefined));
+    for (const tool of tools)
+      assert.deepEqual(tool._meta?.securitySchemes, [
+        {
+          type: "oauth2",
+          scopes: [tool.name === "remember" ? "context:write" : "context:read"],
+        },
+      ]);
     const ownerWithoutProcessing = await connect("context-chatgpt", [
       "context:read",
       "context:write",
@@ -208,15 +249,42 @@ test("protected MCP applies area and operation grants to every read, write, proc
     });
     assert.ok(!queued.isError);
     const missingRead = await connect("fictional-reader", ["context:write"]);
-    assert.equal(
-      (
-        await missingRead.callTool({
-          name: "context_package",
-          arguments: { version: 1, scope: a, question: "observatory" },
-        })
-      ).isError,
-      true,
-    );
+    for (const [name, args] of reads) {
+      const denied = await missingRead.callTool({
+        name,
+        arguments: {
+          ...(["search", "timeline"].includes(name) ? {} : { version: 1 }),
+          scope: a,
+          ...args,
+        },
+      });
+      assert.equal(denied.isError, true, name);
+      assert.match(
+        JSON.stringify(denied.structuredContent),
+        /insufficient_scope/,
+        name,
+      );
+    }
+    for (const operations of [
+      ["context:read", "context:process"],
+      ["context:write", "context:process"],
+    ]) {
+      const partial = await connect("context-chatgpt", operations);
+      const denied = await partial.callTool({
+        name: "queue_processing",
+        arguments: {
+          version: 1,
+          scope: a,
+          sourceId: sa.id,
+          idempotencyKey: "partial-job",
+        },
+      });
+      assert.equal(denied.isError, true);
+      assert.match(
+        JSON.stringify(denied.structuredContent),
+        /insufficient_scope/,
+      );
+    }
     // A configured non-personal area supports the same memory journey.
     const note = {
       scope: a,

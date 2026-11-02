@@ -245,6 +245,19 @@ test("MCP fuses paraphrases with lexical ranks after area, date and knowledge-st
         items: { id: string }[];
         coverage: { sourceMatches: number; knowledgeMatches: number };
       };
+      const searched = await client.callTool({
+        name: "search",
+        arguments: {
+          query: question,
+          since: "2026-10-01T00:00:00Z",
+          until: "2026-11-01T00:00:00Z",
+        },
+      });
+      assert.ok(!searched.isError);
+      const visible = searched.structuredContent as typeof data;
+      assert.deepEqual(visible.sources, data.sources);
+      assert.deepEqual(visible.items, data.items);
+      assert.deepEqual(visible.coverage, data.coverage);
       assert.deepEqual(
         data.sources.map((s) => s.id),
         [source.id],

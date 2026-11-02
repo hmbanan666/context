@@ -261,7 +261,7 @@ test("personal tools enforce owner, operation and independent client grants befo
       ).structuredContent,
     );
     const tools = (await writer.listTools()).tools;
-    for (const name of ["remember", "memory_context"]) {
+    for (const name of ["remember", "timeline"]) {
       const tool = tools.find((tool) => tool.name === name);
       assert.ok(tool);
       assert.ok(
