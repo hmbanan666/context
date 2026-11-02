@@ -58,3 +58,21 @@ questions:
     read_areas: [garden]
     expected: []
     placeholder: true
+  - id: current_over_history
+    question: lunar agents
+    areas: [garden]
+    read_areas: [garden]
+    forbidden_areas: [vault]
+    expected:
+      - source_external_id: https://fictional.example/agents-current
+    outranks:
+      - source_external_id: https://fictional.example/agents-old
+    tags: [supersedes]
+  - id: duplicate_only_match
+    question: uniquecopyalias
+    areas: [garden]
+    read_areas: [garden]
+    forbidden_areas: [vault]
+    expected:
+      - source_external_id: https://fictional.example/canonical
+    tags: [duplicates]

@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { evalQuestionSchema } from "../src/eval-questions.js";
+import { scoreEval } from "../src/eval-runner.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { SourceStore } from "../src/store.js";
 
@@ -442,4 +444,21 @@ test("import and eval CLI coexist and match imported external IDs and URLs", asy
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("outranks requires an expected hit before every matched historical hit and records only a boolean", () => {
+  const question = evalQuestionSchema.parse({
+    id: "current",
+    question: "agents",
+    areas: ["garden"],
+    read_areas: ["garden"],
+    expected: [{ source_id: "new" }],
+    outranks: [{ source_id: "old" }, { substring: "outdated" }],
+  });
+  const current = { id: "new", externalIds: [], excerpts: ["current"] };
+  const old = { id: "old", externalIds: [], excerpts: ["outdated"] };
+  assert.equal(scoreEval(question, [old, current]).outranks_pass, false);
+  assert.equal(scoreEval(question, [current, old]).outranks_pass, true);
+  assert.equal(scoreEval(question, [current]).outranks_pass, true);
+  assert.equal(scoreEval(question, []).outranks_pass, false);
 });

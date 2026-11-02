@@ -91,7 +91,7 @@ export function registerKnowledgeTools(
     "relate_knowledge",
     {
       description:
-        "Suggest a grounded supports/contradicts/supersedes relation between two same-scope knowledge items. A supersedes suggestion does not change approval.",
+        "Suggest a grounded supports/contradicts/supersedes/duplicates relation between same-scope sources or knowledge items. A supersedes B means A is current; A duplicates B means B is canonical. Relations never grant approval.",
       inputSchema: relateKnowledgeSchema,
       ...oauthMetadata(protectedMode, ["context:write"]),
       annotations: {

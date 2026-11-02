@@ -3,13 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { parseCodexEvents } from "../src/codex-extractor.js";
 import {
   JobStore,
   PROCESSING_LEASE_MS,
   PROCESSOR_VERSION,
   type ProcessingOutput,
-  ProcessingValidationError,
 } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { ModelUnavailableError, processNext } from "../src/processor.js";
@@ -286,111 +284,4 @@ test("processing never claims another scope or passes its source to an extractor
       processNext(sources, knowledge, jobs, "invalid area", async () => output),
     );
   });
-});
-
-function streamWith(item: unknown, completed = true): string {
-  return [
-    { type: "thread.started", thread_id: "synthetic-thread" },
-    { type: "turn.started" },
-    { type: "item.completed", item },
-    ...(completed
-      ? [
-          {
-            type: "turn.completed",
-            usage: { input_tokens: 10, output_tokens: 5 },
-          },
-        ]
-      : []),
-  ]
-    .map((event) => JSON.stringify(event))
-    .join("\n");
-}
-
-test("Codex stream parser requires one completed schema-conforming final message", () => {
-  const events = streamWith({
-    id: "item_1",
-    type: "agent_message",
-    text: JSON.stringify(output),
-  });
-  assert.deepEqual(parseCodexEvents(events), output);
-  const [started, turnStarted, ...remaining] = events.split("\n");
-  const reasoning = JSON.stringify({
-    type: "item.completed",
-    item: {
-      id: "reason_1",
-      type: "reasoning",
-      text: "A bounded diagnostic summary, not extracted knowledge",
-    },
-  });
-  assert.deepEqual(
-    parseCodexEvents(
-      [started, turnStarted, reasoning, ...remaining].join("\n"),
-    ),
-    output,
-  );
-  const warning = {
-    type: "item.completed",
-    item: {
-      id: "item_0",
-      type: "error",
-      message:
-        "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.",
-    },
-  };
-  const [thread, ...rest] = events.split("\n");
-  assert.deepEqual(
-    parseCodexEvents([thread, JSON.stringify(warning), ...rest].join("\n")),
-    output,
-  );
-  assert.throws(
-    () =>
-      parseCodexEvents(
-        streamWith(
-          {
-            id: "item_1",
-            type: "agent_message",
-            text: JSON.stringify(output),
-          },
-          false,
-        ),
-      ),
-    ProcessingValidationError,
-  );
-});
-
-test("Codex stream parser rejects tool events, unexpected errors, extra fields and oversized output", () => {
-  for (const item of [
-    { id: "tool_1", type: "mcp_tool_call", tool: "capture" },
-    { id: "tool_1", type: "command_execution", command: "echo unsafe" },
-    { id: "tool_1", type: "web_search", query: "unsafe" },
-    { id: "error_1", type: "error", message: "Sensitive provider failure" },
-    {
-      id: "message_1",
-      type: "agent_message",
-      text: '{"items":[],"approved":true}',
-    },
-    { id: "message_1", type: "agent_message", text: "not JSON" },
-  ]) {
-    assert.throws(
-      () => parseCodexEvents(streamWith(item)),
-      ProcessingValidationError,
-    );
-  }
-  assert.throws(
-    () => parseCodexEvents("x".repeat(1024 * 1024 + 1)),
-    ProcessingValidationError,
-  );
-  const valid = streamWith({
-    id: "message_1",
-    type: "agent_message",
-    text: JSON.stringify(output),
-  });
-  assert.throws(
-    () => parseCodexEvents(`${valid}\n{"type":"turn.started"}`),
-    ProcessingValidationError,
-  );
-  assert.throws(
-    () => parseCodexEvents('{"type":"turn.started"}'),
-    ProcessingValidationError,
-  );
 });

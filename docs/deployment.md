@@ -8,8 +8,9 @@ search #28 are deployed. This refactor has not accessed or changed production.
 ## Existing installations
 
 Keep the database volume, owner/passkeys, `CONTEXT_PUBLIC_URL`, area names and
-existing proxy routes. No auth table, token/client format, issuer, URL or database
-migration changes in the simplicity refactor. Existing OAuth clients need no
+existing proxy routes. Auth tables, token/client formats, issuer and URL stay
+unchanged. Tidy migrates only the relation table CHECK/endpoint constraints,
+preserving existing rows. Existing OAuth clients need no
 reconnect. New captures are redacted; old records and their checksums stay intact.
 Retries of old secret-free requests are unchanged. A retry whose old stored
 fingerprint includes now-redacted secrets can conflict; this does not rewrite or
@@ -179,7 +180,7 @@ also define deletion reconciliation; it is not implemented today.
 `context eval run` and `context eval history` use the main database read-only.
 Private questions live at `/app/data/evals/questions.yaml`; numeric results and
 question IDs append to `/app/data/evals/history.jsonl`. When questions exist, eval
-runs after scheduled backup attempts, sharing the same schedule and restart
+runs after scheduled backup and tidy attempts, sharing the same schedule and restart
 behavior. No extra settings or volumes are required. The SQLite backup does not
 include these separate files; preserve them privately if needed. Nightly eval
 reuses the server's index/model; standalone eval loads one local model and reports
@@ -221,3 +222,37 @@ network/labels, timezone and local/S3/SFTP backup configuration.
 This refactor's tests cannot establish physical passkey compatibility, hosted
 inactivity/next-day refresh, real off-host recovery or a production resource
 measurement. Retest save → reopen → ask after a separately approved deployment.
+
+## Nightly tidy
+
+The existing backup schedule now runs backup → tidy → eval, including after a
+failed backup attempt. `CONTEXT_BACKUP_AT=off` disables this whole scheduled
+chain. Manual use inside the container (or `npm run context -- tidy ...`):
+
+```sh
+context tidy --dry-run --json
+context tidy --area inbox
+```
+
+Dry-run reports proposed relation/move counts and writes neither SQLite nor
+history; configured model steps still call the selected endpoint. Normal runs
+append counts, outcome, duration, model and last-success time to
+`/app/data/tidy/history.jsonl`. Preserve that file separately if needed; the SQLite
+snapshot contains relations/moved areas but not either JSONL history file.
+
+Three optional settings are added; Compose forwards all three:
+
+- `CONTEXT_LLM_API_KEY`: endpoint credential (a placeholder is enough for a local
+  endpoint that requires no authentication).
+- `CONTEXT_LLM_MODEL`: provider model name. Both key and model must be nonempty;
+  otherwise tidy reports `llm: "not_configured"` and only deduplicates.
+- `CONTEXT_LLM_BASE_URL`: defaults to `https://api.openai.com/v1`; set an
+  OpenRouter or compatible Ollama/llama.cpp base URL to choose another provider.
+
+Configuring a remote endpoint authorizes sending redacted source text there for
+these steps. Keys and source/model response text never appear in tidy history or
+logs. No new dependency, timer, service or volume is needed. Standalone tidy reads
+stored E5 vectors without loading another model. Missing vectors leave LLM runs
+partial so later indexing cannot strand unprocessed facts. Model errors also
+leave the successful watermark unchanged. Uncertain/conflicting inbox routing
+stays for the owner; a destination with broader existing read grants is skipped.

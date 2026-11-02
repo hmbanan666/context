@@ -250,3 +250,97 @@ test("online backup and offline restore preserve knowledge, relations and retrie
     await rm(f.directory, { recursive: true, force: true });
   }
 });
+
+test("relations accept source endpoints and duplicates while retaining same-area validation", async () => {
+  const f = await fixture();
+  try {
+    const item = f.knowledge.add(f.input).item;
+    const input: RelateKnowledgeInput = {
+      version: 1,
+      scope,
+      idempotencyKey: "source-relation",
+      kind: "duplicates",
+      fromId: f.source.id,
+      toId: item.id,
+      sourceRefs: [{ sourceId: f.source.id }],
+      creator: f.input.creator,
+    };
+    const saved = f.knowledge.relate(input);
+    assert.equal(saved.relation.fromId, f.source.id);
+    assert.equal(f.knowledge.relate(input).duplicate, true);
+    assert.throws(
+      () =>
+        f.knowledge.relate({
+          ...input,
+          idempotencyKey: "foreign",
+          toId: f.foreign.id,
+        }),
+      KnowledgeNotFound,
+    );
+    assert.deepEqual(f.sources.find(f.source.id, scope), f.source);
+  } finally {
+    f.knowledge.close();
+    f.sources.close();
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
+test("old relation CHECK migration preserves all three kinds and their retry identities", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const f = await fixture();
+  const a = f.knowledge.add(f.input).item;
+  const b = f.knowledge.add({ ...f.input, idempotencyKey: "second" }).item;
+  const inputs = (["supports", "contradicts", "supersedes"] as const).map(
+    (kind) => ({
+      version: 1 as const,
+      scope,
+      idempotencyKey: kind,
+      kind,
+      fromId: a.id,
+      toId: b.id,
+      sourceRefs: f.input.sourceRefs,
+      creator: f.input.creator,
+    }),
+  );
+  const before = inputs.map((input) => f.knowledge.relate(input).relation);
+  f.knowledge.close();
+  const db = new DatabaseSync(f.path);
+  try {
+    db.exec(`ALTER TABLE knowledge_relations RENAME TO fixture_relations;
+      CREATE TABLE knowledge_relations (
+        id TEXT PRIMARY KEY NOT NULL,scope TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('supports','contradicts','supersedes')),
+        from_id TEXT NOT NULL REFERENCES knowledge_items(id),to_id TEXT NOT NULL REFERENCES knowledge_items(id),
+        source_refs TEXT NOT NULL,creator TEXT NOT NULL,created_at TEXT NOT NULL,CHECK(from_id <> to_id)
+      ) STRICT;
+      INSERT INTO knowledge_relations SELECT * FROM fixture_relations;
+      DROP TABLE fixture_relations;`);
+    f.knowledge = new KnowledgeStore(f.path);
+    for (const [index, input] of inputs.entries())
+      assert.deepEqual(f.knowledge.relate(input), {
+        relation: before[index],
+        duplicate: true,
+      });
+    assert.equal(f.knowledge.relations(scope).length, 3);
+    assert.equal(
+      f.knowledge.relate({
+        ...inputs[0],
+        version: 1,
+        scope,
+        sourceRefs: f.input.sourceRefs,
+        creator: f.input.creator,
+        idempotencyKey: "new-source-link",
+        kind: "duplicates",
+        fromId: f.source.id,
+        toId: a.id,
+      }).duplicate,
+      false,
+    );
+    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally {
+    db.close();
+    f.knowledge.close();
+    f.sources.close();
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});

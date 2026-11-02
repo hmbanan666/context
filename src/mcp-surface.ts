@@ -2,6 +2,7 @@ import type { McpServer, Tool } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { buildContextPackage } from "./context-package.js";
 import { personalDataScope, scopeSchema } from "./contracts.js";
+import { KnowledgeNotFound, supersedesSchema } from "./knowledge.js";
 import {
   captureFileSchema,
   captureMaterialSchema,
@@ -121,6 +122,9 @@ export function registerSurfaceTools(
           .default(defaultWrite)
           .describe("Area to save in; defaults to the client's write area"),
         text: captureMaterialSchema.shape.text.optional(),
+        supersedes: supersedesSchema
+          .optional()
+          .describe("Pass ids of facts this note replaces."),
         file: z
           .strictObject({
             filename: captureFileSchema.shape.filename,
@@ -141,17 +145,23 @@ export function registerSurfaceTools(
     const denied = authorize(input.scope, "context:write");
     if (denied) return denied;
     try {
-      const { file, text, ...rest } = input;
+      const { file, text, supersedes, ...rest } = input;
+      const supersession = supersedes
+        ? { ids: supersedes, clientId }
+        : undefined;
       const base = { ...rest, origin: `mcp:${clientId}` };
       return toolResult(
         file
-          ? sources.captureFile({ ...base, ...file })
+          ? sources.captureFile({ ...base, ...file }, supersession)
           : sources.captureMaterial(
               captureMaterialSchema.parse({ ...base, text }),
+              supersession,
             ),
       );
     } catch (error) {
-      return storageError(error);
+      return error instanceof KnowledgeNotFound
+        ? toolResult({ error: "not_found" }, true)
+        : storageError(error);
     }
   });
 

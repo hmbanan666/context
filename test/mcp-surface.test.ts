@@ -46,6 +46,7 @@ async function open() {
     }),
   );
   return {
+    path,
     client,
     async call(name: string, args: Record<string, unknown>) {
       return client.callTool({ name, arguments: { scope, ...args } });
@@ -381,5 +382,273 @@ test("search and timeline honor area, date boundaries, ordering and bounds", asy
     }
   } finally {
     await mcp.close();
+  }
+});
+
+test("remember supersedes facts atomically and visible read/search expose source history", async () => {
+  const mcp = await open();
+  const save = async (args: Record<string, unknown>) => {
+    const result = await mcp.call("remember", args);
+    assert.ok(!result.isError, JSON.stringify(result));
+    return savedSchema.parse(result.structuredContent);
+  };
+  const history = async (id: string) =>
+    object.parse((await mcp.call("read", { id })).structuredContent);
+  try {
+    const first = await save({
+      text: "Synthetic lunar agents limit 3",
+      idempotencyKey: "first-fact",
+    });
+    const second = await save({
+      text: "Synthetic lunar agents limit 2",
+      idempotencyKey: "second-fact",
+    });
+    const ids = [first.material.source.id, second.material.source.id];
+    const input = {
+      text: "Synthetic lunar agents limit 4",
+      idempotencyKey: "update",
+      supersedes: ids,
+    };
+    const current = await save(input);
+    const links = z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            kind: z.string(),
+            fromId: z.string(),
+            toId: z.string(),
+            creator: z.object({ kind: z.string(), name: z.string() }),
+          })
+          .passthrough(),
+      )
+      .parse((await history(current.material.source.id)).relations);
+    assert.equal(links.length, 2);
+    assert.deepEqual(links.map((r) => r.toId).sort(), [...ids].sort());
+    for (const link of links) {
+      assert.equal(link.kind, "supersedes");
+      assert.equal(link.fromId, current.material.source.id);
+      assert.deepEqual(link.creator, { kind: "user", name: "local" });
+      assert.deepEqual((await history(link.toId)).relations, [link]);
+    }
+    const retry = await save({ ...input, supersedes: [...ids].reverse() });
+    assert.equal(retry.duplicate, true);
+    assert.equal(retry.material.source.id, current.material.source.id);
+    assert.deepEqual(
+      (await history(current.material.source.id)).relations,
+      links,
+    );
+    for (const changed of [
+      { ...input, supersedes: [ids[0]] },
+      { text: input.text, idempotencyKey: input.idempotencyKey },
+    ]) {
+      const result = await mcp.call("remember", changed);
+      assert.equal(result.isError, true);
+      assert.equal(
+        object.parse(result.structuredContent).error,
+        "idempotency_conflict",
+      );
+    }
+    const search = object.parse(
+      (await mcp.call("search", { query: "lunar agents" })).structuredContent,
+    );
+    const cards = z
+      .array(z.object({ id: z.string(), supersededBy: z.string().optional() }))
+      .parse(search.sources);
+    assert.equal(cards.length, 3);
+    assert.equal(cards[0]?.id, current.material.source.id);
+    for (const old of cards.filter((c) => ids.includes(c.id)))
+      assert.equal(old.supersededBy, current.material.source.id);
+    const copy = await save({
+      file: {
+        ...file,
+        contentBase64: Buffer.from(input.text).toString("base64"),
+      },
+      idempotencyKey: "file-update",
+      supersedes: [current.material.source.id],
+    });
+    const duplicate = await mcp.call("relate_knowledge", {
+      version: 1,
+      idempotencyKey: "duplicate",
+      kind: "duplicates",
+      fromId: copy.material.source.id,
+      toId: current.material.source.id,
+      sourceRefs: [{ sourceId: copy.material.source.id }],
+      creator: { kind: "user", name: "fixture" },
+    });
+    assert.ok(!duplicate.isError);
+    for (const id of [current.material.source.id, copy.material.source.id]) {
+      const relations = z
+        .array(z.object({ kind: z.string() }))
+        .parse((await history(id)).relations);
+      assert.ok(relations.some((r) => r.kind === "duplicates"));
+      assert.ok(relations.some((r) => r.kind === "supersedes"));
+    }
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("invalid supersedes targets and failed relation writes leave no source or consumed retry key", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const mcp = await open();
+  const save = async (idempotencyKey: string, area = scope) =>
+    savedSchema.parse(
+      (
+        await mcp.call("remember", {
+          scope: area,
+          text: `Synthetic original ${idempotencyKey}`,
+          idempotencyKey,
+        })
+      ).structuredContent,
+    ).material.source.id;
+  const count = async () =>
+    object.parse((await mcp.call("timeline", {})).structuredContent)
+      .totalMatchingSources;
+  try {
+    const first = await save("first"),
+      second = await save("second"),
+      foreign = await save("foreign", "other");
+    const input = {
+      text: "Synthetic replacement",
+      idempotencyKey: "replacement",
+    };
+    for (const supersedes of [
+      [first, "missing"],
+      [first, foreign],
+      [],
+      [first, first],
+      [""],
+      Array.from({ length: 9 }, (_, i) => `id-${i}`),
+    ]) {
+      const failed = await mcp.call("remember", { ...input, supersedes });
+      assert.equal(failed.isError, true);
+      assert.equal(await count(), 2);
+      assert.deepEqual(
+        object.parse((await mcp.call("read", { id: first })).structuredContent)
+          .relations,
+        [],
+      );
+    }
+    const db = new DatabaseSync(mcp.path);
+    try {
+      // Fail the second relation after source/index writes and the first link;
+      // observe atomic rollback through MCP rather than inspecting stored rows.
+      const last = [first, second].sort().at(-1);
+      db.exec(
+        `CREATE TRIGGER fixture_relation_failure BEFORE INSERT ON knowledge_relations WHEN new.to_id='${last}' BEGIN SELECT RAISE(ABORT,'synthetic storage failure'); END;`,
+      );
+      assert.equal(
+        (await mcp.call("remember", { ...input, supersedes: [first, second] }))
+          .isError,
+        true,
+      );
+      assert.equal(await count(), 2);
+      assert.deepEqual(
+        object.parse((await mcp.call("read", { id: first })).structuredContent)
+          .relations,
+        [],
+      );
+      assert.deepEqual(
+        object.parse(
+          (await mcp.call("search", { query: "replacement" }))
+            .structuredContent,
+        ).sources,
+        [],
+      );
+      db.exec("DROP TRIGGER fixture_relation_failure");
+    } finally {
+      db.close();
+    }
+    const valid = await mcp.call("remember", {
+      ...input,
+      supersedes: [first, second],
+    });
+    assert.ok(!valid.isError, JSON.stringify(valid));
+    assert.equal(savedSchema.parse(valid.structuredContent).duplicate, false);
+    assert.equal(await count(), 3);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("protected remember supersedes uses the calling client's area write rights and attribution", async () => {
+  const { openPackageFixture } = await import("./fixtures/package-client.js");
+  const directory = await mkdtemp(
+    join(process.cwd(), ".output-surface-supersedes-"),
+  );
+  const f = await openPackageFixture(join(directory, "db"));
+  try {
+    const writer = await f.connect();
+    const reader = await f.connect("context-codex", [
+      "context:read",
+      "personal",
+    ]);
+    const old = savedSchema.parse(
+      (
+        await writer.callTool({
+          name: "remember",
+          arguments: { text: "Synthetic lunar limit 3", idempotencyKey: "old" },
+        })
+      ).structuredContent,
+    ).material.source.id;
+    const item = f.knowledge.add({
+      version: 1,
+      scope: "personal",
+      idempotencyKey: "idea",
+      kind: "observation",
+      text: "Synthetic lunar limit",
+      sourceRefs: [{ sourceId: old }],
+      creator: { kind: "user", name: "fixture" },
+    }).item;
+    const input = {
+      text: "Synthetic lunar limit 4",
+      idempotencyKey: "current",
+      supersedes: [old, item.id],
+    };
+    for (const [client, args] of [
+      [reader, input],
+      [writer, { ...input, scope: "forbidden" }],
+    ] as const) {
+      assert.equal(
+        (await client.callTool({ name: "remember", arguments: args })).isError,
+        true,
+      );
+    }
+    assert.equal(f.store.list("personal").length, 1);
+    assert.deepEqual(f.knowledge.relations("personal"), []);
+    const saved = await writer.callTool({ name: "remember", arguments: input });
+    assert.ok(!saved.isError, JSON.stringify(saved));
+    const current = savedSchema.parse(saved.structuredContent).material.source
+      .id;
+    const read = await reader.callTool({
+      name: "read",
+      arguments: { id: current },
+    });
+    const links = z
+      .array(
+        z.object({
+          creator: z.object({ kind: z.string(), name: z.string() }),
+          toId: z.string(),
+        }),
+      )
+      .parse(object.parse(read.structuredContent).relations);
+    assert.equal(links.length, 2);
+    for (const link of links)
+      assert.deepEqual(link.creator, { kind: "user", name: "context-chatgpt" });
+    assert.deepEqual(links.map((r) => r.toId).sort(), [old, item.id].sort());
+    const original = await reader.callTool({
+      name: "read",
+      arguments: { id: old },
+    });
+    assert.equal(
+      z
+        .array(z.unknown())
+        .parse(object.parse(original.structuredContent).relations).length,
+      1,
+    );
+  } finally {
+    await f.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });

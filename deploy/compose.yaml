@@ -8,6 +8,9 @@ services:
     environment:
       CONTEXT_PUBLIC_URL: ${CONTEXT_PUBLIC_URL:?Set the public HTTPS MCP URL}
       CONTEXT_AREAS: ${CONTEXT_AREAS:-personal}
+      CONTEXT_LLM_API_KEY: ${CONTEXT_LLM_API_KEY:-}
+      CONTEXT_LLM_MODEL: ${CONTEXT_LLM_MODEL:-}
+      CONTEXT_LLM_BASE_URL: ${CONTEXT_LLM_BASE_URL:-https://api.openai.com/v1}
       TZ: ${TZ:-UTC}
       CONTEXT_BACKUP_DIR: ${CONTEXT_BACKUP_DIR:-/app/data/backups}
       CONTEXT_BACKUP_AT: ${CONTEXT_BACKUP_AT:-03:30}

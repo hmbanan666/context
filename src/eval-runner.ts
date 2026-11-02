@@ -19,6 +19,7 @@ export interface EvalQuestionResult {
   id: string;
   status: "completed" | "skipped" | "failed";
   pass: boolean | null;
+  outranks_pass?: boolean | null;
   hit_at_1: number | null;
   hit_at_k: number | null;
   mrr: number | null;
@@ -87,6 +88,17 @@ export function scoreEval(question: EvalQuestion, hits: EvalHit[]) {
   );
   const found = ranks.filter((rank) => rank > 0);
   return {
+    ...(question.outranks
+      ? {
+          outranks_pass:
+            found.length > 0 &&
+            hits.every(
+              (hit, index) =>
+                !question.outranks?.some((m) => matches(m, hit)) ||
+                Math.min(...found) < index + 1,
+            ),
+        }
+      : {}),
     hit_at_1: ranks.length ? Number(found.includes(1)) : null,
     hit_at_k: ranks.length ? Number(found.length > 0) : null,
     mrr: ranks.length ? (found.length ? 1 / Math.min(...found) : 0) : null,
@@ -143,6 +155,7 @@ export async function evaluate(
         id: q.id,
         status: "skipped",
         pass: null,
+        ...(q.outranks ? { outranks_pass: null } : {}),
         hit_at_1: null,
         hit_at_k: null,
         mrr: null,
@@ -175,10 +188,12 @@ export async function evaluate(
         result.pass =
           !retrieved.failed &&
           (result.hit_at_k === null || result.hit_at_k === 1) &&
-          !result.isolation_violations;
+          !result.isolation_violations &&
+          result.outranks_pass !== false;
       } catch {
         result.status = "failed";
         result.pass = false;
+        if (q.outranks) result.outranks_pass = false;
         run.outcome = "failed";
         if (q.expected.length)
           Object.assign(result, { hit_at_1: 0, hit_at_k: 0, mrr: 0 });
@@ -231,7 +246,10 @@ export async function evaluate(
   }
   const mean = (
     key: "hit_at_1" | "hit_at_k" | "mrr",
-    scores: ReturnType<typeof scoreEval>[] = run.questions,
+    scores: Pick<
+      EvalQuestionResult,
+      "hit_at_1" | "hit_at_k" | "mrr"
+    >[] = run.questions,
   ) => {
     const values = scores.flatMap((q) => (q[key] === null ? [] : [q[key]]));
     return values.length

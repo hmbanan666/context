@@ -58,6 +58,7 @@ questions:
 | `areas` | Ordered array of 1–8 distinct areas to search. It grants no access. |
 | `read_areas` | Simulated client's read rights, 0–8 distinct areas. Write/process rights are always empty. |
 | `expected` | Up to 100 acceptable evidence matchers; any one match is a hit. Each object has exactly one of `source_external_id`, `source_id`, or `substring`. A source can satisfy several matchers. |
+| `outranks` | Optional nonempty list of the same matchers: the first expected hit must rank above every returned matching historical hit. Requires `expected`. Missing history is allowed; missing expected evidence fails. Results add only `outranks_pass`, with no text. |
 | `forbidden_areas` | Optional distinct areas whose results must never appear, default `[]`. These areas are also probed directly with the same client rights. |
 | `tags` | Optional labels such as `inflection`, `paraphrase`, `ru`, `en`; kept in the private file, not the results. |
 | `placeholder` | Optional boolean, default false. True skips the question completely, with null metrics and pass state. |

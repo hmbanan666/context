@@ -22,9 +22,10 @@ export function excerpt(text: string, matchOffset = 0, maximum = 360) {
     truncated: start > 0 || end < text.length,
   };
 }
-function sourceCard(m: Material, matchOffset = 0) {
+function sourceCard(m: Material, matchOffset = 0, supersededBy?: string) {
   return {
     id: m.source.id,
+    ...(supersededBy ? { supersededBy } : {}),
     checksum: m.source.checksum,
     origin: m.source.origin,
     status: m.source.status,
@@ -33,9 +34,10 @@ function sourceCard(m: Material, matchOffset = 0) {
     excerpt: excerpt(m.source.text, matchOffset),
   };
 }
-function itemCard(k: KnowledgeItem, matchOffset = 0) {
+function itemCard(k: KnowledgeItem, matchOffset = 0, supersededBy?: string) {
   return {
     id: k.id,
+    ...(supersededBy ? { supersededBy } : {}),
     kind: k.kind,
     status: k.status,
     createdAt: k.createdAt,
@@ -104,6 +106,7 @@ export function buildContextPackage(
     { ...selection, ...(semantic ? { vectors: semantic.items } : {}) },
     original.materials.slice(0, 100).map((m) => m.source.id),
   );
+  const state = knowledge.retrievalRelations(request.scope);
   let result: ContextPackage = {
     version: 1,
     scope: request.scope,
@@ -176,6 +179,18 @@ export function buildContextPackage(
     ks: KnowledgeItem[] = [],
     rs: KnowledgeRelation[] = [],
   ) => {
+    ms = ms.map((m) => {
+      const canonical = material(state.canonical(m.source.id));
+      return canonical && eligible(canonical) ? canonical : m;
+    });
+    ks = ks.map((k) => {
+      const canonical = knowledge.find(state.canonical(k.id), request.scope);
+      return canonical &&
+        validItem(canonical) &&
+        references(canonical.sourceRefs)
+        ? canonical
+        : k;
+    });
     const newSources = ms.filter(
       (m, i) =>
         !result.sources.some((s) => s.id === m.source.id) &&
@@ -199,12 +214,22 @@ export function buildContextPackage(
       sources: [
         ...result.sources,
         ...newSources.map((m) =>
-          sourceCard(m, original.matchOffsets.get(m.source.id)),
+          sourceCard(
+            m,
+            original.matchOffsets.get(m.source.id),
+            state.superseded.get(m.source.id),
+          ),
         ),
       ],
       items: [
         ...result.items,
-        ...newItems.map((k) => itemCard(k, derived.matchOffsets.get(k.id))),
+        ...newItems.map((k) =>
+          itemCard(
+            k,
+            derived.matchOffsets.get(k.id),
+            state.superseded.get(k.id),
+          ),
+        ),
       ],
       relations: [...result.relations, ...rs.map(relationCard)],
     };
@@ -247,7 +272,31 @@ export function buildContextPackage(
   derived.items.slice(0, 100).forEach((item, i) => {
     candidates.push({ item, rank: i * 2 });
   });
-  for (const candidate of candidates.sort((a, b) => a.rank - b.rank)) {
+  // Substitute a readable canonical even when only its copy matched.
+  for (const candidate of candidates) {
+    const id = candidate.source?.source.id ?? candidate.item?.id;
+    if (!id) continue;
+    const canonical = state.canonical(id);
+    if (canonical !== id) {
+      const source = material(canonical);
+      const item = knowledge.find(canonical, request.scope);
+      if (source && eligible(source)) {
+        delete candidate.item;
+        candidate.source = source;
+      } else if (item && validItem(item) && references(item.sourceRefs)) {
+        delete candidate.source;
+        candidate.item = item;
+      }
+    }
+  }
+  const historical = (c: (typeof candidates)[number]) =>
+    Number(
+      state.superseded.has(c.source?.source.id ?? c.item?.id ?? "") ||
+        !!c.item?.sourceRefs.some((r) => state.superseded.has(r.sourceId)),
+    );
+  for (const candidate of candidates.sort(
+    (a, b) => historical(a) - historical(b) || a.rank - b.rank,
+  )) {
     if (candidate.source) {
       if (eligible(candidate.source)) add([candidate.source]);
       continue;
@@ -258,26 +307,39 @@ export function buildContextPackage(
     if (refs) add(refs, [item]);
   }
   // Expand only the included search/timeline seeds, never recursively traverse the graph.
-  const links = knowledge.packageRelations(
-    request.scope,
-    result.items.map((k) => k.id),
-  );
+  const links = knowledge.packageRelations(request.scope, [
+    ...result.items.map((k) => k.id),
+    ...result.sources.map((s) => s.id),
+  ]);
   if (links.length > 50) reasons.add("relation_limit");
   for (const link of links.slice(0, 50)) {
     if (link.scope !== request.scope) continue;
-    const from = knowledge.find(link.fromId, request.scope),
-      to = knowledge.find(link.toId, request.scope);
-    if (!from || !to || !validItem(from) || !validItem(to)) {
-      reasons.add("invalid_provenance");
+    const endpointItems = [link.fromId, link.toId].flatMap((id) => {
+      const item = knowledge.find(id, request.scope);
+      return item ? [item] : [];
+    });
+    const endpointSources = [link.fromId, link.toId].flatMap((id) => {
+      const source = material(id);
+      return source ? [source] : [];
+    });
+    if (
+      endpointItems.length + endpointSources.length !== 2 ||
+      endpointItems.some((k) => !validItem(k))
+    )
       continue;
-    }
     const refs = references([
-      ...from.sourceRefs,
-      ...to.sourceRefs,
+      ...endpointItems.flatMap((k) => k.sourceRefs),
       ...link.sourceRefs,
     ]);
-    if (refs) add(refs, [from, to], [link]);
+    if (refs && endpointSources.every(eligible))
+      add([...refs, ...endpointSources], endpointItems, [link]);
   }
+  result.sources.sort(
+    (a, b) => Number(!!a.supersededBy) - Number(!!b.supersededBy),
+  );
+  result.items.sort(
+    (a, b) => Number(!!a.supersededBy) - Number(!!b.supersededBy),
+  );
   result.coverage.reasons = [...reasons];
   result.truncated = reasons.size > 0;
   return result;

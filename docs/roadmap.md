@@ -10,7 +10,7 @@ The [spec](spec.md#stages-and-acceptance-criteria) defines target acceptance;
 | 1 | Remove experiments; built-in OAuth/password/passkey/CLI tokens; nightly local and optional SFTP/S3 backups. | Merged. Owner reports ChatGPT connected; live off-host recovery remains unverified. |
 | 2 | Headless clients, Grok Bot/Codex/GitHub imports and private/public evals. | JSONL imports and collectors merged (#26); eval harness and opt-in nightly eval merged and owner-confirmed deployed (#27). Private acceptance remains separate. |
 | 3 | RU/EN morphology and local semantic retrieval with SQLite. | Merged and owner-confirmed deployed (#28); see [search](search.md). Hosted capacity and private acceptance remain separate. |
-| 4 | Pluggable understanding, deduplication, superseding/history, hard delete, daily inbox sorting and broader quality acceptance. | Planned. Existing explicit processing queue is not automatic understanding. |
+| 4 | Pluggable understanding, deduplication, superseding/history, hard delete, daily inbox sorting and broader quality acceptance. | Partially merged: nightly eval is merged; this PR adds nightly dedup, superseding/history, guarded inbox sorting and a compatible endpoint processor. Distilled per-topic knowledge, hard delete and private/live quality acceptance remain later steps. |
 | 5 | Owner UI for search/inbox/delete/clients; ChatGPT export and Telegram imports. | Planned. |
 
 The simplicity refactor preserves existing built-in OAuth connections, source
