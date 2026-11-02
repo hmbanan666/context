@@ -12,6 +12,8 @@ services:
       CONTEXT_OAUTH_ISSUER: https://context.kosarev.space/auth/realms/context
       CONTEXT_OWNER_SUBJECT: ${CONTEXT_OWNER_SUBJECT:?Set the dedicated owner's Keycloak user ID}
       CONTEXT_DB_PATH: /app/data/context.db
+      CONTEXT_AREAS: ${CONTEXT_AREAS:-personal}
+      CONTEXT_CLIENT_GRANTS: ${CONTEXT_CLIENT_GRANTS:?Configure explicit client area grants}
     volumes:
       - sources:/app/data
       - backups:/app/backups

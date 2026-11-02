@@ -96,12 +96,12 @@ test("authorization precedes package counts and traversal; private defaults neve
     const forgedScope = await f.connect("context-codex", [
       "context:read",
       scope,
-      "synthetic:forbidden",
+      "forbidden",
     ]);
     for (const [client, args] of [
       [noRead, {}],
       [noData, {}],
-      [forgedScope, { scope: "synthetic:forbidden" }],
+      [forgedScope, { scope: "forbidden" }],
     ] as const) {
       const r = await client.callTool({
         name: "context_package",
@@ -145,7 +145,7 @@ test("authorization precedes package counts and traversal; private defaults neve
   const disabled = await setup();
   try {
     const { createContextMcp } = await import("../src/mcp.js");
-    const mcp = createContextMcp(disabled.store, ["synthetic:package"], false, {
+    const mcp = createContextMcp(disabled.store, ["package"], false, {
       knowledge: disabled.knowledge,
     });
     const client = new Client({
@@ -220,23 +220,14 @@ test("date boundaries, graph provenance, rejected items and bounded coverage fai
       creator: { kind: "model", name: "fixture" },
       idempotencyKey: "rejected",
     }).item;
-    // Trusted store boundary fixture; signature verification is covered by owner-review tests.
-    f.knowledge.review(
-      {
-        version: 1,
-        scope,
-        id: rejected.id,
-        status: "rejected",
-        evidence: "Synthetic rejection",
-        idempotencyKey: "rejection",
-      },
-      {
-        kind: "verified-owner-signature",
-        subject: "synthetic-owner",
-        authenticated: true,
-        signature: `${"A".repeat(86)}==`,
-      },
-    );
+    // Historical status remains effective after the review-writing experiment is removed.
+    const legacy = new DatabaseSync(f.path);
+    legacy
+      .prepare(`INSERT INTO knowledge_reviews
+      (id, knowledge_id, scope, status, evidence, reviewer, signed_receipt, created_at)
+      VALUES (?, ?, ?, 'rejected', 'Fictional legacy rejection', 'fixture', '{}', '2026-10-01T00:00:00Z')`)
+      .run("legacy-rejection", rejected.id, scope);
+    legacy.close();
     assert.equal(
       buildContextPackage(f.store, f.knowledge, { question: "rejectedmarker" })
         .coverage.knowledgeMatches,
@@ -319,11 +310,7 @@ test("one-hop expansion excludes second-hop, cross-scope and outside-period prov
     const b = make("neighbor", "2026-10-02T12:00:00Z");
     const c = make("distant", "2026-10-03T12:00:00Z");
     const outside = make("outside", "2026-12-01T12:00:00Z");
-    const foreign = make(
-      "secret",
-      "2026-10-01T12:00:00Z",
-      "synthetic:forbidden",
-    );
+    const foreign = make("secret", "2026-10-01T12:00:00Z", "forbidden");
     for (const [from, to] of [
       [a, b],
       [b, c],

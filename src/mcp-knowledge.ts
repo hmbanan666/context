@@ -131,25 +131,4 @@ export function registerKnowledgeTools(
       }
     },
   );
-  server.registerTool(
-    "knowledge_history",
-    {
-      description:
-        "Read append-only owner review evidence for a knowledge item in one authorized scope.",
-      inputSchema: materialLookupSchema,
-      ...oauthMetadata(protectedMode, ["context:read"]),
-      annotations: { readOnlyHint: true, idempotentHint: true },
-    },
-    async (input) => {
-      const denied = authorize(input.scope, "context:read");
-      if (denied) return denied;
-      try {
-        if (!store.find(input.id, input.scope))
-          return toolResult({ error: "not_found" }, true);
-        return toolResult({ events: store.history(input.id, input.scope) });
-      } catch (error) {
-        return knowledgeError(error);
-      }
-    },
-  );
 }

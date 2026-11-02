@@ -1,10 +1,10 @@
 {
   "clientId": "context-chatgpt",
   "defaultClientScopes": [
-    "private:personal",
+    "personal",
     "offline_access",
-    "synthetic:hosted-pilot",
-    "synthetic:project-a",
-    "synthetic:project-b"
+    "sandbox",
+    "garden",
+    "orchard"
   ]
 }

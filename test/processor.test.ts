@@ -15,7 +15,7 @@ import { KnowledgeStore } from "../src/knowledge.js";
 import { ModelUnavailableError, processNext } from "../src/processor.js";
 import { SourceStore } from "../src/store.js";
 
-const scope = "synthetic:processor";
+const scope = "processor";
 const fixture = {
   version: 1 as const,
   scope,
@@ -272,7 +272,7 @@ test("processing never claims another scope or passes its source to an extractor
       sources,
       knowledge,
       jobs,
-      "synthetic:other",
+      "other",
       async () => {
         calls++;
         return output;
@@ -283,13 +283,7 @@ test("processing never claims another scope or passes its source to an extractor
     assert.equal(jobs.find(queued.id, scope)?.attempts, 0);
     assert.deepEqual(knowledge.list(scope), []);
     await assert.rejects(() =>
-      processNext(
-        sources,
-        knowledge,
-        jobs,
-        "private:forbidden",
-        async () => output,
-      ),
+      processNext(sources, knowledge, jobs, "invalid area", async () => output),
     );
   });
 });

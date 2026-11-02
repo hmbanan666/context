@@ -17,7 +17,7 @@ test("MCP grounds suggested knowledge, denies cross-scope references and exposes
   const path = join(directory, "context.db");
   const sources = new SourceStore(path);
   const knowledge = new KnowledgeStore(path);
-  const scope = "synthetic:knowledge";
+  const scope = "knowledge";
   const { source } = sources.capture({
     version: 1,
     scope,
@@ -27,7 +27,7 @@ test("MCP grounds suggested knowledge, denies cross-scope references and exposes
   });
   const foreign = sources.capture({
     version: 1,
-    scope: "synthetic:foreign",
+    scope: "foreign",
     text: "Synthetic forbidden source",
     origin: "fixture:foreign",
     idempotencyKey: "foreign",

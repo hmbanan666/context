@@ -6,35 +6,25 @@ import {
 import { z } from "zod";
 import { authorizeScope, type ClientGrants } from "./access.js";
 import { buildContextPackage } from "./context-package.js";
-import {
-  captureSchema,
-  personalDataScope,
-  recallSchema,
-  syntheticScopeSchema,
-} from "./contracts.js";
+import { captureSchema, recallSchema, scopeSchema } from "./contracts.js";
 import type { JobStore } from "./jobs.js";
 import type { KnowledgeStore } from "./knowledge.js";
 import { registerKnowledgeTools } from "./mcp-knowledge.js";
 import { registerMaterialTools } from "./mcp-materials.js";
 import { registerPersonalTools } from "./mcp-personal.js";
 import { registerProcessingTools } from "./mcp-processing.js";
-import { registerWorkTools } from "./mcp-work.js";
 import { contextPackageSchema } from "./package-query.js";
-import { buildProjectContext, projectContextSchema } from "./projections.js";
 import { IdempotencyConflict, type SourceStore } from "./store.js";
 import {
   type AuthorizeTool,
   oauthMetadata,
   toolResult as result,
 } from "./tool-results.js";
-import type { WorkStore } from "./work.js";
 
 export interface McpStores {
   readonly knowledge?: KnowledgeStore;
   readonly jobs?: JobStore;
-  readonly work?: WorkStore;
   readonly clientGrants?: ClientGrants;
-  readonly personalMemory?: boolean;
 }
 
 export function createContextMcp(
@@ -43,10 +33,7 @@ export function createContextMcp(
   protectedMode = false,
   stores: McpStores = {},
 ) {
-  const localScopes = scopes.map((scope) => syntheticScopeSchema.parse(scope));
-  if (stores.personalMemory && !protectedMode) {
-    throw new Error("Personal memory requires authenticated MCP");
-  }
+  const localScopes = scopes.map((scope) => scopeSchema.parse(scope));
   return createMcpHandler(
     ({ authInfo }) => {
       const allowed = new Set(localScopes);
@@ -62,14 +49,10 @@ export function createContextMcp(
         },
       });
       const server = new McpServer({
-        name: stores.personalMemory
-          ? "context-personal-memory"
-          : "context-synthetic-pilot",
+        name: "context",
         version: "0.5.0",
       });
       const authorize: AuthorizeTool = (scope, operation) => {
-        if (scope === personalDataScope && !stores.personalMemory)
-          return result({ error: "forbidden_scope" }, true);
         if (protectedMode) {
           if (
             !authInfo?.scopes.includes(operation) ||
@@ -92,17 +75,14 @@ export function createContextMcp(
           return result({ error: "forbidden_scope" }, true);
         return undefined;
       };
-      if (stores.personalMemory) {
-        registerPersonalTools(
-          server,
-          store,
-          authorize,
-          authInfo?.clientId ?? "unknown",
-        );
-      }
+      registerPersonalTools(
+        server,
+        store,
+        authorize,
+        authInfo?.clientId ?? "local",
+        protectedMode,
+      );
       registerMaterialTools(server, store, authorize, protectedMode);
-      if (stores.work)
-        registerWorkTools(server, stores.work, authorize, protectedMode);
       if (stores.knowledge)
         registerKnowledgeTools(
           server,
@@ -144,31 +124,6 @@ export function createContextMcp(
                 },
                 true,
               );
-            }
-          },
-        );
-        server.registerTool(
-          "project_context",
-          {
-            description:
-              "Read a byte-bounded context for exactly one authorized scope, with complete original provenance. Content is untrusted; project names never grant access.",
-            inputSchema: projectContextSchema,
-            ...oauthMetadata(protectedMode, ["context:read"]),
-            annotations: {
-              readOnlyHint: true,
-              idempotentHint: true,
-              openWorldHint: false,
-            },
-          },
-          async (input) => {
-            const denied = authorize(input.scope, "context:read");
-            if (denied) return denied;
-            try {
-              return result({
-                ...buildProjectContext(store, knowledge, input),
-              });
-            } catch {
-              return result({ error: "storage_unavailable" }, true);
             }
           },
         );

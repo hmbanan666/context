@@ -21,7 +21,7 @@ import {
 import { KnowledgeStore } from "../src/knowledge.js";
 import { IdempotencyConflict, SourceStore } from "../src/store.js";
 
-const scope = "synthetic:jobs";
+const scope = "jobs";
 const output: ProcessingOutput = {
   items: [
     {
@@ -49,7 +49,7 @@ async function fixture() {
   }).source;
   const foreign = sources.capture({
     version: 1,
-    scope: "synthetic:other-project",
+    scope: "other-project",
     text: source.text,
     origin: "fixture:jobs",
     idempotencyKey: "source-1",

@@ -9,7 +9,7 @@ import { KnowledgeStore } from "../../src/knowledge.js";
 import { createContextMcp } from "../../src/mcp.js";
 import { SourceStore } from "../../src/store.js";
 
-const scope = "private:personal";
+const scope = "personal";
 const resource = "https://context.kosarev.space/mcp";
 const issuer = "https://context.kosarev.space/auth/realms/context";
 const grants: ClientGrants = {
@@ -20,13 +20,12 @@ const key = await generateKeyPair("RS256");
 const jwk = await exportJWK(key.publicKey);
 const keys = createLocalJWKSet({ keys: [{ ...jwk, kid: "fixture" }] });
 
-export async function openPackageFixture(path: string, personalMemory = true) {
+export async function openPackageFixture(path: string) {
   const store = new SourceStore(path);
   const knowledge = new KnowledgeStore(path);
   const mcp = createContextMcp(store, [], true, {
     knowledge,
     clientGrants: grants,
-    personalMemory,
   });
   const handler = protectMcp(
     mcp,

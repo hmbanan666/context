@@ -8,8 +8,8 @@ import {
   operationScopes,
 } from "../src/access.js";
 
-const projectA = "synthetic:project:a";
-const projectB = "synthetic:project:b";
+const projectA = "garden";
+const projectB = "orchard";
 const grants: ClientGrants = {
   "context-chatgpt": {
     read: [projectA, projectB],
@@ -86,17 +86,11 @@ test("an explicit grant map never inherits defaults for missing clients or missi
   const explicit: ClientGrants = {
     "context-chatgpt": { read: [], write: [], process: [] },
   };
-  const pilotToken = [...operationScopes, "synthetic:hosted-pilot"];
+  const pilotToken = [...operationScopes, "sandbox"];
   for (const clientId of ["context-chatgpt", "context-codex"]) {
     for (const operation of operationScopes) {
       assert.equal(
-        authorizeScope(
-          clientId,
-          pilotToken,
-          "synthetic:hosted-pilot",
-          operation,
-          explicit,
-        ),
+        authorizeScope(clientId, pilotToken, "sandbox", operation, explicit),
         false,
       );
     }
@@ -105,48 +99,24 @@ test("an explicit grant map never inherits defaults for missing clients or missi
   assert.deepEqual(configuredDataScopes(grants), [projectA, projectB]);
 });
 
-test("unconfigured policy preserves pilot read/write and never grants processing", () => {
-  const tokenScopes = [...operationScopes, "synthetic:hosted-pilot", projectA];
-  for (const clientId of ["context-chatgpt", "context-codex"]) {
+test("unconfigured policy denies every operation", () => {
+  for (const operation of operationScopes) {
     assert.equal(
       authorizeScope(
-        clientId,
-        tokenScopes,
-        "synthetic:hosted-pilot",
-        "context:read",
+        "context-codex",
+        [...operationScopes, "personal"],
+        "personal",
+        operation,
       ),
-      true,
-    );
-    assert.equal(
-      authorizeScope(
-        clientId,
-        tokenScopes,
-        "synthetic:hosted-pilot",
-        "context:write",
-      ),
-      true,
-    );
-    assert.equal(
-      authorizeScope(
-        clientId,
-        tokenScopes,
-        "synthetic:hosted-pilot",
-        "context:process",
-      ),
-      false,
-    );
-    assert.equal(
-      authorizeScope(clientId, tokenScopes, projectA, "context:read"),
       false,
     );
   }
-  assert.deepEqual(configuredDataScopes(), ["synthetic:hosted-pilot"]);
+  assert.deepEqual(configuredDataScopes(), []);
 });
 
 test("grant configuration rejects unknown keys, missing operations, duplicate and oversized scopes", () => {
   for (const input of [
     {},
-    { ...grants, arbitrary: grants["context-codex"] },
     { "context-codex": { read: [projectA], write: [] } },
     {
       "context-codex": {
@@ -157,24 +127,33 @@ test("grant configuration rejects unknown keys, missing operations, duplicate an
       },
     },
     {
-      "context-codex": { read: ["private:manuscript"], write: [], process: [] },
+      "context-codex": { read: ["invalid area"], write: [], process: [] },
     },
     { "context-codex": { read: [projectA, projectA], write: [], process: [] } },
     {
       "context-codex": {
-        read: Array.from({ length: 9 }, (_, i) => `synthetic:p${i}`),
+        read: Array.from({ length: 9 }, (_, i) => `p${i}`),
         write: [],
         process: [],
       },
     },
     {
       "context-codex": {
-        read: [`synthetic:${"x".repeat(80)}`],
+        read: [`${"x".repeat(81)}`],
         write: [],
         process: [],
       },
     },
   ]) {
     assert.equal(clientGrantsSchema.safeParse(input).success, false);
+  }
+});
+
+test("prototype property names cannot inherit a client grant", () => {
+  for (const client of ["constructor", "toString", "__proto__"]) {
+    assert.equal(
+      authorizeScope(client, fullToken, projectA, "context:read", grants),
+      false,
+    );
   }
 });

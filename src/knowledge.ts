@@ -67,26 +67,9 @@ export const relateKnowledgeSchema = z
   .refine((input) => input.fromId !== input.toId, {
     message: "A relation needs two distinct items",
   });
-export const reviewKnowledgeSchema = z.strictObject({
-  version: z.literal(1),
-  scope: scopeSchema,
-  id: identifier,
-  idempotencyKey: identifier,
-  status: z.enum(["reviewed", "rejected", "approved"]),
-  evidence: text(1024),
-});
-const verifiedOwnerSchema = z.strictObject({
-  kind: z.literal("verified-owner-signature"),
-  subject: text(128),
-  authenticated: z.literal(true),
-  signature: z.string().length(88),
-});
-
 export type AddKnowledgeInput = z.infer<typeof addKnowledgeSchema>;
 export type RelateKnowledgeInput = z.infer<typeof relateKnowledgeSchema>;
-export type ReviewKnowledgeInput = z.infer<typeof reviewKnowledgeSchema>;
-export type VerifiedKnowledgeOwner = z.infer<typeof verifiedOwnerSchema>;
-type KnowledgeStatus = "suggested" | ReviewKnowledgeInput["status"];
+type KnowledgeStatus = "suggested" | "reviewed" | "rejected" | "approved";
 export interface KnowledgeItem {
   readonly id: string;
   readonly scope: string;
@@ -107,19 +90,6 @@ export interface KnowledgeRelation {
   readonly creator: AddKnowledgeInput["creator"];
   readonly createdAt: string;
   readonly status: "suggested";
-}
-export interface KnowledgeReview {
-  readonly id: string;
-  readonly knowledgeId: string;
-  readonly scope: string;
-  readonly status: ReviewKnowledgeInput["status"];
-  readonly evidence: string;
-  readonly reviewer: string;
-  readonly createdAt: string;
-  readonly signedReceipt: {
-    readonly review: ReviewKnowledgeInput;
-    readonly signature: string;
-  };
 }
 export class KnowledgeNotFound extends Error {}
 export class KnowledgeValidationError extends Error {}
@@ -145,19 +115,7 @@ const relationSchema = z.strictObject({
   createdAt: z.iso.datetime(),
   status: z.literal("suggested"),
 });
-const reviewSchema = z.strictObject({
-  id: identifier,
-  knowledgeId: identifier,
-  scope: scopeSchema,
-  status: reviewKnowledgeSchema.shape.status,
-  evidence: text(1024),
-  reviewer: text(128),
-  createdAt: z.iso.datetime(),
-  signedReceipt: z.strictObject({
-    review: reviewKnowledgeSchema,
-    signature: z.string().length(88),
-  }),
-});
+// Preserve historical status without exposing review writes or receipts.
 const itemSelection = `SELECT k.id, k.scope, k.kind, k.text,
   k.source_refs AS sourceRefs, k.creator, k.created_at AS createdAt,
   COALESCE((SELECT r.status FROM knowledge_reviews r
@@ -165,16 +123,6 @@ const itemSelection = `SELECT k.id, k.scope, k.kind, k.text,
   FROM knowledge_items k`;
 const relationSelection = `SELECT id, scope, kind, from_id AS fromId, to_id AS toId,
   source_refs AS sourceRefs, creator, created_at AS createdAt, 'suggested' AS status FROM knowledge_relations`;
-const reviewSelection = `SELECT id, knowledge_id AS knowledgeId, scope, status,
-  evidence, reviewer, created_at AS createdAt, signed_receipt AS signedReceipt FROM knowledge_reviews`;
-
-function decodeReview(row: Record<string, unknown>): KnowledgeReview {
-  return reviewSchema.parse({
-    ...row,
-    signedReceipt: JSON.parse(String(row.signedReceipt)),
-  });
-}
-
 function fingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -542,80 +490,6 @@ export class KnowledgeStore {
       )
       .all(scope, limit)
       .map(decodeRelation);
-  }
-
-  // This is a trusted signature-verification boundary, never an MCP tool.
-  // Evidence is an audit annotation; only the caller's verified owner context authorizes review.
-  review(
-    input: ReviewKnowledgeInput,
-    verifiedOwner: VerifiedKnowledgeOwner,
-  ): { item: KnowledgeItem; event: KnowledgeReview; duplicate: boolean } {
-    const owner = verifiedOwnerSchema.parse(verifiedOwner);
-    const request = reviewKnowledgeSchema.parse(input);
-    const hash = fingerprint([request, owner.subject]);
-    return this.#transaction(() => {
-      const item = this.find(request.id, request.scope);
-      if (!item) throw new KnowledgeNotFound("Knowledge unavailable");
-      const prior = this.#request(
-        request.scope,
-        request.idempotencyKey,
-        "review",
-        hash,
-      );
-      if (prior) {
-        const row = this.#database
-          .prepare(`${reviewSelection} WHERE id = ? AND scope = ?`)
-          .get(prior, request.scope);
-        if (!row) throw new Error("Missing review request result");
-        return { item, event: decodeReview(row), duplicate: true };
-      }
-      if (request.status === "approved" && item.kind !== "decision_proposal") {
-        throw new KnowledgeValidationError(
-          "Only decision proposals can be approved",
-        );
-      }
-      const id = randomUUID();
-      this.#database
-        .prepare(`INSERT INTO knowledge_reviews(id, knowledge_id, scope, status, evidence, reviewer, signed_receipt, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(
-          id,
-          request.id,
-          request.scope,
-          request.status,
-          request.evidence,
-          owner.subject,
-          JSON.stringify({ review: request, signature: owner.signature }),
-          new Date().toISOString(),
-        );
-      this.#saveRequest(
-        request.scope,
-        request.idempotencyKey,
-        "review",
-        hash,
-        id,
-      );
-      const row = this.#database
-        .prepare(`${reviewSelection} WHERE id = ? AND scope = ?`)
-        .get(id, request.scope);
-      const updated = this.find(request.id, request.scope);
-      if (!row || !updated) throw new Error("Missing inserted review");
-      return {
-        item: updated,
-        event: decodeReview(row),
-        duplicate: false,
-      };
-    });
-  }
-
-  history(id: string, scope: string): KnowledgeReview[] {
-    validateLookup(id, scope);
-    return this.#database
-      .prepare(
-        `${reviewSelection} WHERE knowledge_id = ? AND scope = ? ORDER BY rowid`,
-      )
-      .all(id, scope)
-      .map(decodeReview);
   }
 
   close(): void {

@@ -15,7 +15,7 @@ import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
 
-const scope = "private:personal";
+const scope = "personal";
 const resource = "https://context.kosarev.space/mcp";
 const issuer = "https://context.kosarev.space/auth/realms/context";
 const grants: ClientGrants = {
@@ -26,11 +26,10 @@ const key = await generateKeyPair("RS256");
 const jwk = await exportJWK(key.publicKey);
 const keys = createLocalJWKSet({ keys: [{ ...jwk, kid: "fixture" }] });
 
-async function openMemory(path: string, personalMemory = true) {
+async function openMemory(path: string) {
   const store = new SourceStore(path);
   const mcp = createContextMcp(store, [], true, {
     clientGrants: grants,
-    personalMemory,
   });
   const handler = protectMcp(
     mcp,
@@ -199,7 +198,7 @@ test("memory context covers a period beyond the recent twenty, handles offsets a
     });
     memory.store.capture({
       version: 1,
-      scope: "synthetic:other",
+      scope: "other",
       origin: "fixture",
       text: "Foreign observatory diary",
       idempotencyKey: "foreign",
@@ -283,8 +282,10 @@ test("personal tools enforce owner, operation and independent client grants befo
       const tool = tools.find((tool) => tool.name === name);
       assert.ok(tool);
       assert.ok(
-        JSON.stringify(tool._meta).includes(scope),
-        "personal tool must advertise its exact data consent",
+        JSON.stringify(tool._meta).includes(
+          name === "remember" ? "context:write" : "context:read",
+        ),
+        "area-selectable tools advertise the operation; data consent is checked per call",
       );
     }
     for (const scopes of [["context:read", "context:write"], [scope]]) {
@@ -330,7 +331,7 @@ test("personal tools enforce owner, operation and independent client grants befo
           arguments: {
             text: "Fictional denied",
             idempotencyKey: "scope-injection",
-            scope: "synthetic:other",
+            scope: "other",
           },
         })
       ).isError,
@@ -340,7 +341,7 @@ test("personal tools enforce owner, operation and independent client grants befo
       (
         await reader.callTool({
           name: "memory_context",
-          arguments: { scope: "synthetic:other" },
+          arguments: { scope: "other" },
         })
       ).isError,
       true,
@@ -361,41 +362,6 @@ test("personal tools enforce owner, operation and independent client grants befo
     assert.equal(context.truncated, false);
   } finally {
     await memory.close();
-  }
-  const disabled = await openMemory(":memory:", false);
-  try {
-    const client = await disabled.connect();
-    const names = (await client.listTools()).tools.map((tool) => tool.name);
-    assert.equal(names.includes("remember"), false);
-    assert.equal(names.includes("memory_context"), false);
-    assert.equal(
-      (
-        await client.callTool({
-          name: "capture",
-          arguments: {
-            version: 1,
-            scope,
-            text: "Fictional denied",
-            origin: "fixture",
-            idempotencyKey: "disabled",
-          },
-        })
-      ).isError,
-      true,
-    );
-  } finally {
-    await disabled.close();
-  }
-  const store = new SourceStore(":memory:");
-  try {
-    assert.throws(() => createContextMcp(store, [scope]));
-    assert.throws(() =>
-      createContextMcp(store, ["synthetic:test"], false, {
-        personalMemory: true,
-      }),
-    );
-  } finally {
-    store.close();
   }
 });
 
