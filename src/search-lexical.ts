@@ -4,6 +4,7 @@ import { ftsMatchOffset, ftsTerms } from "./package-query.js";
 
 const english = newStemmer("english");
 const russian = newStemmer("russian");
+const VECTOR_RRF_WEIGHT = 5;
 export function stemText(text: string): string {
   return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
     .map((word) =>
@@ -78,12 +79,15 @@ export function stemOffset(text: string, terms: readonly string[]): number {
 
 // Each list has already passed area, date and provenance predicates before
 // receiving a rank. RRF never compares BM25 magnitudes across indexes.
+// Lists are ordered exact, stemmed, vector; the first two share lexical evidence.
 export function reciprocalRanks(lists: readonly (readonly string[])[]) {
   const scores = new Map<string, number>();
-  for (const list of lists)
+  for (const [index, list] of lists.entries()) {
+    const weight = index === 2 ? VECTOR_RRF_WEIGHT : 1;
     for (const [rank, id] of [...new Set(list)].entries()) {
-      scores.set(id, (scores.get(id) ?? 0) + 1 / (60 + rank + 1));
+      scores.set(id, (scores.get(id) ?? 0) + weight / (60 + rank + 1));
     }
+  }
   return [...scores]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([id]) => id);
