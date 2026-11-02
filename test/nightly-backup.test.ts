@@ -277,3 +277,31 @@ test("a damaged lock is reported as failure, not another active backup", async (
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a clock correction during upload cannot corrupt persisted backup status", async (t) => {
+  const directory = await mkdtemp(join(process.cwd(), ".output/backup-test-"));
+  const databasePath = join(directory, "source.db");
+  const store = new SourceStore(databasePath);
+  store.close();
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const backups = join(directory, "backups");
+  const runner = new BackupRunner(
+    { databasePath, directory: backups, keep: 1 },
+    {
+      kind: "sftp",
+      async upload() {
+        now -= 60000;
+      },
+    },
+  );
+  try {
+    const status = await runner.run();
+    assert.equal(status.outcome, "success");
+    assert.ok(status.durationMs >= 0);
+    const { readBackupStatus } = await import("../src/backup-runner.js");
+    assert.deepEqual(await readBackupStatus(backups), status);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

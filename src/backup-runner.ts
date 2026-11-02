@@ -87,6 +87,7 @@ export class BackupRunner {
 
   private async execute(scheduledDate?: string): Promise<BackupStatus> {
     const started = Date.now();
+    const durationStart = performance.now();
     const status: BackupStatus = {
       outcome: "running",
       startedAt: new Date(started).toISOString(),
@@ -186,7 +187,7 @@ export class BackupRunner {
         await rm(temporary, { recursive: true, force: true }).catch(() => {
           status.outcome = "failed";
         });
-      status.durationMs = Date.now() - started;
+      status.durationMs = Math.round(performance.now() - durationStart);
       if (locked) {
         await this.saveStatus(status).catch(() => {
           status.outcome = "failed";
