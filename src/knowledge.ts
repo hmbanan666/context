@@ -1,27 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { scopeSchema } from "./contracts.js";
+import { identifierSchema as identifier, scopeSchema, nonblankText as text } from "./contracts.js";
 import type { PackageSelection } from "./package-query.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
+import { redactFields } from "./redaction.js";
 import { IdempotencyConflict } from "./store.js";
-
-const identifier = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[a-zA-Z0-9._:-]+$/);
-const text = (maximum: number) =>
-  z
-    .string()
-    .min(1)
-    .max(maximum)
-    .refine(
-      (value) =>
-        value.trim().length > 0 &&
-        !value.includes("\0") &&
-        !/[\uD800-\uDFFF]/u.test(value),
-    );
 
 export const knowledgeCreatorSchema = z.strictObject({
   kind: z.enum(["user", "model"]),
@@ -298,7 +282,9 @@ export class KnowledgeStore {
   }
 
   add(input: AddKnowledgeInput): { item: KnowledgeItem; duplicate: boolean } {
-    const request = addKnowledgeSchema.parse(input);
+    const request = addKnowledgeSchema.parse(
+      redactFields(addKnowledgeSchema.parse(input)),
+    );
     const hash = fingerprint(request);
     return this.#transaction(() => {
       const prior = this.#request(
@@ -430,7 +416,9 @@ export class KnowledgeStore {
     relation: KnowledgeRelation;
     duplicate: boolean;
   } {
-    const request = relateKnowledgeSchema.parse(input);
+    const request = relateKnowledgeSchema.parse(
+      redactFields(relateKnowledgeSchema.parse(input)),
+    );
     const hash = fingerprint(request);
     return this.#transaction(() => {
       const prior = this.#request(
