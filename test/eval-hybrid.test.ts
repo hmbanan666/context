@@ -70,6 +70,7 @@ test("eval retrieves the same vector-only evidence as protected MCP", async () =
 test("eval records hybrid mode and vector-only questions without taking ownership of the shared model", async () => {
   const { writeFile, readFile } = await import("node:fs/promises");
   const { evaluate } = await import("../src/eval-runner.js");
+  const { formatRun } = await import("../src/eval-cli.js");
   const dir = await mkdtemp(join(process.cwd(), ".output-eval-"));
   const path = join(dir, "db");
   let closed = 0;
@@ -107,7 +108,10 @@ test("eval records hybrid mode and vector-only questions without taking ownershi
             question,
             areas: ["personal"],
             read_areas: ["personal"],
-            expected: [{ source_id: source.id }],
+            expected: [
+              { source_id: source.id },
+              { substring: "absent acceptable evidence" },
+            ],
           }),
         ),
       }),
@@ -131,12 +135,25 @@ test("eval records hybrid mode and vector-only questions without taking ownershi
       compared_questions: 2,
       vector_only_questions: 1,
       lexical_only_questions: 0,
+      lexical: { hit_at_1: 0.5, hit_at_k: 0.5, mrr: 0.5 },
+    });
+    assert.match(
+      formatRun(run),
+      /lexical control: hit@1 0.5 hit@10 0.5 mrr 0.5/,
+    );
+    const withoutEmbeddings = await evaluate(options);
+    assert.deepEqual(withoutEmbeddings.diagnostics, {
+      compared_questions: 0,
+      vector_only_questions: 0,
+      lexical_only_questions: 0,
+      lexical: { hit_at_1: null, hit_at_k: null, mrr: null },
     });
     failQuery = true;
     const partial = await evaluate(options, f.embeddings);
     assert.equal(partial.search.mode, "hybrid");
     assert.equal(partial.search.semantic, "partial");
     assert.equal(partial.metrics.hit_at_k, 1);
+    assert.deepEqual(partial.diagnostics, run.diagnostics);
     assert.equal(closed, 0);
     assert.deepEqual(await readFile(path), before);
   } finally {
@@ -231,15 +248,23 @@ test("standalone eval opens vectors read-only and reports model failure in outpu
     const history = await evalHistory(dir);
     assert.equal(history[0]?.search.semantic, "unavailable");
     assert.equal(history[1]?.search.mode, "hybrid");
+    assert.deepEqual(history[0]?.diagnostics.lexical, {
+      hit_at_1: 0,
+      hit_at_k: 0,
+      mrr: 0,
+    });
     assert.deepEqual(await readFile(path), before);
     await writeFile(
       join(dir, "history.jsonl"),
-      `${JSON.stringify({ ...run, schema_version: 1, search: undefined, diagnostics: undefined })}\n${JSON.stringify(run)}\n`,
+      `${JSON.stringify({ ...run, schema_version: 1, search: undefined, diagnostics: undefined })}\n${JSON.stringify({ ...run, diagnostics: { ...run.diagnostics, lexical: undefined } })}\n${JSON.stringify(run)}\n`,
     );
     const mixed = await evalHistory(dir);
-    assert.equal(mixed[0]?.delta_previous, null);
+    assert.equal(mixed[0]?.delta_previous?.hit_at_k, 0);
+    assert.equal(mixed[1]?.delta_previous, null);
     assert.ok(mixed[1]);
-    assert.match(formatRun(mixed[1]), /unrecorded \(legacy row\)/);
+    assert.doesNotMatch(formatRun(mixed[1]), /lexical control:/);
+    assert.ok(mixed[2]);
+    assert.match(formatRun(mixed[2]), /unrecorded \(legacy row\)/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -48,7 +48,8 @@ test("eval CLI measures synthetic retrieval, keeps content out of history, and l
     question: missing
     areas: [garden]
     read_areas: [garden]
-    expected: []
+    expected:
+      - substring: absent placeholder evidence
     placeholder: true
 `,
     );
@@ -69,10 +70,16 @@ test("eval CLI measures synthetic retrieval, keeps content out of history, and l
     assert.equal(summary.search.mode, "lexical");
     assert.equal(summary.search.semantic, "unavailable");
     assert.equal(summary.metrics.hit_at_1, 1);
-    assert.equal(summary.metrics.hit_at_k, 2 / 3);
+    assert.equal(summary.metrics.hit_at_k, 1);
     assert.equal(summary.metrics.mrr, 1);
     assert.equal(summary.metrics.isolation_violations, 0);
-    assert.equal(summary.questions[0].pass, false);
+    assert.equal(summary.diagnostics.compared_questions, 1);
+    assert.deepEqual(summary.diagnostics.lexical, {
+      hit_at_1: 1,
+      hit_at_k: 1,
+      mrr: 1,
+    });
+    assert.equal(summary.questions[0].pass, true);
     assert.equal(summary.questions[1].status, "skipped");
     assert.ok(summary.question_file_hash);
     assert.equal(run("run", "--json").status, 0);
@@ -82,6 +89,7 @@ test("eval CLI measures synthetic retrieval, keeps content out of history, and l
     assert.equal(rows.length, 2);
     assert.equal(rows[0].delta_previous.hit_at_k, 0);
     assert.equal(rows[0].delta_previous.mrr, 0);
+    assert.deepEqual(rows[0].diagnostics.lexical, summary.diagnostics.lexical);
     for (const privateText of [
       "cobalt",
       "needs shade",
@@ -149,6 +157,13 @@ test("eval detects forbidden results, rejects invalid files safely, and bounds o
     assert.equal(denied.status, 0, denied.stderr);
     assert.equal(JSON.parse(denied.stdout).metrics.isolation_violations, 0);
     assert.equal(JSON.parse(denied.stdout).metrics.hit_at_k, null);
+    assert.equal(JSON.parse(denied.stdout).questions[0].pass, true);
+    assert.equal(JSON.parse(denied.stdout).diagnostics.compared_questions, 0);
+    assert.deepEqual(JSON.parse(denied.stdout).diagnostics.lexical, {
+      hit_at_1: null,
+      hit_at_k: null,
+      mrr: null,
+    });
     for (const content of [
       "private: [malformed",
       "questions: &data [*data]",
@@ -228,7 +243,10 @@ test("eval preserves multi-area rank, computes reciprocal rank, and compares onl
             question: "cobalt",
             areas: ["orchard", "garden"],
             read_areas: ["orchard", "garden"],
-            expected: [{ source_id: expected }],
+            expected: [
+              { substring: "absent acceptable evidence" },
+              { source_id: expected },
+            ],
           },
         ],
       }),
@@ -250,6 +268,12 @@ test("eval preserves multi-area rank, computes reciprocal rank, and compares onl
     assert.equal(summary.metrics.hit_at_1, 0);
     assert.equal(summary.metrics.hit_at_k, 1);
     assert.equal(summary.metrics.mrr, 0.5);
+    assert.deepEqual(summary.diagnostics.lexical, {
+      hit_at_1: 0,
+      hit_at_k: 1,
+      mrr: 0.5,
+    });
+    assert.equal(summary.questions[0].pass, true);
     assert.ok(summary.metrics.latency_p50_ms > 0);
     assert.equal(
       summary.metrics.latency_p50_ms,
@@ -259,6 +283,7 @@ test("eval preserves multi-area rank, computes reciprocal rank, and compares onl
     assert.equal(capped.status, 0);
     assert.equal(JSON.parse(capped.stdout).metrics.hit_at_k, 0);
     assert.equal(JSON.parse(capped.stdout).metrics.mrr, 0);
+    assert.equal(JSON.parse(capped.stdout).questions[0].pass, false);
     const history = JSON.parse(run("history", "--json", "--limit", "1").stdout);
     assert.equal(history.length, 1);
     assert.equal(history[0].delta_previous, null);
