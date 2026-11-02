@@ -1,9 +1,4 @@
-# Apply after Dokploy's isolated-deployment conversion. Requires Compose 2.24.4+.
-# Keep PostgreSQL private and avoid adding the same proxy network twice.
+# Apply after isolated-deployment network conversion. Requires Compose 2.24.4+.
 services:
   context:
     networks: !override [dokploy]
-  identity:
-    networks: !override [dokploy, identity]
-  identity-db:
-    networks: !override [identity]
