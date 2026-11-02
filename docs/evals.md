@@ -21,7 +21,7 @@ context eval history --limit 20 --json
 
 `run` defaults to k=10; k must be 1–20, matching the MCP package limit. `history`
 shows ten recent runs, newest first (`--limit` accepts 1–100). `--json` emits only
-the content-free result. In a built checkout use `npm run context -- eval ...`.
+the content-free result. In a built checkout use `pnpm run context eval ...`.
 
 ## Questions
 
@@ -204,8 +204,8 @@ is introduced.
 ## Synthetic verification and limits
 
 ```sh
-npm run check
-npm run eval:retrieval
+pnpm run check
+pnpm run eval:retrieval
 ```
 
 The synthetic CI command builds a disposable fictional corpus, executes the real

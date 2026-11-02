@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { readBackupConfig } from "../src/backup-config.js";
 
 test("nightly local defaults and explicit off-host configuration fail closed", () => {

@@ -100,9 +100,7 @@ export async function retrieveForEval(
     const violations = new Set<string>();
     const lists: EvalHit[][] = [];
     let failed = false;
-    for (const area of [
-      ...new Set([...question.areas, ...question.forbidden_areas]),
-    ]) {
+    for (const area of new Set([...question.areas, ...question.forbidden_areas])) {
       try {
         const response = await client.callTool({
           name: "context_package",

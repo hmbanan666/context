@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { AuthStore } from "../src/auth-store.js";
 
 test("CLI credentials carry bounded grants and revoke immediately", () => {

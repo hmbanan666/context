@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { startAutomaticBackups } from "../src/automatic-backup.js";
 import type { BackupClock } from "../src/backup-scheduler.js";
 import { evalHistory } from "../src/eval-history.js";

@@ -19,12 +19,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - run: npm install --global npm@11.19.1
-      - run: npm ci
-      - run: npm run check
-      - run: npm run eval:retrieval
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm run eval:retrieval
       - name: Validate base and Traefik Compose configurations (no daemon)
         run: node dist/test/validate-compose.js
       - run: docker build -t context:ci .
-      - run: npm run test:container
+      - run: pnpm run test:container

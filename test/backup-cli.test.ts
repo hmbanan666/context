@@ -3,7 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -11,12 +11,12 @@ import { SourceStore } from "../src/store.js";
 
 const exec = promisify(execFile);
 const backupCli = fileURLToPath(
-  new URL("../scripts/backup.js", import.meta.url),
+  new URL("../dist/scripts/backup.js", import.meta.url),
 );
 const databaseCli = fileURLToPath(
-  new URL("../scripts/database.js", import.meta.url),
+  new URL("../dist/scripts/database.js", import.meta.url),
 );
-const main = fileURLToPath(new URL("../src/main.js", import.meta.url));
+const main = fileURLToPath(new URL("../dist/src/main.js", import.meta.url));
 
 async function fixture() {
   await mkdir(join(process.cwd(), ".output"), { recursive: true });

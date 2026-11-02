@@ -1,0 +1,9 @@
+engineStrict: true
+saveExact: true
+
+# CPU ONNX binaries ship in the package; no CUDA download or optional SSH addon build.
+allowBuilds:
+  cpu-features: false
+  onnxruntime-node: false
+  protobufjs: false
+  ssh2: false

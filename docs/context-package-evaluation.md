@@ -1,13 +1,13 @@
 > Historical lexical evaluation evidence. Commands and deployment descriptions
 > below describe the original snapshot, not the current installation. Use
-> `npm run check` and the current README for setup.
+> `pnpm run check` and the current README for setup.
 
 # Context Package MVP: reproducible synthetic comparison
 
 Date: 28 October 2026. Baseline: main `a2afdc620cab6aaa0c6d847b63051b8a56600593`.
 Status: historical measurements for the implementation later merged in PR #19.
 Stage 1a removes the project projection method from the current replay. Remaining
-methods still run with `npm run eval:context-package`; use the pinned historical
+methods still run with `pnpm run eval:context-package`; use the pinned historical
 revision for the complete original comparison. Area defaults/names have changed,
 so current JSON byte counts need not equal the historical counts below.
 

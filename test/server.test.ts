@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { startTestService as startService } from "./fixtures/search-service.js";
 
 test("only health is exposed on loopback; private routes do not exist", async () => {

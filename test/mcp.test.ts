@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import {
   Client,
   StreamableHTTPClientTransport,

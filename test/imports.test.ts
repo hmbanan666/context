@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { openPackageFixture } from "./fixtures/package-client.js";
 
 test("JSONL imports survive reopen, skip retries, preserve changed originals and are found through MCP", async () => {

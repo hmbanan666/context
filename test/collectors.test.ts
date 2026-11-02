@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { collectCodex } from "../src/collect-codex.js";
 
 test("Codex collector keeps the first actual prompt and last final answer, excludes tools and reasoning, and reads task reports", async () => {

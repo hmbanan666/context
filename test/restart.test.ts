@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import { fileURLToPath } from "node:url";
 import {
   Client,
@@ -100,7 +100,7 @@ test("synthetic source survives two real service processes and retries", {
     initial.insert(syntheticSource);
     initial.close();
     for (let restart = 0; restart < 2; restart++) {
-      const child = run(new URL("../src/main.js", import.meta.url), env);
+      const child = run(new URL("../dist/src/main.js", import.meta.url), env);
       try {
         const port = await waitForPort(child);
         const health = await fetch(`http://127.0.0.1:${port}/health`);
@@ -196,7 +196,7 @@ test("synthetic source survives two real service processes and retries", {
 test("production startup fails before opening a listener or database", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-production-"));
   try {
-    const child = run(new URL("../src/main.js", import.meta.url), {
+    const child = run(new URL("../dist/src/main.js", import.meta.url), {
       ...childEnvironment(join(directory, "context.db")),
       NODE_ENV: "production",
     });

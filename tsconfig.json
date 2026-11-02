@@ -12,13 +12,16 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "verbatimModuleSyntax": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "sourceMap": true
   },
   "include": [
     "src/**/*.ts",
     "scripts/**/*.ts",
     "test/**/*.ts",
-    "fixtures/**/*.ts"
+    "fixtures/**/*.ts",
+    "vite.config.ts"
   ]
 }

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { test } from "node:test";
+import { test, vi } from "vite-plus/test";
 import { type PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Client, type ConnectConfig, type SFTPWrapper } from "ssh2";
 import type { BackupTargetConfig } from "../src/backup-config.js";
@@ -31,12 +31,11 @@ async function fixture() {
 
 test("S3 sends a streaming object with the configured key and checksum metadata", async (t) => {
   const f = await fixture();
-  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(f.directory, { recursive: true, force: true }));
   let sent = false;
-  t.mock.method(
-    S3Client.prototype,
-    "send",
-    async (command: PutObjectCommand) => {
+  vi.spyOn(S3Client.prototype, "send").mockImplementation(
+    async (input) => {
+      const command = input as PutObjectCommand;
       assert.equal(command.input.Bucket, "fictional-backups");
       assert.equal(command.input.Key, "daily/fixture.db");
       assert.deepEqual(command.input.Metadata, { sha256: f.file.checksum });
@@ -66,7 +65,7 @@ test("S3 sends a streaming object with the configured key and checksum metadata"
 
 test("SFTP pins the host key, streams a private partial file, checks size, and publishes by rename", async (t) => {
   const f = await fixture();
-  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(f.directory, { recursive: true, force: true }));
   const config: BackupTargetConfig = {
     kind: "sftp",
     host: "sftp.example.invalid",
@@ -103,9 +102,7 @@ test("SFTP pins the host key, streams a private partial file, checks size, and p
       callback();
     },
   };
-  t.mock.method(
-    Client.prototype,
-    "connect",
+  vi.spyOn(Client.prototype, "connect").mockImplementation(
     function (this: Client, options: ConnectConfig) {
       assert.equal(options.hostHash, "sha256");
       const verify = options.hostVerifier as (hash: string) => boolean;
@@ -115,11 +112,10 @@ test("SFTP pins the host key, streams a private partial file, checks size, and p
       return this;
     },
   );
-  t.mock.method(
-    Client.prototype,
-    "sftp",
-    (callback: (error: Error | undefined, sftp: SFTPWrapper) => void) => {
+  vi.spyOn(Client.prototype, "sftp").mockImplementation(
+    function (this: Client, callback) {
       callback(undefined, sftp as unknown as SFTPWrapper);
+      return this;
     },
   );
   await createBackupTarget(config, 1000).upload(f.file);

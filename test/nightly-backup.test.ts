@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { before, test } from "node:test";
+import { beforeAll, test, vi } from "vite-plus/test";
 import { restoreDatabase } from "../src/backup.js";
 import { BackupRunner } from "../src/backup-runner.js";
 import { SourceStore } from "../src/store.js";
 
-before(async () => {
+beforeAll(async () => {
   await mkdir(join(process.cwd(), ".output"), { recursive: true });
 });
 
@@ -278,13 +278,13 @@ test("a damaged lock is reported as failure, not another active backup", async (
   }
 });
 
-test("a clock correction during upload cannot corrupt persisted backup status", async (t) => {
+test("a clock correction during upload cannot corrupt persisted backup status", async () => {
   const directory = await mkdtemp(join(process.cwd(), ".output/backup-test-"));
   const databasePath = join(directory, "source.db");
   const store = new SourceStore(databasePath);
   store.close();
   let now = Date.now();
-  t.mock.method(Date, "now", () => now);
+  vi.spyOn(Date, "now").mockImplementation(() => now);
   const backups = join(directory, "backups");
   const runner = new BackupRunner(
     { databasePath, directory: backups, keep: 1 },
