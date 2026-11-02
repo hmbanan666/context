@@ -1,6 +1,7 @@
 # Build an MIT single-owner self-hosted engine
 
-Status: Accepted  
+Status: Accepted
+
 Date: 2026-11-02
 
 ## Context

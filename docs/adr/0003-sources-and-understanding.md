@@ -1,6 +1,7 @@
 # Preserve sources and derive revisable understanding
 
-Status: Accepted  
+Status: Accepted
+
 Date: 2026-11-02
 
 ## Context

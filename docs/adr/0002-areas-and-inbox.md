@@ -1,6 +1,7 @@
 # Areas control access; the inbox handles uncertainty
 
-Status: Accepted  
+Status: Accepted
+
 Date: 2026-11-02
 
 ## Context

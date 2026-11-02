@@ -1,6 +1,7 @@
 # Measure quality with private and synthetic eval sets
 
-Status: Accepted  
+Status: Accepted
+
 Date: 2026-11-02
 
 ## Context

@@ -1,6 +1,7 @@
 # Keep SQLite and add morphology and local semantic search
 
-Status: Accepted  
+Status: Accepted
+
 Date: 2026-11-02
 
 ## Context

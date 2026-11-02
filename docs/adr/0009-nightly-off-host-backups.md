@@ -1,6 +1,7 @@
 # Back up nightly with an off-host copy
 
-Status: Accepted  
+Status: Accepted
+
 Date: 2026-11-02
 
 ## Context

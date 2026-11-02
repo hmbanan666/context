@@ -1,6 +1,7 @@
 # Built-in authorization replaces Keycloak
 
-Status: Accepted  
+Status: Accepted
+
 Date: 2026-11-02
 
 ## Context
