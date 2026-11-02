@@ -19,6 +19,7 @@ function childEnvironment(databasePath: string): NodeJS.ProcessEnv {
     ...process.env,
     NODE_ENV: "test",
     CONTEXT_DB_PATH: databasePath,
+    CONTEXT_BACKUP_DIR: `${databasePath}.backups`,
     CONTEXT_PORT: "0",
     CONTEXT_LOCAL_MCP: "enabled",
     CONTEXT_AREAS: "local-foundation",
