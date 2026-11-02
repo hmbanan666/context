@@ -1,9 +1,10 @@
 # Current deployment and recovery
 
 **Stages 1a and 1b merged; stage 1c prepared in PR #21 (2 November 2026).**
-The backup slice is not yet merged or deployed. The pilot's last recorded status comes
-from [PR #19](https://github.com/hmbanan666/context/pull/19), not a new inspection.
-This PR removes identity services from the repository, not the live installation.
+The backup slice is not yet merged or deployed. The pilot's last recorded
+status comes from [PR #19](https://github.com/hmbanan666/context/pull/19), not a new inspection.
+The repository no longer includes identity services; this PR does not change
+the live installation.
 Merge, deployment and live changes remain distinct approval/action steps.
 
 ## Current protected setup
@@ -169,6 +170,15 @@ needed for backups. This implementation is release preparation, not live activat
 | `CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH` | Required for SFTP | Readable mounted private key; encrypted private keys are not supported in this slice. |
 | `CONTEXT_BACKUP_SFTP_REMOTE_DIR` | Required for SFTP | Existing private absolute directory with write/rename rights. |
 | `CONTEXT_BACKUP_SFTP_HOST_KEY_SHA256` | Required for SFTP | Trusted SHA-256 host-key fingerprint as 64 hex digits; mismatches fail closed. |
+
+[Base Compose](../deploy/compose.yaml) passes these settings to Context and fixes
+`CONTEXT_BACKUP_DIR=/app/backups` on the existing backup volume. Its timezone
+default is UTC. Unused S3/SFTP variables may be empty; only the selected target's
+required fields are validated. An empty SFTP port uses 22. An unset S3 prefix
+uses `context/`; explicitly empty means the bucket root. No optional env file is
+required. For SFTP, add a read-only key-file mount through a private Compose
+override and set `CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH` to that container path.
+The base file does not mount or discover host keys/credentials automatically.
 
 After startup, the scheduler checks every 30 seconds. If today's time has passed,
 it catches up once; it does not replay all missed days. Completed and failed

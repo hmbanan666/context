@@ -28,7 +28,7 @@ async function fixture() {
     version: 1,
     text: "Fictional cedar bird",
     origin: "fixture:cli",
-    scope: "synthetic:backup",
+    scope: "backup",
     idempotencyKey: "cli-1",
   });
   store.close();

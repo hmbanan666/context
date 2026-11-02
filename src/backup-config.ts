@@ -70,7 +70,7 @@ export function readBackupConfig(env: NodeJS.ProcessEnv): BackupConfig {
         ? {
             kind,
             host: env.CONTEXT_BACKUP_SFTP_HOST,
-            port: env.CONTEXT_BACKUP_SFTP_PORT,
+            port: env.CONTEXT_BACKUP_SFTP_PORT || undefined,
             username: env.CONTEXT_BACKUP_SFTP_USER,
             privateKeyPath: env.CONTEXT_BACKUP_SFTP_PRIVATE_KEY_PATH,
             remoteDirectory: env.CONTEXT_BACKUP_SFTP_REMOTE_DIR,

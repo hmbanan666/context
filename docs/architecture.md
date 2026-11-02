@@ -3,9 +3,9 @@
 As recorded on **2 November 2026**, the protected pilot runs the implementation
 released in [PR #19](https://github.com/hmbanan666/context/pull/19). This document
 describes repository behavior and recorded release status, not a new inspection
-of the live service. Stage 1a is merged; stage 1b implementation is done in
-PR #23, not yet merged or deployed. The [spec](spec.md) and [ADRs](adr/) define
-the approved target; this auth slice does not claim the later capabilities.
+of the live service. Stages 1a and 1b are merged; stage 1c backups are prepared in
+PR #21, not yet merged or deployed. The [spec](spec.md) and [ADRs](adr/) define
+the approved target; this backup slice does not claim the later capabilities.
 
 ## Runtime and access
 
@@ -90,15 +90,16 @@ is a separate source-ingestion feature.
 ## Recovery and transition
 
 SQLite online backup and offline restore commands exist; they include sources,
-derived records, jobs, indexes, retry state and auth state. Automated nightly
-off-host delivery is not implemented. No startup migration drops or rewrites existing rows. Old work
-tables remain unused; historical review rows still supply knowledge status, including
+derived records, jobs, indexes, retry state and auth state. PR #21 adds in-process
+nightly snapshots, local retention, verified separate-file restore and optional
+S3/SFTP delivery; actual hosted off-host recovery is unverified. No startup
+migration drops or rewrites existing rows. Old work tables remain unused;
+historical review rows still supply knowledge status, including
 rejection filtering, without a review writer. Existing area names and retry keys
 are preserved. See [deployment](deployment.md) for compatibility and recovery.
 
 Stage 1b preserves source/knowledge rows and adds only auth tables. Existing
 ChatGPT/Codex and other Keycloak connections must reconnect to the built-in
-issuer; no migration or deployment was performed here. Later stages add nightly
-off-host backup, imports/evals, morphology/local embeddings, pluggable
-understanding and owner controls. An inferred topic never grants area access.
+issuer; no migration or deployment was performed here. Later stages add
+imports/evals, morphology/local embeddings, pluggable understanding and owner controls. An inferred topic never grants area access.
 Consult the [glossary](../CONTEXT.md) when naming these concepts.

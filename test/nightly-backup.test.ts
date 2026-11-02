@@ -19,7 +19,7 @@ test("local backup is verified, private, and restores exact originals and retry 
     version: 1 as const,
     text: "Fictional amber heron",
     origin: "fixture:backup",
-    scope: "synthetic:backup",
+    scope: "backup",
     idempotencyKey: "nightly-1",
   };
   try {
@@ -302,6 +302,138 @@ test("a clock correction during upload cannot corrupt persisted backup status", 
     const { readBackupStatus } = await import("../src/backup-runner.js");
     assert.deepEqual(await readBackupStatus(backups), status);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("nightly off-host copy restores every built-in auth table with sources and denied rights", async () => {
+  const { AuthStore } = await import("../src/auth-store.js");
+  const { writeFile } = await import("node:fs/promises");
+  const directory = await mkdtemp(join(process.cwd(), ".output/backup-auth-"));
+  const databasePath = join(directory, "context.db");
+  const sources = new SourceStore(databasePath);
+  const auth = new AuthStore(databasePath, ["personal", "garden"]);
+  const resource = "https://context.example/mcp";
+  const password = "Fictional recovery password 123";
+  try {
+    const input = {
+      version: 1 as const,
+      text: "Fictional copper finch",
+      origin: "fixture:auth-backup",
+      scope: "garden",
+      idempotencyKey: "auth-backup-1",
+    };
+    const saved = sources.capture(input);
+    await auth.initOwner(password);
+    const passkey = {
+      id: "fictional-passkey",
+      publicKey: Buffer.from("fictional public-key fixture").toString(
+        "base64url",
+      ),
+      counter: 4,
+    };
+    auth.savePasskey(passkey);
+    const registered = auth.register(
+      "fictional-browser",
+      ["https://client.example/callback"],
+      true,
+      "client_secret_basic",
+    );
+    const grants = { read: ["garden"], write: [], process: [] };
+    const allowed = auth.createCliToken(
+      "fictional-reader",
+      grants,
+      null,
+      3600,
+      resource,
+    );
+    const revoked = auth.createCliToken(
+      "fictional-revoked",
+      grants,
+      null,
+      3600,
+      resource,
+    );
+    auth.revokeToken(revoked.id);
+    const sessionData = {
+      csrf: "fictional-csrf",
+      password: false,
+      authenticated: false,
+    };
+    const session = auth.newSession(sessionData);
+    let uploaded: Buffer | undefined;
+    const runner = new BackupRunner(
+      { databasePath, directory: join(directory, "backups"), keep: 1 },
+      {
+        kind: "s3",
+        async upload(file) {
+          uploaded = await readFile(file.path);
+        },
+      },
+    );
+    const status = await runner.run("2026-11-02");
+    assert.equal(status.outcome, "success");
+    assert.equal(status.copy, "uploaded");
+    assert.ok(uploaded);
+    for (const value of [
+      password,
+      allowed.token,
+      revoked.token,
+      registered.clientSecret,
+      session,
+    ]) {
+      assert.ok(value);
+      assert.equal(uploaded.includes(Buffer.from(value)), false);
+    }
+    const downloaded = join(directory, "download.db");
+    const restored = join(directory, "restored.db");
+    await writeFile(downloaded, uploaded, { mode: 0o600 });
+    await restoreDatabase(downloaded, restored);
+    const restoredSources = new SourceStore(restored);
+    const restoredAuth = new AuthStore(restored, ["personal", "garden"]);
+    try {
+      assert.deepEqual(restoredSources.capture(input), {
+        ...saved,
+        duplicate: true,
+      });
+      assert.deepEqual(restoredSources.search("copper finch", "garden", 10), [
+        saved.source,
+      ]);
+      assert.equal(await restoredAuth.checkPassword(password), true);
+      assert.equal(
+        await restoredAuth.checkPassword("Fictional wrong password"),
+        false,
+      );
+      assert.deepEqual(restoredAuth.passkeys(), [passkey]);
+      assert.deepEqual(restoredAuth.listClients(), auth.listClients());
+      assert.equal(
+        restoredAuth.authenticateClient(
+          registered.client.id,
+          "client_secret_basic",
+          registered.clientSecret,
+        ).id,
+        registered.client.id,
+      );
+      assert.throws(() =>
+        restoredAuth.authenticateClient(
+          registered.client.id,
+          "client_secret_basic",
+          "fictional-wrong-secret",
+        ),
+      );
+      assert.deepEqual(
+        restoredAuth.access(allowed.token, resource).grants,
+        grants,
+      );
+      assert.throws(() => restoredAuth.access(revoked.token, resource));
+      assert.deepEqual(restoredAuth.session(session), sessionData);
+    } finally {
+      restoredAuth.close();
+      restoredSources.close();
+    }
+  } finally {
+    auth.close();
+    sources.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
