@@ -2,6 +2,7 @@
 import { AuthStore } from "../src/auth-store.js";
 import { readConfig } from "../src/config.js";
 import { evalCommand } from "../src/eval-cli.js";
+import { runIndexCommand } from "../src/index-command.js";
 import { runImport } from "./import-jsonl.js";
 
 async function passwordInput() {
@@ -58,6 +59,11 @@ async function main() {
   const [kind, action, name, ...args] = process.argv.slice(2);
   if (kind === "import" && action === "jsonl") {
     await runImport(process.argv.slice(4));
+    return;
+  }
+  if (kind === "index") {
+    if (name || args.length) throw new Error("Unexpected index arguments");
+    await runIndexCommand(action, process.env);
     return;
   }
   const config = readConfig(process.env);

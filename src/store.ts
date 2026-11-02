@@ -15,12 +15,8 @@ import {
   type MaterialFileDescriptor,
   type MaterialMetadata,
 } from "./materials.js";
-
-import {
-  ftsMatchOffset,
-  ftsTerms,
-  type PackageSelection,
-} from "./package-query.js";
+import type { PackageSelection } from "./package-query.js";
+import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 
 export interface SourceInput {
   readonly id: string;
@@ -159,6 +155,7 @@ export class SourceStore {
         ) STRICT;
         COMMIT;
       `);
+      installSearchIndex(this.#database, "sources");
     } catch (error) {
       this.#database.close();
       throw error;
@@ -608,12 +605,27 @@ export class SourceStore {
       conditions.push(`${date} < ?`);
       params.push(Date.parse(input.until));
     }
-    const match = input.terms.length > 0;
-    if (match) {
-      conditions.push("sources_fts MATCH ?");
-      params.push(ftsTerms(input.terms));
+    if (input.terms.length) {
+      const found = lexicalCandidates(
+        this.#database,
+        "sources",
+        `SELECT s.rowid,s.id,s.text FROM sources s LEFT JOIN source_metadata m ON m.source_id=s.id WHERE ${conditions.join(" AND ")}`,
+        params,
+        input.terms,
+        input.limit,
+        input.vectors,
+      );
+      return {
+        ...found,
+        materials: found.ids.map((id) => {
+          const material = this.findMaterial(id, input.scope);
+          if (!material) throw new Error("Missing source candidate");
+          return material;
+        }),
+      };
     }
-    const from = `FROM sources s LEFT JOIN source_metadata m ON m.source_id = s.id ${match ? "JOIN sources_fts ON sources_fts.rowid = s.rowid" : ""}`;
+    const from =
+      "FROM sources s LEFT JOIN source_metadata m ON m.source_id = s.id";
     const where = conditions.join(" AND ");
     const total = Number(
       this.#database
@@ -622,20 +634,15 @@ export class SourceStore {
     );
     const rows = this.#database
       .prepare(
-        `SELECT s.id, ${match ? "highlight(sources_fts,0,' ','')" : "NULL"} AS highlighted ${from} WHERE ${where} ORDER BY ${match ? "sources_fts.rank," : ""} ${date} DESC, s.id LIMIT ?`,
+        `SELECT s.id ${from} WHERE ${where} ORDER BY ${date} DESC,s.id LIMIT ?`,
       )
       .all(...params, input.limit);
-    const matchOffsets = new Map<string, number>();
     return {
       total,
-      matchOffsets,
+      matchOffsets: new Map<string, number>(),
       materials: rows.map((row) => {
         const material = this.findMaterial(String(row.id), input.scope);
         if (!material) throw new Error("Missing source candidate");
-        matchOffsets.set(
-          material.source.id,
-          ftsMatchOffset(material.source.text, row.highlighted),
-        );
         return material;
       }),
     };

@@ -210,11 +210,26 @@ test("backup configuration failure leaves health available and emits only a safe
       await (await fetch(`http://127.0.0.1:${event.port}/health`)).json(),
       { status: "ok" },
     );
-    assert.deepEqual(JSON.parse(errors.trim()), {
-      event: "backup",
-      outcome: "failed",
-      stage: "configuration",
-    });
+    const events = errors
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      events.filter((event) => event.event === "backup"),
+      [
+        {
+          event: "backup",
+          outcome: "failed",
+          stage: "configuration",
+        },
+      ],
+    );
+    for (const event of events.filter((event) => event.event !== "backup")) {
+      assert.deepEqual(event, {
+        event: "embeddings_unavailable",
+        fallback: "lexical_and_stemmed",
+      });
+    }
   } finally {
     child.kill("SIGTERM");
     const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
