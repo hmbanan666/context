@@ -245,14 +245,19 @@ Tidy uses stored same-model E5 chunk vectors, averaged and renormalized per sour
 it does not load a second model. Exact NFKC/whitespace-normalized text equality
 (including identical checksums) needs no vectors. Near duplicates require cosine
 **≥ 0.97**, length ratio **≥ 0.95**, token-set overlap **≥ 0.95**, and unchanged
-numeric/negation tokens. Oldest capture wins, with insertion order breaking ties.
+numeric/negation tokens. Tidy uses the source creation date when present, otherwise
+the capture date, for direction, watermark windows and oldest-first canonical
+choice, with insertion order breaking canonical ties.
 These conservative guards keep `limit 3` / `limit 4` distinct even at cosine 1.
 Synthetic tests cover threshold boundaries and this numeric counterexample;
 private/real-model dedup precision has not been measured here.
 
 Model candidates are non-duplicate pairs with cosine ≥ 0.85, each at most 1,500
-characters, and at least one capture since the last successful run (all on the
-first run). Numeric changes rejected by dedup remain eligible even above 0.97.
+characters, and at least one effective date since the last successful run (all on the
+first run). The model receives both texts and effective dates labelled a/b and
+returns `{"current":"a"|"b"|null}`; a choice more than one minute older than the
+other is skipped without failure, otherwise a non-null choice links current → other.
+Numeric changes rejected by dedup remain eligible even above 0.97.
 At most 200 pairs are checked per run. Content-free history retains an insertion-position cursor
 and window end for capped runs; later runs finish that window before advancing
 the success watermark. Failed/invalid model output skips a pair and is counted.

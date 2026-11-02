@@ -16,7 +16,9 @@ const DUPLICATE_COSINE = 0.97;
 const SUPERSEDE_COSINE = 0.85;
 const MAX_PAIRS = 200;
 const MAX_FACT_LENGTH = 1500;
-const supersedeSchema = z.strictObject({ supersedes: z.boolean() });
+const supersedeSchema = z.strictObject({
+  current: z.enum(["a", "b"]).nullable(),
+});
 const sortSchema = z.strictObject({
   area: z.string().nullable(),
   confidence: z.number().min(0).max(1),
@@ -26,7 +28,7 @@ interface TidySource {
   id: string;
   text: string;
   scope: string;
-  captured_at: string;
+  effective_date: string;
   checksum: string;
 }
 export interface TidyOptions {
@@ -239,12 +241,15 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     for (const area of areas) {
       const sources = db
         .prepare(
-          "SELECT rowid AS row,id,text,scope,captured_at,checksum FROM sources WHERE scope=? ORDER BY rowid",
+          `SELECT s.rowid AS row,s.id,s.text,s.scope,
+            COALESCE(m.created_at,s.captured_at) AS effective_date,s.checksum
+           FROM sources s LEFT JOIN source_metadata m ON m.source_id=s.id
+           WHERE s.scope=? ORDER BY s.rowid`,
         )
         .all(area) as unknown as TidySource[];
       sources.sort(
         (a, b) =>
-          Date.parse(a.captured_at) - Date.parse(b.captured_at) ||
+          Date.parse(a.effective_date) - Date.parse(b.effective_date) ||
           a.row - b.row,
       );
       run.sources += sources.length;
@@ -287,20 +292,22 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       for (const [i, laterRow] of pairSources.entries()) {
         if (i % 32 === 0) await yieldLoop();
         for (const priorRow of pairSources.slice(0, i)) {
-          const [newer, older] =
-            Date.parse(laterRow.captured_at) >= Date.parse(priorRow.captured_at)
-              ? [laterRow, priorRow]
-              : [priorRow, laterRow];
+          const a = laterRow,
+            b = priorRow;
+          const latestDate = Math.max(
+            Date.parse(a.effective_date),
+            Date.parse(b.effective_date),
+          );
           if (
-            [newer, older].some(
+            [a, b].some(
               (source) =>
                 source.text.length > MAX_FACT_LENGTH ||
                 copies.has(source.id) ||
                 state.canonical(source.id) !== source.id,
             ) ||
-            Date.parse(newer.captured_at) > Date.parse(run.windowEnd) ||
+            latestDate > Date.parse(run.windowEnd) ||
             (run.lastSuccessfulAt &&
-              Date.parse(newer.captured_at) < Date.parse(run.lastSuccessfulAt))
+              latestDate < Date.parse(run.lastSuccessfulAt))
           )
             continue;
           if (
@@ -312,10 +319,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
                     priorRow.row <= cursor.priorRow))))
           )
             continue;
-          const similarity = cosine(
-            embeddings.get(newer.id),
-            embeddings.get(older.id),
-          );
+          const similarity = cosine(embeddings.get(a.id), embeddings.get(b.id));
           if (similarity < SUPERSEDE_COSINE) continue;
           // High-cosine numeric changes rejected by the dedup guards remain candidates.
           if (run.pairs >= MAX_PAIRS) {
@@ -327,19 +331,32 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           if (
             db
               .prepare(
-                "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind='supersedes' AND from_id=? AND to_id=?",
+                "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind='supersedes' AND ((from_id=? AND to_id=?) OR (from_id=? AND to_id=?))",
               )
-              .get(area, newer.id, older.id)
+              .get(area, a.id, b.id, b.id, a.id)
           )
             continue;
           try {
             const answer = supersedeSchema.parse(
               await options.llm.ask(
-                'Does newer explicitly replace or update the SAME statement in older? Different subjects, proposals, questions and mere related facts do not replace one another. Return {"supersedes":true|false}.',
-                { older: older.text, newer: newer.text },
+                'Which text explicitly replaces or updates the SAME statement in the other? Consider both effective dates. Different subjects, proposals, questions and mere related facts do not replace one another. Return {"current":"a"|"b"|null}; null means no supersession.',
+                {
+                  a: { text: a.text, effectiveDate: a.effective_date },
+                  b: { text: b.text, effectiveDate: b.effective_date },
+                },
               ),
             );
-            if (answer.supersedes) relation("supersedes", newer, older);
+            if (answer.current === null) continue;
+            const [current, other] = answer.current === "a" ? [a, b] : [b, a];
+            if (
+              Date.parse(other.effective_date) -
+                Date.parse(current.effective_date) >
+              60_000
+            ) {
+              run.skipped++;
+              continue;
+            }
+            relation("supersedes", current, other);
           } catch {
             run.failures++;
           }
