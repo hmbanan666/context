@@ -220,7 +220,7 @@ Reproduce offline after downloading the public model once:
 ```sh
 npm run build
 node dist/scripts/download-search-model.js models
-node dist/scripts/benchmark-eval.js
+node dist/test/benchmark-eval.js
 ```
 
 The script uses only [synthetic calibration pairs](../fixtures/evals/cross-language.ts),
