@@ -269,6 +269,9 @@ the process group is killed after 180 seconds. No CLI version is pinned; unsuppo
 flags, missing login/binary and failed calls report `llm: "unavailable"` and leave
 tidy doing dedup only. Subscription/model availability and login refresh after
 inactivity still need a live check; synthetic tests do not establish them.
+Each tidy run first checks `codex login status` once, with a five-second timeout
+and discarded output. A failed check skips model steps with `llmCalls: 0`;
+dedup still runs and the successful watermark does not advance.
 
 On the host, install a static Codex executable compatible with the container's
 Linux architecture (not the npm launcher). Set `CONTEXT_CODEX_BIN` to its absolute

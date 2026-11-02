@@ -233,8 +233,10 @@ not a reliable relevance threshold on this corpus; weak neighbours can remain.
 
 After hybrid fusion, one scope-indexed relation lookup per result set resolves
 canonical chains and superseded IDs. Duplicate cards collapse to a readable
-canonical even if only the copy matched; canonical cards appear once. Cycles
-retain the original hit. Current candidates precede every historical candidate,
+canonical even if only the copy matched; canonical cards appear once. Resolution
+follows the earliest recorded outgoing duplicate link; cycles choose their
+lexicographically smallest member ID, consistently for every entry point.
+Current candidates precede every historical candidate,
 and history cards carry `supersededBy`. The same policy applies to literal-phrase
 recall; exact-ID reads still return the requested original. Existing candidate,
 area, provenance, date and byte bounds remain. Canonicals outside the requested
@@ -243,11 +245,15 @@ pre-collapse candidates, not unique displayed cards.
 
 Tidy uses stored same-model E5 chunk vectors, averaged and renormalized per source;
 it does not load a second model. Exact NFKC/whitespace-normalized text equality
-(including identical checksums) needs no vectors. Near duplicates require cosine
+(including identical checksums) needs no vectors. Both exact and vector dedup
+require at least **80 normalized characters in each source**, preserving short
+event titles as distinct history. Existing relations are retained. Near duplicates require cosine
 **≥ 0.97**, length ratio **≥ 0.95**, token-set overlap **≥ 0.95**, and unchanged
 numeric/negation tokens. Tidy uses the source creation date when present, otherwise
 the capture date, for direction and oldest-first canonical choice, with insertion
-order breaking canonical ties. Watermark windows use capture time so newly
+order breaking canonical ties. Existing duplicate decisions take precedence over
+date changes; tidy skips pairs linked in either direction and links that would
+close a duplicate chain into a cycle. Watermark windows use capture time so newly
 imported old notes are considered.
 These conservative guards keep `limit 3` / `limit 4` distinct even at cosine 1.
 Synthetic tests cover threshold boundaries and this numeric counterexample;

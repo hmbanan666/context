@@ -13,6 +13,7 @@ import type { Llm } from "./llm.js";
 // Conservative synthetic calibration; see docs/search.md. Never merge a
 // changed number/negation merely because its semantic vector is almost equal.
 const DUPLICATE_COSINE = 0.97;
+const MIN_DUPLICATE_LENGTH = 80;
 const SUPERSEDE_COSINE = 0.85;
 const MAX_PAIRS = 200;
 const BATCH_SIZE = 25;
@@ -203,17 +204,14 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     pairAfter: previous?.capped ? previous.pairAfter : null,
     windowEnd: previous?.capped ? previous.windowEnd : timestamp,
   };
+  const unavailable = () => run.llm === "unavailable";
   const judgeBatch = async <T>(
     instruction: string,
     data: unknown[],
     schema: z.ZodType<T>,
   ) => {
     const answers = new Map<number, T>();
-    if (
-      !options.llm ||
-      run.llm === "unavailable" ||
-      run.llmCalls >= MAX_LLM_CALLS
-    )
+    if (!options.llm || unavailable() || run.llmCalls >= MAX_LLM_CALLS)
       return answers;
     run.llmCalls++;
     let raw: unknown[];
@@ -246,6 +244,12 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
   let knowledge: KnowledgeStore | undefined;
   let db: DatabaseSync | undefined;
   try {
+    try {
+      await options.llm?.preflight?.();
+    } catch {
+      run.llm = "unavailable";
+      run.failures++;
+    }
     knowledge = new KnowledgeStore(options.databasePath, {
       readOnly: !!options.dryRun,
     });
@@ -254,7 +258,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       timeout: 5000,
     });
     const connection = db;
-    const relations = knowledge;
+    const relations = new KnowledgeStore(connection);
     const plannedRelations = new Set<string>();
     const relation = (
       kind: "duplicates" | "supersedes",
@@ -263,33 +267,55 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     ) => {
       plannedRelations.add(newer.id);
       plannedRelations.add(older.id);
-      if (
-        connection
-          .prepare(
-            "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind=? AND from_id=? AND to_id=?",
-          )
-          .get(newer.scope, kind, newer.id, older.id)
-      )
-        return;
-      if (!options.dryRun) {
-        const saved = relations.relate({
-          version: 1,
-          scope: newer.scope,
-          idempotencyKey: `tidy:${createHash("sha256")
-            .update(JSON.stringify([kind, newer.id, older.id]))
-            .digest("hex")}`,
-          kind,
-          fromId: newer.id,
-          toId: older.id,
-          sourceRefs: [{ sourceId: newer.id }, { sourceId: older.id }],
-          creator:
-            kind === "duplicates"
-              ? { kind: "user", name: "context-tidy" }
-              : { kind: "model", name: model ?? "context-tidy" },
-        });
-        if (saved.duplicate) return;
+      if (!options.dryRun) connection.exec("BEGIN IMMEDIATE");
+      try {
+        if (
+          connection
+            .prepare(
+              "SELECT 1 FROM knowledge_relations WHERE scope=? AND kind=? AND from_id=? AND to_id=?",
+            )
+            .get(newer.scope, kind, newer.id, older.id)
+        )
+          return;
+        // UNION visits every reachable ID once, including malformed cycles.
+        // Check and write under the same lock so concurrent runs cannot close a cycle.
+        if (
+          kind === "duplicates" &&
+          connection
+            .prepare(`
+        WITH RECURSIVE chain(id) AS (
+          VALUES (?) UNION
+          SELECT r.to_id FROM knowledge_relations r JOIN chain c ON r.from_id=c.id
+          WHERE r.scope=? AND r.kind='duplicates'
+        ) SELECT 1 FROM chain WHERE id=?
+        LIMIT 1
+      `)
+            .get(older.id, newer.scope, newer.id)
+        )
+          return;
+        if (!options.dryRun) {
+          const saved = relations.relate({
+            version: 1,
+            scope: newer.scope,
+            idempotencyKey: `tidy:${createHash("sha256")
+              .update(JSON.stringify([kind, newer.id, older.id]))
+              .digest("hex")}`,
+            kind,
+            fromId: newer.id,
+            toId: older.id,
+            sourceRefs: [{ sourceId: newer.id }, { sourceId: older.id }],
+            creator:
+              kind === "duplicates"
+                ? { kind: "user", name: "context-tidy" }
+                : { kind: "model", name: model ?? "context-tidy" },
+          });
+          if (saved.duplicate) return;
+        }
+        if (!options.dryRun) connection.exec("COMMIT");
+        run[kind]++;
+      } finally {
+        if (connection.isTransaction) connection.exec("ROLLBACK");
       }
-      run[kind]++;
     };
     const cursor = run.pairAfter;
     for (const area of areas) {
@@ -318,7 +344,12 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       const canonicals: TidySource[] = [];
       for (const [index, source] of sources.entries()) {
         if (index % 32 === 0) await yieldLoop();
+        if (state.canonical(source.id) !== source.id) {
+          copies.add(source.id);
+          continue;
+        }
         const text = normalize(source.text);
+        if (text.length < MIN_DUPLICATE_LENGTH) continue;
         let canonical = normalized.get(text);
         if (!canonical)
           canonical = canonicals.find(
@@ -335,7 +366,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           canonicals.push(source);
         }
       }
-      if (!options.llm) continue;
+      if (!options.llm || unavailable()) continue;
       run.vectorsMissing += sources.filter(
         (source) =>
           source.text.length <= MAX_FACT_LENGTH && !embeddings.has(source.id),
@@ -405,7 +436,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           const similarity = cosine(embeddings.get(a.id), embeddings.get(b.id));
           if (similarity < SUPERSEDE_COSINE) continue;
           // High-cosine numeric changes rejected by the dedup guards remain candidates.
-          if (run.llm === "unavailable") continue;
+          if (unavailable()) continue;
           if (run.pairs >= MAX_PAIRS || run.llmCalls >= MAX_LLM_CALLS) {
             run.capped = true;
             continue;
@@ -447,7 +478,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           return true;
         });
         for (let offset = 0; offset < eligible.length; offset += BATCH_SIZE) {
-          if (run.llm === "unavailable") break;
+          if (unavailable()) break;
           if (run.llmCalls >= MAX_LLM_CALLS) {
             run.capped = true;
             break;

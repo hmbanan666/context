@@ -7,6 +7,7 @@ import { redactFields } from "./redaction.js";
 export interface Llm {
   processor?: "openai" | "codex";
   model: string;
+  preflight?(): Promise<void>;
   ask(instruction: string, data: unknown): Promise<unknown>;
 }
 export function createLlm(
