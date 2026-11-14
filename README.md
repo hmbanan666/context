@@ -73,10 +73,11 @@ Project catalog and association are implemented
 Nightly tidy also distills one proposed sentence per source revision when a
 processor is configured
 ([ADR 0011](docs/adr/0011-distill-proposed-facts-and-decisions.md)).
-Search with a project id prefers those sentences for the requested dates and
-omits raw sources they already cite
+Search with a project id prefers the weekly journal and those sentences for
+the requested dates and omits raw sources they already cite. The owner writes
+each project's profile with `context project profile`; tidy writes the journal
 ([ADR 0012](docs/adr/0012-project-profile-journal-and-task-pack.md)).
-Profiles, journals, approval and task packs are not implemented. Hard delete
+Approval and task packs are not implemented. Hard delete
 remains [planned](docs/roadmap.md).
 Run `context tidy` once to distill a capped batch, or `context tidy --dry-run`
 to preview it. See [Nightly tidy](docs/deployment.md#nightly-tidy).
@@ -106,9 +107,9 @@ Only these four tools appear in `tools/list`:
 
 | Tool | Purpose |
 | --- | --- |
-| `search` | Find source-grounded context with `query`, optional `scope`, `project`, `k` (1–20), `since`, `until` and `budgetBytes` (2048–65536, default 8192). A project filter ranks distilled facts and decisions ahead of raw sources and omits sources those items cite. `listProjects: true` returns up to 64 project ids and names and does not search. |
+| `search` | Find source-grounded context with `query`, optional `scope`, `project`, `k` (1–20), `since`, `until` and `budgetBytes` (2048–65536, default 8192). A project filter ranks that project's weekly journal and distilled facts and decisions ahead of raw sources and omits sources those items cite. `listProjects: true` returns up to 64 project ids and names and does not search. |
 | `remember` | Save `text` or `file` with optional metadata, optional `project` ids and authenticated-client provenance; supply an `idempotencyKey`. Files use `filename`, `mediaType` and canonical `contentBase64` (UTF-8 `.txt`/`.md`, at most 16 KiB). |
-| `read` | Read a source/material/file or knowledge item by `id` and `scope`, including file bytes, project associations and up to 50 existing relations; reports truncation. |
+| `read` | Read a source, knowledge item, weekly journal or project profile by `id` and `scope`, including file bytes, project associations and up to 50 existing relations; reports truncation. A profile id is `profile:<project id>` and is readable only in the project's home area. |
 | `timeline` | List recent original source records, newest first, with optional `scope`, `project`, `since`, `until` and `limit` (1–20). |
 
 Dates are ISO timestamps with timezone: `since` is inclusive, `until` exclusive.

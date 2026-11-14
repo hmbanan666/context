@@ -45,6 +45,8 @@ export interface TidyOptions {
   embeddingModel?: string;
   distillBatchSize?: number;
   distillCallCap?: number;
+  now?: Date;
+  timeZone?: string;
 }
 export interface TidyRun {
   timestamp: string;
@@ -71,6 +73,7 @@ export interface TidyRun {
   distillCapped: boolean;
   distillAfter: number | null;
   distillStatus: DistillStatus;
+  journals: number;
 }
 async function previousRun(
   path: string,
@@ -209,6 +212,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       ? (previous.distillAfter ?? null)
       : null,
     distillStatus: options.llm ? "completed" : "skipped_not_configured",
+    journals: 0,
   };
   const unavailable = () => run.llm === "unavailable";
   const judgeBatch = async (instruction: string, data: unknown[]) => {
@@ -436,6 +440,13 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       run.failures++;
       run.llm = "unavailable";
     }
+    const journals = knowledge.refreshJournals({
+      areas,
+      now: options.now ?? new Date(),
+      timeZone: options.timeZone ?? (process.env.TZ || "UTC"),
+      dryRun: !!options.dryRun,
+    });
+    run.journals = journals.written;
     if (run.capped || run.failures) run.outcome = "partial";
     else if (!options.dryRun) run.lastSuccessfulAt = timestamp;
   } catch {
@@ -461,7 +472,10 @@ function movable(db: DatabaseSync, id: string) {
       .prepare(
         `SELECT 1 FROM knowledge_items k,json_each(k.source_refs) ref
          WHERE json_extract(ref.value,'$.sourceId')=?
-           AND NOT (k.kind IN ('fact','decision') AND json_extract(k.creator,'$.name')='context-tidy')
+           AND NOT (
+             (k.kind IN ('fact','decision') AND json_extract(k.creator,'$.name')='context-tidy')
+             OR k.kind = 'journal'
+           )
          LIMIT 1`,
       )
       .get(id)

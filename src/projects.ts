@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { identifierSchema, nonblankText, scopeSchema } from "./contracts.js";
+import { installJournalMeta } from "./journal.js";
 
 // ADR 0010. A project is not an area and not a permission. Processor proposals
 // are stored here; approval is a later slice, so a suggestion has no project id.
@@ -97,7 +98,16 @@ export function installProjects(db: DatabaseSync): void {
     ) STRICT;
     CREATE INDEX IF NOT EXISTS project_proposals_record
       ON project_proposals(record_kind, record_id);
+    CREATE TABLE IF NOT EXISTS project_profiles (
+      project_id TEXT PRIMARY KEY NOT NULL,
+      purpose TEXT NOT NULL CHECK(length(purpose) BETWEEN 1 AND 2048),
+      rules TEXT NOT NULL CHECK(length(rules) BETWEEN 1 AND 2048),
+      pinned TEXT NOT NULL CHECK(length(pinned) BETWEEN 2 AND 2048),
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    ) STRICT;
   `);
+  installJournalMeta(db);
 }
 
 function write<T>(db: DatabaseSync, run: () => T): T {
@@ -370,8 +380,10 @@ export function backfillProjects(db: DatabaseSync): ProjectBackfill {
         .get()
     ) {
       for (const row of db
-        .prepare("SELECT id, source_refs FROM knowledge_items")
-        .all() as { id: unknown; source_refs: unknown }[]) {
+        .prepare("SELECT id, kind, source_refs FROM knowledge_items")
+        .all() as { id: unknown; kind: unknown; source_refs: unknown }[]) {
+        // A journal cites sources but is not an import association to rewrite.
+        if (row.kind === "journal") continue;
         let refs: { sourceId?: string }[];
         try {
           const parsed = JSON.parse(String(row.source_refs)) as unknown;
@@ -518,4 +530,207 @@ export function proposeProjectLink(
       new Date().toISOString(),
     );
   });
+}
+
+// ADR 0012. The owner writes the only profile. The processor never does.
+export const profileByteLimit = 2048;
+export const maxPinnedDecisions = 8;
+const pinnedSchema = z
+  .array(identifierSchema)
+  .max(maxPinnedDecisions)
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "Duplicate pinned decision",
+  });
+export interface ProjectProfile {
+  readonly id: string;
+  readonly projectId: string;
+  readonly homeArea: string;
+  readonly purpose: string;
+  readonly rules: string;
+  readonly pinned: readonly string[];
+  readonly inForce: readonly { readonly id: string; readonly text: string }[];
+}
+export class ProfileTooLarge extends Error {
+  constructor() {
+    super("Profile exceeds 2048 UTF-8 bytes");
+    this.name = "ProfileTooLarge";
+  }
+}
+export class InvalidPin extends Error {
+  constructor(readonly id: string) {
+    super(`Pinned id is not a decision in the project home area: ${id}`);
+    this.name = "InvalidPin";
+  }
+}
+export function profileId(projectId: string): string {
+  return `profile:${projectIdSchema.parse(projectId)}`;
+}
+export function profileDocument(
+  purpose: string,
+  rules: string,
+  pinned: readonly string[],
+): string {
+  return [purpose, rules, ...pinned].join("\n");
+}
+function knowledgeReady(db: DatabaseSync): boolean {
+  return !!db
+    .prepare(
+      "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_items'",
+    )
+    .get();
+}
+function assertPinned(
+  db: DatabaseSync,
+  projectId: string,
+  homeArea: string,
+  ids: readonly string[],
+): void {
+  if (!ids.length) return;
+  for (const id of ids) {
+    const found =
+      knowledgeReady(db) &&
+      db
+        .prepare(
+          `SELECT 1 AS ok FROM knowledge_items k
+           WHERE k.id = ? AND k.scope = ? AND k.kind = 'decision'
+             AND EXISTS (
+               SELECT 1 FROM project_associations pa
+               WHERE pa.record_kind = 'knowledge' AND pa.record_id = k.id
+                 AND pa.project_id = ? AND pa.status = 'linked'
+             )`,
+        )
+        .get(id, homeArea, projectId);
+    if (!found) throw new InvalidPin(id);
+  }
+}
+function decisionsInForce(
+  db: DatabaseSync,
+  homeArea: string,
+  ids: readonly string[],
+): { id: string; text: string }[] {
+  if (!ids.length || !knowledgeReady(db)) return [];
+  const inForce: { id: string; text: string }[] = [];
+  for (const id of ids) {
+    const row = db
+      .prepare(
+        `SELECT k.text AS text,
+          COALESCE((SELECT r.status FROM knowledge_reviews r
+            WHERE r.knowledge_id = k.id AND r.scope = k.scope
+            ORDER BY r.rowid DESC LIMIT 1), 'proposed') AS status
+         FROM knowledge_items k
+         WHERE k.id = ? AND k.scope = ? AND k.kind = 'decision'`,
+      )
+      .get(id, homeArea) as { text?: unknown; status?: unknown } | undefined;
+    if (!row || row.status !== "approved") continue;
+    const superseded = db
+      .prepare(
+        `SELECT 1 AS ok FROM knowledge_relations
+         WHERE scope = ? AND kind = 'supersedes' AND to_id = ?`,
+      )
+      .get(homeArea, id);
+    if (superseded) continue;
+    inForce.push({ id, text: String(row.text) });
+  }
+  return inForce;
+}
+function readProfileRow(
+  db: DatabaseSync,
+  projectId: string,
+): ProjectProfile | undefined {
+  const row = db
+    .prepare(
+      `SELECT p.home_area AS homeArea, f.purpose, f.rules, f.pinned
+       FROM project_profiles f JOIN projects p ON p.id = f.project_id
+       WHERE f.project_id = ?`,
+    )
+    .get(projectId) as
+    | {
+        homeArea: string;
+        purpose: string;
+        rules: string;
+        pinned: string;
+      }
+    | undefined;
+  if (!row) return undefined;
+  const pinned = pinnedSchema.parse(JSON.parse(row.pinned));
+  return {
+    id: profileId(projectId),
+    projectId,
+    homeArea: row.homeArea,
+    purpose: row.purpose,
+    rules: row.rules,
+    pinned,
+    inForce: decisionsInForce(db, row.homeArea, pinned),
+  };
+}
+export function setProjectProfile(
+  db: DatabaseSync,
+  input: {
+    projectId: string;
+    purpose: string;
+    rules: string;
+    pinned?: readonly string[];
+  },
+): ProjectProfile {
+  const projectId = projectIdSchema.parse(input.projectId);
+  const purpose = nonblankText(profileByteLimit).parse(input.purpose);
+  const rules = nonblankText(profileByteLimit).parse(input.rules);
+  const pinned = pinnedSchema.parse([...(input.pinned ?? [])]);
+  const document = profileDocument(purpose, rules, pinned);
+  if (Buffer.byteLength(document, "utf8") > profileByteLimit)
+    throw new ProfileTooLarge();
+  return write(db, () => {
+    const home = db
+      .prepare("SELECT home_area AS homeArea FROM projects WHERE id = ?")
+      .get(projectId) as { homeArea?: unknown } | undefined;
+    if (!home) throw new UnknownProject([projectId]);
+    const homeArea = String(home.homeArea);
+    assertPinned(db, projectId, homeArea, pinned);
+    db.prepare(
+      `INSERT INTO project_profiles (project_id, purpose, rules, pinned, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(project_id) DO UPDATE SET
+        purpose = excluded.purpose,
+        rules = excluded.rules,
+        pinned = excluded.pinned,
+        updated_at = excluded.updated_at`,
+    ).run(
+      projectId,
+      purpose,
+      rules,
+      JSON.stringify(pinned),
+      new Date().toISOString(),
+    );
+    const profile = readProfileRow(db, projectId);
+    if (!profile) throw new Error("Missing project profile");
+    return profile;
+  });
+}
+export function getProjectProfile(
+  db: DatabaseSync,
+  projectId: string,
+): ProjectProfile | undefined {
+  const id = projectIdSchema.parse(projectId);
+  if (!projectRow(db, id)) throw new UnknownProject([id]);
+  return readProfileRow(db, id);
+}
+export function clearProjectProfile(db: DatabaseSync, projectId: string): void {
+  const id = projectIdSchema.parse(projectId);
+  write(db, () => {
+    if (!projectRow(db, id)) throw new UnknownProject([id]);
+    db.prepare("DELETE FROM project_profiles WHERE project_id = ?").run(id);
+  });
+}
+export function readProjectProfile(
+  db: DatabaseSync,
+  id: string,
+  scope: string,
+): ProjectProfile | undefined {
+  if (!id.startsWith("profile:")) return undefined;
+  const projectId = projectIdSchema.safeParse(id.slice("profile:".length));
+  if (!projectId.success) return undefined;
+  scopeSchema.parse(scope);
+  const profile = readProfileRow(db, projectId.data);
+  if (!profile || profile.homeArea !== scope) return undefined;
+  return profile;
 }

@@ -34,8 +34,8 @@ function sourceCard(m: Material, matchOffset = 0, supersededBy?: string) {
     excerpt: excerpt(m.source.text, matchOffset),
   };
 }
-function distilledKind(kind: KnowledgeItem["kind"]) {
-  return kind === "fact" || kind === "decision";
+function leadingKind(kind: KnowledgeItem["kind"]) {
+  return kind === "fact" || kind === "decision" || kind === "journal";
 }
 function itemCard(
   k: KnowledgeItem,
@@ -165,7 +165,7 @@ export function buildContextPackage(
       linked("source", m.source.id)
     );
   };
-  const references = (refs: KnowledgeItem["sourceRefs"]) => {
+  const references = (refs: KnowledgeItem["sourceRefs"], dates = true) => {
     const found: Material[] = [];
     for (const ref of refs) {
       const m = material(ref.sourceId);
@@ -178,7 +178,9 @@ export function buildContextPackage(
         reasons.add("invalid_provenance");
         return undefined;
       }
-      if (!eligible(m)) {
+      // A journal cites the week's sources. The week overlap is already applied;
+      // a source dated earlier in that week must not drop the paragraph.
+      if (dates && !eligible(m)) {
         reasons.add("outside_period");
         return undefined;
       }
@@ -205,7 +207,7 @@ export function buildContextPackage(
       const canonical = knowledge.find(state.canonical(k.id), request.scope);
       return canonical &&
         validItem(canonical) &&
-        references(canonical.sourceRefs)
+        references(canonical.sourceRefs, canonical.kind !== "journal")
         ? canonical
         : k;
     });
@@ -258,7 +260,7 @@ export function buildContextPackage(
             k,
             derived.matchOffsets.get(k.id),
             state.superseded.get(k.id),
-            projectId !== undefined && distilledKind(k.kind)
+            projectId !== undefined && leadingKind(k.kind)
               ? k.sourceRefs.map((ref) => {
                   const url = material(ref.sourceId)?.metadata.sourceUri;
                   return url ? { id: ref.sourceId, url } : { id: ref.sourceId };
@@ -297,7 +299,7 @@ export function buildContextPackage(
     return true;
   };
   // Interleave the independently ranked lists; raw BM25 scores are not comparable across indexes.
-  // Project search puts distilled items in tier 0. Journal entries join that tier in slice 4d.
+  // Project search puts journals and distilled items in tier 0, ahead of raw sources.
   const candidates: Array<{
     source?: Material;
     item?: KnowledgeItem;
@@ -312,11 +314,11 @@ export function buildContextPackage(
       candidates.push({ item, rank: i * 2, tier: 0 });
     });
   } else {
-    let distilledRank = 0;
+    let leadingRank = 0;
     let restRank = 0;
     for (const item of derived.items.slice(0, 100)) {
-      if (distilledKind(item.kind))
-        candidates.push({ item, rank: distilledRank++, tier: 0 });
+      if (leadingKind(item.kind))
+        candidates.push({ item, rank: leadingRank++, tier: 0 });
       else candidates.push({ item, rank: restRank++, tier: 1 });
     }
     original.materials.slice(0, 100).forEach((source, i) => {
@@ -356,9 +358,9 @@ export function buildContextPackage(
     }
     const item = candidate.item;
     if (!item || !validItem(item)) continue;
-    const refs = references(item.sourceRefs);
+    const refs = references(item.sourceRefs, item.kind !== "journal");
     if (!refs) continue;
-    const prefer = projectId !== undefined && distilledKind(item.kind);
+    const prefer = projectId !== undefined && leadingKind(item.kind);
     if (add(prefer ? [] : refs, [item]) && prefer)
       for (const source of refs) citedSources.add(source.source.id);
   }
@@ -399,7 +401,7 @@ export function buildContextPackage(
   if (projectId !== undefined) {
     const cited = new Set(
       result.items
-        .filter((item) => distilledKind(item.kind))
+        .filter((item) => leadingKind(item.kind))
         .flatMap((item) => item.sourceIds),
     );
     result.sources = result.sources.filter((source) => !cited.has(source.id));

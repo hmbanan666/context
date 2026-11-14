@@ -217,6 +217,8 @@ history afterward. Pack questions in the project-memory file are skipped. The fr
 paraphrase cases record known lexical misses; improvements are allowed without
 rewriting expectations. On `example.yaml`, hit@1, hit@10 and MRR are 0.75 on
 both the primary and lexical-control paths, with zero isolation violations.
+Slice 4d does not change that score: `example.yaml` has no project journals,
+and the October corpus still has no journal row.
 Exact RU/EN, both inflection questions, the current-fact question and the
 duplicate-only question pass; both paraphrases remain misses.
 The isolation-only question passes and the placeholder is skipped.
@@ -249,8 +251,10 @@ scored. Private questions, including any real "what happened in October on
 project X" query, stay outside Git.
 
 A question with `project` calls `search` and passes the project, dates and
-byte budget. Hits are distilled items first, then raw sources those items do
-not cite. Substring matching uses those excerpts. A forbidden substring
+byte budget. Hits are journal entries and distilled items first, then raw
+sources those items do not cite. The October fixture has no journal entry, so
+`october_on_project` still hits the observatory distilled sentence. Substring
+matching uses those excerpts. A forbidden substring
 anywhere in the returned package fails that question. `expect_truncated` must
 match the package's `truncated` flag when the field is set. Questions without
 `project` still call `context_package` with the question, area, k and a 64 KiB

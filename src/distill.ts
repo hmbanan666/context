@@ -22,7 +22,7 @@ export const DISTILL_CALL_MAX = 12;
 export const DISTILL_BODY_LIMIT = 1500;
 export const DISTILL_CREATOR = "context-tidy";
 export const distillInstruction =
-  'Distill each indexed source into one proposed sentence. Return a JSON array of {"index":number,"kind":"fact"|"decision","text":string,"project":string|null}. Each text is one sentence of at most 400 characters, states what was decided or shipped, and includes every id listed in projects. project is an existing project id that is not already linked, a suggested name for a new project, or null. Do not copy 80 or more contiguous characters from body. You cannot approve an item or write supersedes. Extra fields are ignored.';
+  'Distill each indexed source into one proposed sentence. Return a JSON array of {"index":number,"kind":"fact"|"decision","text":string,"project":string|null}. Each text is one sentence of at most 400 characters, states what was decided or shipped, and includes every id listed in projects. project is an existing project id that is not already linked, a suggested name for a new project, or null. Do not copy 80 or more contiguous characters from body. You cannot approve an item, write supersedes, or write a project profile. Extra fields are ignored.';
 
 export type DistillStatus =
   | "completed"

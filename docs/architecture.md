@@ -121,8 +121,14 @@ Area-wide `search` and `timeline` still omit them. `search` with a project id
 ranks that project's distilled facts and decisions in the requested dates ahead
 of raw sources, labels each with its stored status (`proposed` or `approved`)
 and omits a raw source cited by a returned item (ADR 0012 slice 4c). Optional
-`budgetBytes` overrides the package budget. Profiles, journals, approval and
-task packs are accepted in ADR 0012 and are not implemented.
+`budgetBytes` overrides the package budget. Slice 4d adds an owner-written
+profile (purpose, rules and up to eight pinned decision ids, at most 2048
+UTF-8 bytes) edited only by `context project profile`, and a deterministic
+weekly journal. Tidy refreshes the current and previous ISO weeks in `TZ`
+from that project's distilled items in the home area, without a processor
+call. Search with a project id ranks those journal paragraphs with the
+distilled items. Approval and task packs are accepted in ADR 0012 and are
+not implemented.
 Hard delete remains a later slice. None of that is complete stage 4 acceptance.
 
 Inbox moves are transactional metadata changes. FTS/stemmed rows retain their

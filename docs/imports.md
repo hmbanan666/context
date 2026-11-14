@@ -204,12 +204,15 @@ context project map --repo fictional-owner/observatory --project observatory
 context project unmap --repo fictional-owner/observatory
 context project list
 context project backfill
+context project profile show --id observatory
+context project profile set --id observatory --purpose "Track the fictional dome." --rules "Keep the shutter closed." --pin <decision-id>
+context project profile clear --id observatory
 ```
 
 `create` stores a stable id (1–64 characters, same character rules as an area),
 a display name and one home area. The id does not change when the name does.
-The home area is where a later profile would be readable; it does not grant
-access and it is not the project. `--home` must already be one of
+The home area is where the profile and weekly journal are readable; it does not
+grant access and it is not the project. `--home` must already be one of
 `CONTEXT_AREAS`. Mapping again replaces the project for that `owner/repo`.
 `unmap` removes the mapping. `list` prints every project and mapping as JSON.
 
@@ -228,6 +231,16 @@ associations stay as stored. Run it again after changing a mapping. It prints
 
 `remember` can also attach one to eight existing project ids. That path is
 documented with the MCP tools. Unknown ids are rejected and nothing is saved.
+
+`context project profile set` replaces the one owner-written profile: purpose,
+then rules, then up to eight pinned decision ids. The stored document is those
+fields joined by newlines and must be at most 2048 UTF-8 bytes. A pinned id
+must already be a decision linked to that project in the home area. The
+processor cannot write this document. `show` prints the profile, or
+`{"profile":null}` when none is stored. `clear` removes it. `read` on MCP
+uses the id `profile:<project id>` and returns it only in the home area.
+Decisions in force are the pinned decisions that are already approved and not
+superseded; approving a proposal is a later CLI slice.
 
 ## Verification and release
 

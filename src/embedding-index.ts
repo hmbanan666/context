@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { setImmediate as yieldEventLoop } from "node:timers/promises";
 import { type Embedder, textChunks } from "./embedding-model.js";
+import { knowledgeWindowSql } from "./journal.js";
 import { linkedProjectSql } from "./projects.js";
 import {
   type SearchTable,
@@ -348,23 +349,12 @@ export class EmbeddingIndex {
       conditions.push(
         "COALESCE((SELECT status FROM knowledge_reviews v WHERE v.knowledge_id=r.id AND v.scope=r.scope ORDER BY v.rowid DESC LIMIT 1),'suggested')<>'rejected'",
       );
-      // Area-wide retrieval still omits distilled sentences. Project search ranks them.
+      // Area-wide retrieval still omits distilled sentences and journals.
       if (!input.projectId)
-        conditions.push("r.kind NOT IN ('fact', 'decision')");
-      const invalid = ["s.id IS NULL"];
-      for (const [bound, op] of [
-        [input.from, "<"],
-        [input.until, ">="],
-      ] as const)
-        if (bound) {
-          invalid.push(
-            `source_timestamp(COALESCE(m.created_at,s.captured_at))${op}?`,
-          );
-          params.push(Date.parse(bound));
-        }
-      conditions.push(
-        `NOT EXISTS (SELECT 1 FROM json_each(r.source_refs) ref LEFT JOIN sources s ON s.id=json_extract(ref.value,'$.sourceId') AND s.scope=r.scope LEFT JOIN source_metadata m ON m.source_id=s.id WHERE ${invalid.join(" OR ")})`,
-      );
+        conditions.push("r.kind NOT IN ('fact', 'decision', 'journal')");
+      const window = knowledgeWindowSql(this.#db, "r", input.from, input.until);
+      conditions.push(window.sql);
+      params.push(...window.params);
     }
     if (input.projectId) {
       conditions.push(
