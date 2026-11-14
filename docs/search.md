@@ -10,8 +10,12 @@ without record content and automatically falls back to exact plus stemmed search
 
 Ask through the existing `context_package` MCP tool. Its output fields, provenance,
 source excerpts, date semantics, entry/byte limits and one-hop relations stay the
-same. `recall` retains exact phrase/ID lookup, and `memory_context` retains literal
-keyword filtering and paged timelines. Neither requires model availability.
+same. A stored source that ends in a Cursor pull-request footer
+(`CURSOR_AGENT_PR_BODY` markers and the Open in Web / Open in Cursor badge HTML)
+keeps that text for provenance. The derived FTS, stemmed index, embeddings and
+excerpts use the text with that footer removed. `recall` retains exact phrase/ID
+lookup, and `memory_context` retains literal keyword filtering and paged timelines.
+Neither requires model availability.
 
 ## Recovery and progress
 

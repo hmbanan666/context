@@ -8,6 +8,9 @@ import {
   clipText,
   copiesStoredBody,
   DISTILL_BODY_LIMIT,
+  DISTILL_UNLINKED,
+  distillInstruction,
+  orderDistillSources,
   sourceBody,
 } from "../src/distill.js";
 import { KnowledgeStore } from "../src/knowledge.js";
@@ -385,16 +388,17 @@ test("distillation caps resume from a cursor without duplicating sentences", asy
       },
     };
     const first = await runTidy(options);
-    assert.deepEqual(seen, [["note-0", "note-1"]]);
+    assert.deepEqual(seen, [["note-4", "note-3"]]);
     assert.equal(first.distilled, 2);
     assert.equal(first.distillCalls, 1);
     assert.equal(first.distillCapped, true);
     assert.equal(typeof first.distillAfter, "number");
+    assert.ok(first.distillFrontiers);
     const second = await runTidy(options);
-    assert.deepEqual(seen[1], ["note-2", "note-3"]);
+    assert.deepEqual(seen[1], ["note-2", "note-1"]);
     assert.equal(second.distilled, 2);
     const third = await runTidy(options);
-    assert.deepEqual(seen[2], ["note-4"]);
+    assert.deepEqual(seen[2], ["note-0"]);
     assert.equal(third.distillCapped, false);
     assert.equal(third.distillAfter, null);
     const fourth = await runTidy(options);
@@ -779,5 +783,220 @@ test("an old knowledge table gains fact and decision without dropping reviews", 
     }
   } finally {
     await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
+test("distillation order is round-robin, newest first, and unlinked last", () => {
+  const sources = [
+    { id: "a-old", row: 1, date: "2026-01-01T00:00:00Z", projectKey: "alpha" },
+    { id: "a-new", row: 2, date: "2026-01-03T00:00:00Z", projectKey: "alpha" },
+    { id: "b", row: 3, date: "2026-01-02T00:00:00Z", projectKey: "beta" },
+    { id: "a-rev", row: 4, date: "2026-01-03T00:00:00Z", projectKey: "alpha" },
+    {
+      id: "u-new",
+      row: 5,
+      date: "2026-01-04T00:00:00Z",
+      projectKey: DISTILL_UNLINKED,
+    },
+    {
+      id: "u-old",
+      row: 6,
+      date: "2026-01-01T00:00:00Z",
+      projectKey: DISTILL_UNLINKED,
+    },
+  ];
+  assert.deepEqual(
+    orderDistillSources(sources, {}, 4).map((source) => source.id),
+    ["a-rev", "b", "a-new", "a-old"],
+  );
+  assert.deepEqual(
+    orderDistillSources(sources, {}, 6).map((source) => source.id),
+    ["a-rev", "b", "a-new", "a-old", "u-new", "u-old"],
+  );
+  assert.deepEqual(
+    orderDistillSources(
+      sources,
+      {
+        alpha: { date: "2026-01-03T00:00:00Z", row: 2 },
+        beta: { date: "2026-01-02T00:00:00Z", row: 3 },
+      },
+      4,
+    ).map((source) => source.id),
+    ["a-old", "u-new", "u-old"],
+  );
+});
+
+test("a capped run spreads distillation across projects and retries a reject later", async () => {
+  const f = await open("distill-spread");
+  const seen: string[][] = [];
+  let rejectNew = true;
+  try {
+    f.sources.createProject({
+      id: "alpha",
+      name: "Alpha",
+      homeArea: "personal",
+    });
+    f.sources.createProject({
+      id: "beta",
+      name: "Beta",
+      homeArea: "personal",
+    });
+    const note = (title: string, date: string, project?: string) => {
+      const source = f.sources.captureMaterial({
+        version: 1,
+        scope: "personal",
+        origin: "fixture",
+        idempotencyKey: title,
+        text: `${title} synthetic project note`,
+        metadata: { title, createdAt: date },
+      }).material.source;
+      if (project)
+        f.sources.addClientAssociation("source", source.id, [project]);
+      return source.checksum;
+    };
+    const checksums = [
+      note("alpha-old", "2026-01-01T00:00:00Z", "alpha"),
+      note("alpha-new", "2026-01-03T00:00:00Z", "alpha"),
+      note("beta-only", "2026-01-02T00:00:00Z", "beta"),
+      note("loose-new", "2026-01-04T00:00:00Z"),
+      note("loose-old", "2026-01-01T00:00:00Z"),
+    ];
+    const run = () =>
+      runTidy({
+        databasePath: f.path,
+        areas: ["personal"],
+        distillBatchSize: 2,
+        distillCallCap: 1,
+        llm: {
+          model: "fake",
+          async ask(_instruction: string, data: unknown) {
+            const batch = data as {
+              index: number;
+              title: string | null;
+              projects: string[];
+            }[];
+            seen.push(batch.map((source) => source.title ?? ""));
+            return batch.map((source) => {
+              if (source.title === "alpha-new" && rejectNew)
+                return { index: source.index, text: "missing kind" };
+              const project = source.projects[0] ?? "loose";
+              return {
+                index: source.index,
+                kind: "fact",
+                text: `The ${project} project recorded ${source.title}.`,
+                project: null,
+              };
+            });
+          },
+        },
+      });
+    const first = await run();
+    assert.deepEqual(seen[0], ["alpha-new", "beta-only"]);
+    assert.equal(first.distilled, 1);
+    assert.equal(first.distillRejected, 1);
+    assert.equal(first.distillCapped, true);
+    const second = await run();
+    assert.deepEqual(seen[1], ["alpha-old", "loose-new"]);
+    assert.equal(second.distilled, 2);
+    const third = await run();
+    assert.deepEqual(seen[2], ["loose-old"]);
+    assert.equal(third.distillCapped, false);
+    assert.equal(third.distillFrontiers, null);
+    rejectNew = false;
+    const fourth = await run();
+    assert.deepEqual(seen[3], ["alpha-new"]);
+    assert.equal(fourth.distilled, 1);
+    const fifth = await run();
+    assert.equal(fifth.distillCalls, 0);
+    assert.equal(fifth.distilled, 0);
+    assert.equal(seen.length, 4);
+    const history = await readFile(
+      join(f.directory, "tidy/history.jsonl"),
+      "utf8",
+    );
+    assert.equal(history.includes("synthetic project note"), false);
+    assert.equal(checksums.length, 5);
+  } finally {
+    await f.close();
+  }
+});
+
+test("the fake processor receives a self-contained multilingual prompt and not the PR footer", async () => {
+  const f = await open("distill-prompt");
+  const term = "chatgame";
+  const clause = `В ${term} появилась страница персонажа, чтобы игрок видел прогресс.`;
+  const footer = [
+    "<!-- CURSOR_AGENT_PR_BODY_END -->",
+    '<div><a href="https://cursor.com/agents/bc-fictional/fictionalfooterxyz"><picture><img alt="Open in Web" src="https://cursor.com/assets/images/open-in-web-dark.png"></picture></a>',
+    '<a href="https://cursor.com/background-agent?bcId=bc-fictional"><picture><img alt="Open in Cursor" src="https://cursor.com/assets/images/open-in-cursor-dark.png"></picture></a></div>',
+  ].join("\n");
+  const text = `Страница персонажа\n\n<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\n${clause}\n${footer}`;
+  try {
+    const source = f.sources.importMaterial(
+      {
+        version: 1,
+        text,
+        origin: "import:github",
+        scope: "personal",
+        idempotencyKey: "import",
+        metadata: {
+          type: "document",
+          title: "Страница персонажа",
+          createdAt: "2026-10-04T00:00:00Z",
+        },
+      },
+      {
+        source: "github",
+        externalId: "chatgame-page",
+        kind: "pr",
+        metadata: { repo: "fictional/chatgame" },
+      },
+    ).source;
+    let instruction = "";
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      llm: {
+        model: "fake",
+        async ask(prompt: string, data: unknown) {
+          instruction = prompt;
+          const body = (data as { body: string }[])[0]?.body ?? "";
+          assert.equal(body.includes(term), true);
+          assert.equal(body.includes("страница персонажа"), true);
+          assert.equal(body.includes("fictionalfooterxyz"), false);
+          assert.equal(body.includes("Open in Cursor"), false);
+          assert.equal(body.includes("CURSOR_AGENT_PR_BODY"), false);
+          return [
+            {
+              index: 0,
+              kind: "fact",
+              text: `В ${term} добавлена страница персонажа, чтобы игрок видел свой прогресс.`,
+              project: null,
+            },
+          ];
+        },
+      },
+    });
+    assert.equal(instruction, distillInstruction);
+    for (const phrase of [
+      "self-contained",
+      "what changed",
+      "why or the impact",
+      "product and project terms",
+      "dominant language",
+      "Russian source",
+      "400 characters",
+      "80 or more contiguous",
+    ])
+      assert.equal(instruction.includes(phrase), true, phrase);
+    assert.equal(run.distilled, 1);
+    assert.equal(f.knowledge.list("personal", 5)[0]?.text.includes(term), true);
+    assert.equal(f.sources.find(source.id, "personal")?.text, text);
+    assert.equal(
+      f.sources.find(source.id, "personal")?.checksum,
+      source.checksum,
+    );
+  } finally {
+    await f.close();
   }
 });

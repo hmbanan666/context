@@ -13,6 +13,7 @@ import {
 import { protectMcp } from "../src/auth.js";
 import { importJsonl } from "../src/imports.js";
 import { KnowledgeStore } from "../src/knowledge.js";
+import { normalizeRepositoryName } from "../src/projects.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
 import { fixtureAuth, type ClientGrants } from "./fixtures/auth.js";
@@ -666,6 +667,155 @@ test("backfill replaces configured associations and keeps client and proposed li
     );
   } finally {
     knowledge.close();
+    sources.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("repository normalization collapses GitHub forms and keeps other strings", () => {
+  for (const input of [
+    "https://github.com/Owner/Repo.git",
+    "https://github.com/Owner/Repo.git/",
+    "http://www.github.com/Owner/Repo/",
+    "git@github.com:Owner/Repo.git",
+    "ssh://git@github.com/Owner/Repo.git",
+    "Owner/Repo",
+    "owner/repo",
+  ])
+    assert.equal(normalizeRepositoryName(input), "owner/repo", input);
+  assert.equal(
+    normalizeRepositoryName("https://example.org/fictional.git"),
+    undefined,
+  );
+  assert.equal(
+    normalizeRepositoryName("https://github.com/owner/repo/pull/1"),
+    undefined,
+  );
+  assert.equal(normalizeRepositoryName("not a repo"), undefined);
+});
+
+test("map, import, and backfill match a normalized repository without rewriting the source", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-repo-norm-"));
+  const path = join(directory, "context.db");
+  const sources = new SourceStore(path);
+  try {
+    sources.createProject({
+      id: "observatory",
+      name: "Fictional Observatory",
+      homeArea: area,
+    });
+    assert.throws(() => sources.mapRepository("not a repo", "observatory"));
+    assert.throws(() =>
+      sources.mapRepository("https://example.org/fictional.git", "observatory"),
+    );
+    assert.equal(
+      sources.mapRepository(
+        "https://github.com/Fictional-Owner/Observatory.git/",
+        "observatory",
+      ).repo,
+      "fictional-owner/observatory",
+    );
+    assert.equal(
+      sources.mapRepository(
+        "git@github.com:Fictional-Owner/Observatory.git",
+        "observatory",
+      ).repo,
+      "fictional-owner/observatory",
+    );
+    assert.equal(sources.repositoryMappings().length, 1);
+    const legacy = new DatabaseSync(path);
+    legacy.prepare("DELETE FROM project_repo_mappings").run();
+    legacy
+      .prepare(
+        "INSERT INTO project_repo_mappings (repo, project_id, created_at) VALUES (?, ?, ?)",
+      )
+      .run(
+        "Fictional-Owner/Observatory",
+        "observatory",
+        "2026-01-01T00:00:00Z",
+      );
+    legacy.close();
+    const imported = await importLines(sources, [
+      {
+        ...dome,
+        id: "github:fictional-owner/observatory:pr:9",
+        text: "The fictional observatory shipped a copper dome.",
+        metadata: {
+          repo: "https://github.com/Fictional-Owner/Observatory.git/",
+          number: "9",
+        },
+      },
+    ]);
+    const id = imported[0]?.source_id ?? "";
+    assert.equal(
+      sources.associationsFor("source", id)[0]?.projectId,
+      "observatory",
+    );
+    const material = sources.findMaterial(id, area);
+    assert.equal(
+      material?.import?.metadata.repo,
+      "fictional-owner/observatory",
+    );
+    const text = material?.source.text;
+    const checksum = material?.source.checksum;
+    const db = new DatabaseSync(path);
+    const stored = JSON.parse(
+      String(
+        db
+          .prepare("SELECT provenance FROM source_imports WHERE source_id = ?")
+          .get(id)?.provenance,
+      ),
+    ) as { metadata: { repo: string } };
+    stored.metadata.repo =
+      "https://github.com/Fictional-Owner/Observatory.git/";
+    db.prepare(
+      "UPDATE source_imports SET provenance = ? WHERE source_id = ?",
+    ).run(JSON.stringify(stored), id);
+    db.prepare("DELETE FROM project_associations WHERE record_id = ?").run(id);
+    db.close();
+    assert.equal(sources.backfillProjects().changed > 0, true);
+    assert.equal(
+      sources.associationsFor("source", id)[0]?.projectId,
+      "observatory",
+    );
+    assert.equal(
+      sources.associationsFor("source", id)[0]?.origin,
+      "configured",
+    );
+    assert.equal(sources.find(id, area)?.text, text);
+    assert.equal(sources.find(id, area)?.checksum, checksum);
+    const after = new DatabaseSync(path, { readOnly: true });
+    const provenance = JSON.parse(
+      String(
+        after
+          .prepare("SELECT provenance FROM source_imports WHERE source_id = ?")
+          .get(id)?.provenance,
+      ),
+    ) as { metadata: { repo: string } };
+    after.close();
+    assert.equal(
+      provenance.metadata.repo,
+      "https://github.com/Fictional-Owner/Observatory.git/",
+    );
+    const other = await importLines(
+      sources,
+      [
+        {
+          id: "codex:fictional",
+          text: "A fictional codex note about a non-github checkout.",
+          metadata: { repo: "https://example.org/fictional.git" },
+        },
+      ],
+      "codex",
+    );
+    assert.equal(
+      sources.findMaterial(other[0]?.source_id ?? "", area)?.import?.metadata
+        .repo,
+      "https://example.org/fictional.git",
+    );
+    sources.unmapRepository("git@github.com:fictional-owner/observatory.git");
+    assert.equal(sources.repositoryMappings().length, 0);
+  } finally {
     sources.close();
     await rm(directory, { recursive: true, force: true });
   }

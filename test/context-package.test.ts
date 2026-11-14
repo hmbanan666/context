@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import { buildContextPackage, excerpt } from "../src/context-package.js";
+import { visibleSourceText } from "../src/source-text.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { SourceStore } from "../src/store.js";
 import { openPackageFixture } from "./fixtures/package-client.js";
@@ -414,6 +416,143 @@ test("derived FTS backfills existing knowledge and persists through capture, reo
     knowledge.close();
     sources.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visible source text drops a Cursor pull-request footer and keeps prose", () => {
+  const kept = "The lanternquartz hatch seals in the rain.";
+  const badge =
+    '<div><a href="https://cursor.com/agents/bc-fictional/fictionalfooterxyz"><picture><img alt="Open in Web" src="https://cursor.com/assets/images/open-in-web-dark.png"></picture></a><a href="https://cursor.com/background-agent?bcId=bc-fictional"><picture><img alt="Open in Cursor" src="https://cursor.com/assets/images/open-in-cursor-dark.png"></picture></a></div>';
+  const wrapped = `<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\n${kept}\n<!-- CURSOR_AGENT_PR_BODY_END -->\n${badge}`;
+  assert.equal(visibleSourceText(wrapped), kept);
+  assert.equal(visibleSourceText(`${kept}\n${badge}`), kept);
+  const prose =
+    "The notes say Open in Cursor when the badge is discussed, then continue with the lanternquartz result.";
+  assert.equal(visibleSourceText(prose), prose);
+  assert.equal(visibleSourceText(kept), kept);
+});
+
+test("search excerpts omit a stored Cursor pull-request footer", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-footer-"));
+  const path = join(directory, "db");
+  const kept = "The lanternquartz hatch now seals in the rain.";
+  const text = `Ship the hatch\n\n<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\n${kept}\n<!-- CURSOR_AGENT_PR_BODY_END -->\n<div><a href="https://cursor.com/agents/bc-fictional/fictionalfooterxyz"><picture><img alt="Open in Web" src="https://cursor.com/assets/images/open-in-web-dark.png"></picture></a><a href="https://cursor.com/background-agent?bcId=bc-fictional"><picture><img alt="Open in Cursor" src="https://cursor.com/assets/images/open-in-cursor-dark.png"></picture></a></div>`;
+  const sources = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  try {
+    const saved = sources.capture({
+      version: 1,
+      text,
+      origin: "import:github",
+      scope: "personal",
+      idempotencyKey: "footer",
+    }).source;
+    const ask = (question: string) =>
+      buildContextPackage(sources, knowledge, {
+        version: 1,
+        scope: "personal",
+        question,
+      });
+    const found = ask("lanternquartz");
+    assert.equal(found.sources[0]?.id, saved.id);
+    assert.equal(found.sources[0]?.excerpt.text.includes(kept), true);
+    assert.equal(
+      found.sources[0]?.excerpt.text.includes("fictionalfooterxyz"),
+      false,
+    );
+    assert.equal(
+      found.sources[0]?.excerpt.text.includes("Open in Cursor"),
+      false,
+    );
+    assert.equal(
+      found.sources[0]?.excerpt.text.includes("CURSOR_AGENT_PR_BODY"),
+      false,
+    );
+    assert.equal(ask("fictionalfooterxyz").sources.length, 0);
+    assert.equal(sources.find(saved.id, "personal")?.text, text);
+    assert.equal(sources.find(saved.id, "personal")?.checksum, saved.checksum);
+  } finally {
+    knowledge.close();
+    sources.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an old full-text index drops the footer on open without rewriting the source", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-footer-legacy-"));
+  const path = join(directory, "db");
+  const kept = "The lanternquartz hatch now seals in the rain.";
+  const text = `${kept}\n<!-- CURSOR_AGENT_PR_BODY_END -->\n<div><a href="https://cursor.com/agents/bc-fictional/fictionalfooterxyz"><picture><img alt="Open in Cursor" src="https://cursor.com/assets/images/open-in-cursor-dark.png"></picture></a></div>`;
+  const first = new SourceStore(path);
+  first.close();
+  const legacy = new DatabaseSync(path);
+  legacy.function("context_stem", { deterministic: true }, (value) =>
+    String(value ?? ""),
+  );
+  legacy.function("context_visible_text", { deterministic: true }, (value) =>
+    String(value ?? ""),
+  );
+  const id = "legacy-footer";
+  const checksum = createHash("sha256").update(text).digest("hex");
+  legacy.exec(`
+    DROP TRIGGER IF EXISTS sources_insert;
+    DROP TABLE IF EXISTS sources_fts;
+    CREATE VIRTUAL TABLE sources_fts USING fts5(
+      text, content='sources', content_rowid='rowid'
+    );
+    CREATE TRIGGER sources_insert AFTER INSERT ON sources BEGIN
+      INSERT INTO sources_fts(rowid, text) VALUES (new.rowid, new.text);
+    END;
+  `);
+  legacy
+    .prepare(
+      "INSERT INTO sources (id, text, origin, scope, captured_at, checksum, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      id,
+      text,
+      "import:github",
+      "personal",
+      "2026-10-04T00:00:00Z",
+      checksum,
+      "unreviewed",
+    );
+  legacy.exec("INSERT INTO sources_fts(sources_fts) VALUES('rebuild');");
+  assert.ok(
+    legacy
+      .prepare(
+        "SELECT 1 FROM sources_fts WHERE sources_fts MATCH 'fictionalfooterxyz'",
+      )
+      .get(),
+  );
+  legacy.close();
+  const sources = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  try {
+    const found = buildContextPackage(sources, knowledge, {
+      version: 1,
+      scope: "personal",
+      question: "lanternquartz",
+    });
+    assert.equal(found.sources[0]?.excerpt.text.includes(kept), true);
+    assert.equal(
+      found.sources[0]?.excerpt.text.includes("fictionalfooterxyz"),
+      false,
+    );
+    assert.equal(
+      buildContextPackage(sources, knowledge, {
+        version: 1,
+        scope: "personal",
+        question: "fictionalfooterxyz",
+      }).sources.length,
+      0,
+    );
+    assert.equal(sources.find(id, "personal")?.text, text);
+    assert.equal(sources.find(id, "personal")?.checksum, checksum);
+  } finally {
+    knowledge.close();
+    sources.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

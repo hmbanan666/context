@@ -11,6 +11,7 @@ import {
   DISTILL_CALL_MAX,
   distillationCap,
   distillSources,
+  type DistillFrontiers,
   type DistillStatus,
   relocateDistilledItems,
 } from "./distill.js";
@@ -72,6 +73,7 @@ export interface TidyRun {
   distillRejected: number;
   distillCapped: boolean;
   distillAfter: number | null;
+  distillFrontiers: DistillFrontiers | null;
   distillStatus: DistillStatus;
   journals: number;
 }
@@ -211,6 +213,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     distillAfter: previous?.distillCapped
       ? (previous.distillAfter ?? null)
       : null,
+    distillFrontiers: resumeFrontiers(previous),
     distillStatus: options.llm ? "completed" : "skipped_not_configured",
     journals: 0,
   };
@@ -429,12 +432,14 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       batchSize: distillBatchSize,
       callCap: distillCallCap,
       resumeAfter: run.distillAfter,
+      frontiers: run.distillFrontiers,
     });
     run.distillCalls = distilled.calls;
     run.distilled = distilled.distilled;
     run.distillRejected = distilled.rejected;
     run.distillCapped = distilled.capped;
     run.distillAfter = distilled.after;
+    run.distillFrontiers = distilled.frontiers;
     run.distillStatus = distilled.status;
     if (distilled.becameUnavailable) {
       run.failures++;
@@ -462,6 +467,22 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     await appendFile(history, `${JSON.stringify(run)}\n`, { mode: 0o600 });
   }
   return run;
+}
+function resumeFrontiers(
+  previous: TidyRun | undefined,
+): DistillFrontiers | null {
+  if (!previous?.distillCapped || !previous.distillFrontiers) return null;
+  const frontiers: Record<string, { date: string; row: number }> = {};
+  for (const [key, value] of Object.entries(previous.distillFrontiers)) {
+    if (
+      !value ||
+      typeof value.date !== "string" ||
+      !Number.isInteger(value.row)
+    )
+      continue;
+    frontiers[key] = { date: value.date, row: value.row };
+  }
+  return Object.keys(frontiers).length ? frontiers : null;
 }
 function hasTable(db: DatabaseSync, name: string) {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE name=?").get(name);

@@ -144,6 +144,8 @@ no invented authored timestamp. All output defaults to area `projects`. That
 area is an access boundary, not a project. Project association is an
 understanding-layer link ([ADR 0010](adr/0010-projects-in-the-understanding-layer.md)), not this default.
 The collector writes `metadata.repo` as the repository full name `owner/repo`.
+Import also accepts a GitHub URL for that repository and stores the normalized
+name. See [Project association](#project-association).
 
 Requests are sequential, bounded to an 8 MiB response and 30-second timeout.
 Directories hitting the GitHub contents API's 1000-entry cap report an error rather
@@ -216,17 +218,22 @@ grant access and it is not the project. `--home` must already be one of
 `CONTEXT_AREAS`. Mapping again replaces the project for that `owner/repo`.
 `unmap` removes the mapping. `list` prints every project and mapping as JSON.
 
-Import applies the mapping when `metadata.repo` exactly matches an `owner/repo`
-key. GitHub JSONL uses that field. Any other import does the same when it
-carries `metadata.repo`. An unmapped repository stays unassociated. A repository
+Import applies the mapping when `metadata.repo` is an `owner/repo` name or a
+GitHub URL for that repository (`https://github.com/owner/repo`,
+`git@github.com:owner/repo`, optional `.git`, trailing slash, any case). The
+stored import metadata keeps the lowercase `owner/repo` form. `context project
+map` accepts the same forms and stores that key. A non-GitHub repository string
+is left unchanged. An unmapped repository stays unassociated. A repository
 does not become a project. A skipped retry does not rewrite associations; a new
 revision uses the mapping current at that import. This does not approve claims
 in the source and does not call a processor.
 
 `context project backfill` is idempotent. It replaces configured associations
 on imported sources, and on derived items that cite them, from the current
-mapping and each source's stored import metadata. Client and proposed
-associations stay as stored. Run it again after changing a mapping. It prints
+mapping and each source's stored import metadata. Legacy `metadata.repo` values
+in the forms above match the normalized key. Backfill does not rewrite source
+text or stored provenance. Client and proposed associations stay as stored.
+Run it again after changing a mapping. It prints
 `{"sources":N,"derived":N,"changed":N}`.
 
 `remember` can also attach one to eight existing project ids. That path is

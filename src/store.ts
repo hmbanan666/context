@@ -33,6 +33,7 @@ import {
   installProjects,
   isLinkedToProject,
   linkClientProjects,
+  canonicalRepositoryMetadata,
   linkConfiguredImport,
   linkedProjectSql,
   listProjects,
@@ -53,7 +54,12 @@ import {
 } from "./projects.js";
 import { redact, redactFields } from "./redaction.js";
 import { retrievalRelations } from "./retrieval-relations.js";
-import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
+import {
+  ensureVisibleSourceIndex,
+  installSearchIndex,
+  lexicalCandidates,
+  registerSearchFunctions,
+} from "./search-lexical.js";
 
 export interface SourceInput {
   readonly id: string;
@@ -133,6 +139,7 @@ export class SourceStore {
         },
       );
       if (options.readOnly) return;
+      registerSearchFunctions(this.#database);
       this.#database.exec(`
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS sources (
@@ -160,13 +167,13 @@ export class SourceStore {
             source_id TEXT NOT NULL REFERENCES sources(id),
             PRIMARY KEY (scope, request_key)
           ) STRICT;
-          CREATE VIRTUAL TABLE sources_fts USING fts5(
-            text, content='sources', content_rowid='rowid'
-          );
+          CREATE VIRTUAL TABLE sources_fts USING fts5(text);
           CREATE TRIGGER sources_insert AFTER INSERT ON sources BEGIN
-            INSERT INTO sources_fts(rowid, text) VALUES (new.rowid, new.text);
+            INSERT INTO sources_fts(rowid, text)
+              VALUES (new.rowid, context_visible_text(new.text));
           END;
-          INSERT INTO sources_fts(sources_fts) VALUES ('rebuild');
+          INSERT INTO sources_fts(rowid, text)
+            SELECT rowid, context_visible_text(text) FROM sources;
           PRAGMA user_version = 1;
           COMMIT;
         `);
@@ -201,6 +208,7 @@ export class SourceStore {
       `);
       installProjects(this.#database);
       installSearchIndex(this.#database, "sources");
+      ensureVisibleSourceIndex(this.#database);
     } catch (error) {
       this.#database.close();
       throw error;
@@ -265,6 +273,10 @@ export class SourceStore {
     const request = captureMaterialSchema.parse(
       redactFields(captureMaterialSchema.parse(input)),
     );
+    const imported: ImportProvenance = {
+      ...provenance,
+      metadata: canonicalRepositoryMetadata(provenance.metadata),
+    };
     const metadata = materialMetadata(
       request.metadata,
       request.metadata?.type ?? "note",
@@ -273,16 +285,16 @@ export class SourceStore {
       .update(
         JSON.stringify([
           this.#materialFingerprint("material", request, metadata),
-          provenance.source,
-          provenance.externalId,
-          provenance.kind ?? null,
-          Object.entries(provenance.metadata).sort(([a], [b]) =>
+          imported.source,
+          imported.externalId,
+          imported.kind ?? null,
+          Object.entries(imported.metadata).sort(([a], [b]) =>
             a < b ? -1 : a > b ? 1 : 0,
           ),
         ]),
       )
       .digest("hex");
-    const saved = this.#capture(request, fingerprint, { metadata }, provenance);
+    const saved = this.#capture(request, fingerprint, { metadata }, imported);
     return { ...saved, changed: saved.changed ?? false };
   }
 
