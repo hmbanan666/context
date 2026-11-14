@@ -302,6 +302,9 @@ export class KnowledgeStore {
       installProjects(this.#database);
       this.#database.exec(`
         BEGIN IMMEDIATE;
+        -- Do not rename knowledge_items. Legacy foreign keys
+        -- (knowledge_reviews, historical knowledge_relations, work_authorizations)
+        -- store this table name. SQLite does not rewrite those references.
         CREATE TABLE IF NOT EXISTS knowledge_items (
           id TEXT PRIMARY KEY NOT NULL,
           scope TEXT NOT NULL,
@@ -594,12 +597,10 @@ export class KnowledgeStore {
       throw new Error("Invalid candidate bound");
     if (!input.terms.length && !sourceIds.length)
       return { total: 0, items: [], matchOffsets: new Map<string, number>() };
-    // Slice 4c ranks distilled sentences. Until then they stay out of search.
-    const conditions = [
-      "k.scope = ?",
-      "status <> 'rejected'",
-      "k.kind NOT IN ('fact', 'decision')",
-    ];
+    // Area-wide search keeps its mix and omits distilled sentences.
+    // A project filter includes them so project search can rank them first.
+    const conditions = ["k.scope = ?", "status <> 'rejected'"];
+    if (!input.projectId) conditions.push("k.kind NOT IN ('fact', 'decision')");
     const params: (string | number)[] = [input.scope];
     const invalid = ["s.id IS NULL"];
     const date = "source_timestamp(COALESCE(m.created_at,s.captured_at))";
@@ -619,23 +620,46 @@ export class KnowledgeStore {
       params.push(input.projectId);
     }
     if (input.terms.length) {
-      const found = lexicalCandidates(
-        this.#database,
-        "knowledge_items",
-        `${itemSelection.replace("SELECT k.id", "SELECT k.rowid,k.id")} WHERE ${conditions.join(" AND ")}`,
-        params,
-        input.terms,
-        input.limit,
-        input.vectors,
-      );
-      return {
-        ...found,
-        items: found.ids.map((id) => {
+      const matches = (kindSql: string) =>
+        lexicalCandidates(
+          this.#database,
+          "knowledge_items",
+          `${itemSelection.replace("SELECT k.id", "SELECT k.rowid,k.id")} WHERE ${[...conditions, kindSql].filter(Boolean).join(" AND ")}`,
+          params,
+          input.terms,
+          input.limit,
+          input.vectors,
+        );
+      const materialize = (
+        ids: readonly string[],
+        total: number,
+        matchOffsets: Map<string, number>,
+      ) => ({
+        total,
+        matchOffsets,
+        items: ids.map((id) => {
           const item = this.find(id, input.scope);
           if (!item) throw new Error("Missing knowledge candidate");
           return item;
         }),
-      };
+      });
+      if (!input.projectId) {
+        const found = matches("");
+        return materialize(found.ids, found.total, found.matchOffsets);
+      }
+      // Keep distilled rows inside the candidate cap even when other notes rank higher.
+      const distilled = matches("k.kind IN ('fact', 'decision')");
+      const rest = matches("k.kind NOT IN ('fact', 'decision')");
+      const ids = [...distilled.ids];
+      for (const id of rest.ids) if (!ids.includes(id)) ids.push(id);
+      const matchOffsets = new Map(rest.matchOffsets);
+      for (const [id, offset] of distilled.matchOffsets)
+        matchOffsets.set(id, offset);
+      return materialize(
+        ids.slice(0, input.limit),
+        distilled.total + rest.total,
+        matchOffsets,
+      );
     }
     conditions.push(
       `EXISTS (SELECT 1 FROM json_each(k.source_refs) ref WHERE json_extract(ref.value,'$.sourceId') IN (${sourceIds.map(() => "?").join(",")}))`,
@@ -649,7 +673,7 @@ export class KnowledgeStore {
     );
     const items = this.#database
       .prepare(
-        `${itemSelection} WHERE ${where} ORDER BY k.created_at DESC,k.id LIMIT ?`,
+        `${itemSelection} WHERE ${where} ORDER BY ${input.projectId ? "CASE WHEN k.kind IN ('fact', 'decision') THEN 0 ELSE 1 END, k.created_at DESC, k.id" : "k.created_at DESC, k.id"} LIMIT ?`,
       )
       .all(...params, input.limit)
       .map(decodeItem);

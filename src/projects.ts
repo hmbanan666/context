@@ -53,7 +53,7 @@ export class ProjectExists extends Error {
   }
 }
 
-const columns = { "s.id": "s.id", "k.id": "k.id" } as const;
+const columns = { "s.id": "s.id", "k.id": "k.id", "r.id": "r.id" } as const;
 export function linkedProjectSql(
   kind: ProjectRecordKind,
   column: keyof typeof columns,

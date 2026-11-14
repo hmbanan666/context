@@ -208,18 +208,23 @@ pnpm run check
 pnpm run eval:retrieval
 ```
 
-The synthetic CI command builds a disposable fictional corpus, executes the real
-CLI against [`example.yaml`](../fixtures/evals/example.yaml), checks exact RU/EN
-retrieval and isolation, and prints only numeric results and question IDs. It
-removes the temporary database/history afterward. The frozen inflection and
+The synthetic CI command builds disposable fictional corpora, executes the real
+CLI against [`example.yaml`](../fixtures/evals/example.yaml) and
+[`project-memory.yaml`](../fixtures/evals/project-memory.yaml), checks exact
+RU/EN retrieval, the October project question and isolation, and prints only
+numeric results and question IDs. It removes the temporary databases and
+history afterward. Pack questions in the project-memory file are skipped. The frozen inflection and
 paraphrase cases record known lexical misses; improvements are allowed without
-rewriting expectations. Current synthetic scores are 2/3 (0.666667) for hit@1,
-hit@10 and MRR on both the primary and lexical-control paths, with zero isolation
-violations. Exact RU/EN and both inflection questions pass; both paraphrases
-remain misses. The isolation-only question passes and the placeholder is skipped.
+rewriting expectations. On `example.yaml`, hit@1, hit@10 and MRR are 0.75 on
+both the primary and lexical-control paths, with zero isolation violations.
+Exact RU/EN, both inflection questions, the current-fact question and the
+duplicate-only question pass; both paraphrases remain misses.
+The isolation-only question passes and the placeholder is skipped.
+`october_on_project` scores 1 on its own corpus; the two pack questions are
+skipped.
 
-Execution is sequential, with one bounded question file, bounded MCP packages and
-no corpus copy or worker pool. CLI runs use one local model per process; nightly
+Execution is sequential, with one bounded question file per run, bounded MCP
+packages and no corpus copy or worker pool. CLI runs use one local model per process; nightly
 runs reuse the server model. The CI corpus has no E5 vectors, so it remains
 lexical and explicitly reports semantic unavailable. Regression tests supply
 fake embedders and never download or load model weights. For optional real-model
@@ -233,20 +238,24 @@ corpus, so record corpus changes when interpreting history deltas.
 
 ## Project memory cases
 
-ADRs 0010–0012 accept three public questions for two journeys the current
-harness does not score.
-`context eval run` and `pnpm run eval:retrieval` read
-[`example.yaml`](../fixtures/evals/example.yaml) only. The question schema is a
-strict object, so the fields below are rejected today. The accepted questions
-live in [`project-memory.yaml`](../fixtures/evals/project-memory.yaml). Do not
-point the current CLI or CI at that file. A later slice extends the harness,
-then CI runs the file. Private questions, including any real "what happened in
-October on project X" query, stay outside Git.
+ADRs 0010–0012 accept three public questions.
+`pnpm run eval:retrieval` runs
+[`example.yaml`](../fixtures/evals/example.yaml) and
+[`project-memory.yaml`](../fixtures/evals/project-memory.yaml). The harness
+accepts `project`, `since`, `until`, `budget_bytes`, `forbidden_substrings`
+and `expect_truncated`. `mode: pack` is accepted and skipped until slice 4f,
+so the two pack questions do not fail this slice. `october_on_project` is
+scored. Private questions, including any real "what happened in October on
+project X" query, stay outside Git.
 
-Today's harness calls `context_package` with the question, area, k and a 64 KiB
-budget. It does not pass a project, dates, pack mode or a caller byte budget,
-and it has no forbidden-substring check. Substring matching against source or
-knowledge excerpts stays as defined above once the harness grows.
+A question with `project` calls `search` and passes the project, dates and
+byte budget. Hits are distilled items first, then raw sources those items do
+not cite. Substring matching uses those excerpts. A forbidden substring
+anywhere in the returned package fails that question. `expect_truncated` must
+match the package's `truncated` flag when the field is set. Questions without
+`project` still call `context_package` with the question, area, k and a 64 KiB
+budget. Substring matching against source or knowledge excerpts stays as
+defined above.
 
 The fictional corpus uses area `workshop` and projects `observatory` and
 `notebook`. The October slice is three records in that area:
@@ -271,10 +280,10 @@ question.
 | --- | --- |
 | `project` | Project id. Required for these cases. |
 | `since`, `until` | Inclusive / exclusive ISO timestamps, passed through to search. |
-| `mode` | `pack` selects task-pack retrieval. Omitted means evidence search. |
-| `budget_bytes` | Caller byte budget for pack mode. |
+| `mode` | `pack` selects task-pack retrieval and is skipped until slice 4f. Omitted means evidence search. |
+| `budget_bytes` | Caller byte budget. Pack mode allows 512–65536. Evidence search passes it as `budgetBytes` (2048–65536). |
 | `forbidden_substrings` | Literal case-sensitive phrases that must not appear in the returned package. |
-| `expect_truncated` | The run must report truncation. |
+| `expect_truncated` | When set, the run must report that truncation value. |
 
 `october_on_project` asks what happened in October on the observatory project,
 with `since` `2026-10-01T00:00:00Z` and `until` `2026-11-01T00:00:00Z`. The hit
@@ -284,8 +293,9 @@ is the observatory distilled sentence. `renamed its index` and
 `pack_for_task` asks `Add a shutter interlock to the dome` with
 `budget_bytes: 4096`. The purpose, the pinned shutter decision and the sensor
 fact are required. `raw shutter wiring dump` and `notebook project pins its
-index` are forbidden.
+index` are forbidden. The harness skips this case until slice 4f.
 
 `pack_budget` uses the same task and project with `budget_bytes: 512`. The
 purpose is required, truncation is required, and the pinned decision sentence
-and `raw shutter wiring dump` are forbidden.
+and `raw shutter wiring dump` are forbidden. The harness skips this case until
+slice 4f.
