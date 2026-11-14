@@ -1,5 +1,7 @@
 # Load a project profile and a budgeted task pack
 
+Roadmap slices: profile and journal are 4d, approval is 4e, and pack mode is 4f.
+
 Status: Accepted
 
 Date: 2026-11-14

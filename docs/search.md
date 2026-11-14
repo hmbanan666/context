@@ -288,4 +288,5 @@ of raw sources. Each item is labelled with its stored status, `proposed` or
 item is omitted. `budgetBytes` (2048–65536) overrides the 8192-byte package
 budget. A project filter also ranks that project's weekly journal paragraphs
 for weeks that overlap the requested dates; area-wide search omits them.
-Pack mode is not implemented.
+The owner sets that status with `context project review`; distillation does
+not. Pack mode is not implemented.

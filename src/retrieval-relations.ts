@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { latestReviewStatusSql } from "./review-status.js";
 
 // One scope-indexed relation lookup per result set. Validate both endpoints and
 // provenance in SQL before any ID can affect a card or canonical substitution.
@@ -14,7 +15,7 @@ export function retrievalRelations(db: DatabaseSync, scope: string) {
       .prepare(`WITH readable AS NOT MATERIALIZED (
       SELECT id FROM sources WHERE scope=?
       UNION ALL SELECT k.id FROM knowledge_items k WHERE k.scope=?
-        AND COALESCE((SELECT status FROM knowledge_reviews v WHERE v.knowledge_id=k.id AND v.scope=k.scope ORDER BY v.rowid DESC LIMIT 1),'suggested')<>'rejected'
+        AND ${latestReviewStatusSql("k.id", "k.scope", "suggested")}<>'rejected'
         AND NOT EXISTS (SELECT 1 FROM json_each(k.source_refs) ref WHERE NOT EXISTS
           (SELECT 1 FROM sources s WHERE s.id=json_extract(ref.value,'$.sourceId') AND s.scope=k.scope))
     ) SELECT r.kind,r.from_id,r.to_id FROM knowledge_relations r

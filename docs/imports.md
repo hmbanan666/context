@@ -209,6 +209,10 @@ context project backfill
 context project profile show --id observatory
 context project profile set --id observatory --purpose "Track the fictional dome." --rules "Keep the shutter closed." --pin <decision-id>
 context project profile clear --id observatory
+context project review list --project observatory --kind decision
+context project review approve --id <decision-id>
+context project review approve --project observatory --week 2026-W46
+context project review reject --id <decision-id> --id <other-id>
 ```
 
 `create` stores a stable id (1–64 characters, same character rules as an area),
@@ -247,7 +251,9 @@ processor cannot write this document. `show` prints the profile, or
 `{"profile":null}` when none is stored. `clear` removes it. `read` on MCP
 uses the id `profile:<project id>` and returns it only in the home area.
 Decisions in force are the pinned decisions that are already approved and not
-superseded; approving a proposal is a later CLI slice.
+superseded. `context project review` is the owner CLI that approves or rejects
+a proposed fact, decision, project proposal or proposed pin. See the operator
+note in [deployment](deployment.md#approval).
 
 ## Verification and release
 

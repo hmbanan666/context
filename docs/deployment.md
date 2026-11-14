@@ -274,6 +274,34 @@ such items has no entry. An unchanged item set does not rewrite the paragraph.
 `--dry-run` does not write journals. The history field `journals` counts
 paragraphs written on that run.
 
+### Approval
+
+The owner approves or rejects proposed facts, decisions, processor project
+proposals and proposed profile pins inside the container (or
+`pnpm run context project review ...`). The command uses the same filesystem
+authority as import. It does not call a processor and it does not write a
+supersedes link. `--week` uses the process timezone (`TZ`), the same clock as
+the journal.
+
+```sh
+context project review list --project observatory --kind decision --week 2026-W46
+context project review approve --project observatory --week 2026-W46
+context project review approve --id <proposal-id> --assign lanterns --home projects
+context project review reject --id <id> --id <id>
+```
+
+`list` prints open proposals as JSON. `approve` and `reject` take repeatable
+`--id` values, or `--project` together with `--week`. A suggested project name
+needs `--assign`. The home area defaults to the record's area when that area
+is one of `CONTEXT_AREAS`. Approving a link to an existing project marks the
+association linked. Item status is the latest `knowledge_reviews` row
+(reviewer `owner` and the time). A project-proposal audit is stored there too
+when the proposal is on a knowledge item, and does not by itself approve the
+sentence. A proposal stored only on a source records reviewer and time on that
+row. `search`, `read` and profile `inForce` pick up the new item status
+immediately. The journal paragraph includes the change on the next tidy
+refresh. No fifth MCP tool is added.
+
 The OpenAI-compatible API remains the default (`CONTEXT_PROCESSOR` unset or
 `openai`). Compose forwards the selector and these existing API settings:
 

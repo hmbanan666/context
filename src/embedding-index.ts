@@ -4,6 +4,7 @@ import { setImmediate as yieldEventLoop } from "node:timers/promises";
 import { type Embedder, textChunks } from "./embedding-model.js";
 import { knowledgeWindowSql } from "./journal.js";
 import { linkedProjectSql } from "./projects.js";
+import { latestReviewStatusSql } from "./review-status.js";
 import {
   ensureVisibleSourceIndex,
   registerSearchFunctions,
@@ -356,7 +357,7 @@ export class EmbeddingIndex {
         }
     } else {
       conditions.push(
-        "COALESCE((SELECT status FROM knowledge_reviews v WHERE v.knowledge_id=r.id AND v.scope=r.scope ORDER BY v.rowid DESC LIMIT 1),'suggested')<>'rejected'",
+        `${latestReviewStatusSql("r.id", "r.scope", "suggested")}<>'rejected'`,
       );
       // Area-wide retrieval still omits distilled sentences and journals.
       if (!input.projectId)

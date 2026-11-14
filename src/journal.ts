@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { latestReviewStatusSql } from "./review-status.js";
 
 // ADR 0012. One replaceable paragraph per project and ISO week. Tidy writes it
 // from distilled items only; the processor is not called and cannot approve it.
@@ -150,6 +151,26 @@ export function isoWeek(instant: Date, timeZone: string): IsoWeek {
 export function previousIsoWeek(week: IsoWeek, timeZone: string): IsoWeek {
   return isoWeek(new Date(Date.parse(week.start) - 1), timeZone);
 }
+
+/** Bounds for one ISO week id (`YYYY-Www`) in an IANA timezone. */
+export function isoWeekById(id: string, timeZone: string): IsoWeek {
+  if (!/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/.test(id))
+    throw new Error("Invalid week");
+  const year = Number(id.slice(0, 4));
+  let cursor = isoWeek(new Date(Date.UTC(year, 0, 4, 12)), timeZone);
+  for (let step = 0; step < 80 && cursor.id !== id; step++) {
+    const forward = cursor.id < id;
+    const probe = new Date(
+      Date.parse(forward ? cursor.end : cursor.start) +
+        (forward ? 1 : -1) * 12 * 3_600_000,
+    );
+    const next = isoWeek(probe, timeZone);
+    if (next.id === cursor.id) break;
+    cursor = next;
+  }
+  if (cursor.id !== id) throw new Error("Invalid week");
+  return cursor;
+}
 export function journalId(projectId: string, weekId: string): string {
   return `journal:${projectId}:${weekId}`;
 }
@@ -204,9 +225,7 @@ function weekItems(
          AND k.kind IN ('fact', 'decision')
          AND source_timestamp(k.created_at) >= ?
          AND source_timestamp(k.created_at) < ?
-         AND COALESCE((SELECT r.status FROM knowledge_reviews r
-           WHERE r.knowledge_id = k.id AND r.scope = k.scope
-           ORDER BY r.rowid DESC LIMIT 1), 'proposed') <> 'rejected'
+         AND ${latestReviewStatusSql("k.id", "k.scope", "proposed")} <> 'rejected'
          AND EXISTS (
            SELECT 1 FROM project_associations pa
            WHERE pa.record_kind = 'knowledge' AND pa.record_id = k.id
