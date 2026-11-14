@@ -14,6 +14,7 @@ import {
   UnknownProject,
 } from "./projects.js";
 import { redactFields } from "./redaction.js";
+import { visibleSourceText } from "./source-text.js";
 import { IdempotencyConflict } from "./store.js";
 
 // ADR 0011. Caps are maxima: nightly tidy uses the defaults, tests may lower them.
@@ -21,20 +22,38 @@ export const DISTILL_BATCH_MAX = 8;
 export const DISTILL_CALL_MAX = 12;
 export const DISTILL_BODY_LIMIT = 1500;
 export const DISTILL_CREATOR = "context-tidy";
-export const distillInstruction =
-  'Distill each indexed source into one proposed sentence. Return a JSON array of {"index":number,"kind":"fact"|"decision","text":string,"project":string|null}. Each text is one sentence of at most 400 characters, states what was decided or shipped, and includes every id listed in projects. project is an existing project id that is not already linked, a suggested name for a new project, or null. Do not copy 80 or more contiguous characters from body. You cannot approve an item, write supersedes, or write a project profile. Extra fields are ignored.';
+export const DISTILL_UNLINKED = "*";
+export const distillInstruction = [
+  "Distill each indexed source into one proposed sentence.",
+  'Return a JSON array of {"index":number,"kind":"fact"|"decision","text":string,"project":string|null}.',
+  "Each text is one self-contained sentence of at most 400 characters.",
+  "State what changed, and state why or the impact when the source says so.",
+  "Keep product and project terms as the source writes them; do not replace them with generic words.",
+  "Write in the dominant language of the source: a Russian source yields a Russian sentence.",
+  "Include every id listed in projects.",
+  "project is an existing project id that is not already linked, a suggested name for a new project, or null.",
+  "Do not copy 80 or more contiguous characters from body.",
+  "You cannot approve an item, write supersedes, or write a project profile.",
+  "Extra fields are ignored.",
+].join(" ");
 
 export type DistillStatus =
   | "completed"
   | "capped"
   | "skipped_not_configured"
   | "skipped_unavailable";
+export interface DistillFrontier {
+  readonly date: string;
+  readonly row: number;
+}
+export type DistillFrontiers = Readonly<Record<string, DistillFrontier>>;
 export interface DistillResult {
   calls: number;
   distilled: number;
   rejected: number;
   capped: boolean;
   after: number | null;
+  frontiers: DistillFrontiers | null;
   status: DistillStatus;
   becameUnavailable: boolean;
 }
@@ -47,6 +66,7 @@ interface DistillSource {
   title: string | null;
   url: string | null;
   kind: string | null;
+  projectKey: string;
 }
 const answerSchema = z.object({
   index: z.number().int().nonnegative(),
@@ -83,46 +103,155 @@ export function copiesStoredBody(sentence: string, body: string) {
 function textOrNull(value: unknown) {
   return typeof value === "string" ? value : null;
 }
-function pending(
+interface ScheduledSource {
+  row: number;
+  id: string;
+  date: string;
+  projectKey: string;
+}
+function stamp(value: { date: string; row: number }) {
+  const parsed = Date.parse(value.date);
+  return {
+    time: Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY,
+    row: value.row,
+  };
+}
+function olderThan(
+  source: { date: string; row: number },
+  frontier: { date: string; row: number },
+) {
+  const left = stamp(source);
+  const right = stamp(frontier);
+  if (left.time !== right.time) return left.time < right.time;
+  return left.row < right.row;
+}
+function newerFirst<T extends { date: string; row: number }>(a: T, b: T) {
+  const left = stamp(a);
+  const right = stamp(b);
+  if (left.time !== right.time) return right.time - left.time;
+  return right.row - left.row;
+}
+export function orderDistillSources<
+  T extends { row: number; date: string; projectKey: string },
+>(sources: readonly T[], frontiers: DistillFrontiers, limit: number): T[] {
+  const groups = new Map<string, T[]>();
+  for (const source of sources) {
+    const frontier = frontiers[source.projectKey];
+    if (frontier && !olderThan(source, frontier)) continue;
+    const list = groups.get(source.projectKey) ?? [];
+    list.push(source);
+    groups.set(source.projectKey, list);
+  }
+  for (const list of groups.values()) list.sort(newerFirst);
+  const chosen: T[] = [];
+  const linked = [...groups.keys()]
+    .filter((key) => key !== DISTILL_UNLINKED)
+    .sort();
+  while (chosen.length < limit) {
+    let took = false;
+    for (const key of linked) {
+      if (chosen.length >= limit) break;
+      const next = groups.get(key)?.shift();
+      if (!next) continue;
+      chosen.push(next);
+      took = true;
+    }
+    if (!took) break;
+  }
+  const unlinked = groups.get(DISTILL_UNLINKED) ?? [];
+  while (chosen.length < limit && unlinked.length) {
+    const next = unlinked.shift();
+    if (next) chosen.push(next);
+  }
+  return chosen;
+}
+function noteVisited(
+  frontiers: Record<string, DistillFrontier>,
+  source: ScheduledSource,
+) {
+  const current = frontiers[source.projectKey];
+  if (!current || olderThan(source, current))
+    frontiers[source.projectKey] = { date: source.date, row: source.row };
+}
+function oldestRow(frontiers: Record<string, DistillFrontier>): number | null {
+  const rows = Object.values(frontiers).map((frontier) => frontier.row);
+  return rows.length ? Math.min(...rows) : null;
+}
+function scheduled(
   db: DatabaseSync,
   areas: readonly string[],
-  after: number,
-  limit: number,
-): DistillSource[] {
+): ScheduledSource[] {
   const marks = areas.map(() => "?").join(", ");
   return db
     .prepare(
-      `SELECT s.rowid AS row, s.id, s.text, s.scope,
+      `SELECT s.rowid AS row, s.id,
         COALESCE(m.created_at, s.captured_at) AS date,
-        m.title AS title, m.source_uri AS url,
-        COALESCE(
-          (SELECT json_extract(i.provenance, '$.kind')
-           FROM source_imports i WHERE i.source_id = s.id LIMIT 1),
-          m.type
-        ) AS kind
+        (
+          SELECT MIN(pa.project_id) FROM project_associations pa
+          WHERE pa.record_kind = 'source' AND pa.record_id = s.id
+            AND pa.origin IN ('configured', 'client') AND pa.status = 'linked'
+        ) AS project_id
        FROM sources s
        LEFT JOIN source_metadata m ON m.source_id = s.id
-       WHERE s.scope IN (${marks}) AND s.rowid > ?
+       WHERE s.scope IN (${marks})
          AND NOT EXISTS (
            SELECT 1 FROM knowledge_items k, json_each(k.source_refs) ref
            WHERE k.kind IN ('fact', 'decision')
              AND json_extract(k.creator, '$.name') = ?
              AND json_extract(ref.value, '$.sourceId') = s.id
-         )
-       ORDER BY s.rowid
-       LIMIT ?`,
+         )`,
     )
-    .all(...areas, after, DISTILL_CREATOR, limit)
+    .all(...areas, DISTILL_CREATOR)
     .map((row) => ({
       row: Number(row.row),
       id: String(row.id),
+      date: String(row.date),
+      projectKey:
+        row.project_id == null ? DISTILL_UNLINKED : String(row.project_id),
+    }));
+}
+function takeSources(
+  db: DatabaseSync,
+  areas: readonly string[],
+  frontiers: DistillFrontiers,
+  limit: number,
+): DistillSource[] {
+  const chosen = orderDistillSources(scheduled(db, areas), frontiers, limit);
+  if (!chosen.length) return [];
+  const marks = chosen.map(() => "?").join(", ");
+  const loaded = new Map(
+    db
+      .prepare(
+        `SELECT s.rowid AS row, s.id, s.text, s.scope,
+          COALESCE(m.created_at, s.captured_at) AS date,
+          m.title AS title, m.source_uri AS url,
+          COALESCE(
+            (SELECT json_extract(i.provenance, '$.kind')
+             FROM source_imports i WHERE i.source_id = s.id LIMIT 1),
+            m.type
+          ) AS kind
+         FROM sources s
+         LEFT JOIN source_metadata m ON m.source_id = s.id
+         WHERE s.id IN (${marks})`,
+      )
+      .all(...chosen.map((source) => source.id))
+      .map((row) => [String(row.id), row] as const),
+  );
+  return chosen.map((source) => {
+    const row = loaded.get(source.id);
+    if (!row) throw new Error("Missing distillation source");
+    return {
+      row: source.row,
+      id: source.id,
       text: String(row.text),
       scope: String(row.scope),
-      date: String(row.date),
+      date: source.date,
       title: textOrNull(row.title),
       url: textOrNull(row.url),
       kind: textOrNull(row.kind),
-    }));
+      projectKey: source.projectKey,
+    };
+  });
 }
 function linkedIds(db: DatabaseSync, sourceId: string) {
   return (
@@ -188,6 +317,7 @@ export async function distillSources(input: {
   batchSize: number;
   callCap: number;
   resumeAfter: number | null;
+  frontiers: DistillFrontiers | null;
 }): Promise<DistillResult> {
   const result: DistillResult = {
     calls: 0,
@@ -195,6 +325,7 @@ export async function distillSources(input: {
     rejected: 0,
     capped: false,
     after: null,
+    frontiers: null,
     status: "completed",
     becameUnavailable: false,
   };
@@ -204,14 +335,39 @@ export async function distillSources(input: {
   }
   if (input.unavailable) {
     result.status = "skipped_unavailable";
-    result.capped = input.resumeAfter != null;
+    result.capped = input.frontiers != null || input.resumeAfter != null;
     result.after = input.resumeAfter;
+    result.frontiers = input.frontiers;
     return result;
   }
-  let cursor = input.resumeAfter ?? 0;
+  const frontiers: Record<string, DistillFrontier> = {
+    ...input.frontiers,
+  };
   const sentence = nonblankText(400);
+  const publish = (failed: boolean) => {
+    if (failed) {
+      const progressed = Object.keys(frontiers).length > 0;
+      result.becameUnavailable = true;
+      result.status = "skipped_unavailable";
+      result.capped = progressed;
+      result.after = progressed ? oldestRow(frontiers) : null;
+      result.frontiers = progressed ? frontiers : null;
+      return result;
+    }
+    const more = takeSources(input.db, input.areas, frontiers, 1);
+    result.capped = more.length > 0;
+    result.after = result.capped ? oldestRow(frontiers) : null;
+    result.frontiers = result.capped ? frontiers : null;
+    result.status = result.capped ? "capped" : "completed";
+    return result;
+  };
   while (result.calls < input.callCap) {
-    const batch = pending(input.db, input.areas, cursor, input.batchSize);
+    const batch = takeSources(
+      input.db,
+      input.areas,
+      frontiers,
+      input.batchSize,
+    );
     if (!batch.length) break;
     result.calls++;
     let raw: unknown;
@@ -227,18 +383,14 @@ export async function distillSources(input: {
             date: source.date,
             kind: source.kind,
             body: clipText(
-              sourceBody(source.text, source.title),
+              visibleSourceText(sourceBody(source.text, source.title)),
               DISTILL_BODY_LIMIT,
             ),
           })),
         ),
       );
     } catch {
-      result.becameUnavailable = true;
-      result.status = "skipped_unavailable";
-      result.capped = cursor > 0;
-      result.after = cursor > 0 ? cursor : null;
-      return result;
+      return publish(true);
     }
     const answers = groupedAnswers(raw, batch.length);
     for (const [index, source] of batch.entries()) {
@@ -297,13 +449,9 @@ export async function distillSources(input: {
         throw error;
       }
     }
-    cursor = batch.at(-1)?.row ?? cursor;
+    for (const source of batch) noteVisited(frontiers, source);
   }
-  const more = pending(input.db, input.areas, cursor, 1);
-  result.capped = more.length > 0;
-  result.after = result.capped ? cursor : null;
-  result.status = result.capped ? "capped" : "completed";
-  return result;
+  return publish(false);
 }
 
 export function relocateDistilledItems(

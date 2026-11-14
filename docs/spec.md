@@ -142,8 +142,11 @@ task packs are not implemented.
 
 - A project is an understanding-layer entity with a stable id and one home
   area. It is not an area and not a permission. Association comes from an owner
-  `owner/repo` mapping (`metadata.repo` on import; `context project backfill`
-  rewrites configured links), from an optional `project` field on `remember`,
+  `owner/repo` mapping. Import and `context project map` normalize a GitHub
+  URL, `git@github.com:owner/repo`, a trailing slash, `.git`, and letter case
+  to lowercase `owner/repo`. `context project backfill` matches those forms,
+  including already stored provenance, and does not rewrite source text.
+  Association also comes from an optional `project` field on `remember`,
   or from a processor proposal stored with no usable id until a later approval
   slice. Unknown ids on `remember` are rejected. Proposals do not affect
   retrieval. Association is not permission.
@@ -153,8 +156,11 @@ task packs are not implemented.
   origin and status. The catalog is not the project profile.
 - The configured processor distills a source revision into one proposed sentence
   (`fact` or `decision`) with its project, date and source link. GitHub pull
-  requests remain archive evidence; the sentence states what was decided or
-  shipped. Nightly calls are batched and capped, separately from inbox sorting.
+  requests remain archive evidence; the sentence states what changed and, when
+  the source says so, why. Nightly calls are batched and capped, separately
+  from inbox sorting. Each run spreads that cap across projects: round-robin
+  by project, newest revision first within a project, and unlinked sources
+  after linked ones.
   Capture does not wait. Slice 4b stores each sentence with status `proposed`.
   `read` returns it by id. Area-wide `search` and `timeline` omit these
   sentences, so that mix of raw results stays as it is. With a `project`

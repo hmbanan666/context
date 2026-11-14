@@ -114,9 +114,16 @@ backfill` write configured links, `remember` can attach client links, and
 without a usable id; approval is not implemented. Distillation (ADR 0011) writes
 one proposed `fact` or `decision` per source revision that does not already have
 one, copying configured and client project links and storing any other model
-project string as a proposal. Calls are capped separately from inbox sorting and
-resume from a cursor. Sentences that copy 80 contiguous characters of the stored
-body are rejected and stay pending. Proposed sentences are readable by id.
+project string as a proposal. Calls are capped separately from inbox sorting.
+Each run spreads the cap across projects (round-robin, newest revision first
+inside a project, unlinked sources last) and resumes that pass from a cursor.
+The prompt asks for one self-contained sentence in the source's dominant
+language, naming the change and its impact when the source states it, and
+keeping product terms. Sentences that copy 80 contiguous characters of the stored
+body are rejected and stay pending. Search indexes and excerpts omit a trailing
+Cursor pull-request footer; the stored source text is unchanged. Repository
+mappings match a normalized `owner/repo`, including GitHub URL forms already
+stored on a source. Proposed sentences are readable by id.
 Area-wide `search` and `timeline` still omit them. `search` with a project id
 ranks that project's distilled facts and decisions in the requested dates ahead
 of raw sources, labels each with its stored status (`proposed` or `approved`)

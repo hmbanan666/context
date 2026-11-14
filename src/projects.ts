@@ -12,6 +12,58 @@ export const projectNameSchema = nonblankText(128);
 export const repositoryNameSchema = z
   .string()
   .regex(/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/);
+const repositoryPart = /^[A-Za-z0-9._-]{1,100}$/u;
+
+// Match key for owner/repo. GitHub web, ssh, and git@ forms collapse to the
+// lowercase full name. Anything else (a non-GitHub URL, an extra path) is left
+// for the caller to keep unchanged. This does not rewrite stored source text.
+export function normalizeRepositoryName(input: string): string | undefined {
+  let value = input.trim().replace(/\/+$/u, "");
+  if (!value) return undefined;
+  const scp = /^git@github\.com:(.+)$/iu.exec(value);
+  if (scp?.[1]) value = scp[1];
+  else if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(value)) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return undefined;
+    }
+    if (url.hostname.toLowerCase().replace(/^www\./u, "") !== "github.com")
+      return undefined;
+    value = url.pathname.replace(/^\/+/u, "");
+  } else if (/^(?:www\.)?github\.com\//iu.test(value))
+    value = value.replace(/^(?:www\.)?github\.com\//iu, "");
+  value = value
+    .replace(/\/+$/u, "")
+    .replace(/\.git$/iu, "")
+    .replace(/\/+$/u, "");
+  const parts = value.split("/");
+  if (parts.length !== 2) return undefined;
+  const owner = parts[0];
+  const repo = parts[1];
+  if (
+    !owner ||
+    !repo ||
+    !repositoryPart.test(owner) ||
+    !repositoryPart.test(repo)
+  )
+    return undefined;
+  const name = `${owner.toLowerCase()}/${repo.toLowerCase()}`;
+  return repositoryNameSchema.safeParse(name).success ? name : undefined;
+}
+export function canonicalRepositoryMetadata(
+  metadata: Record<string, string>,
+): Record<string, string> {
+  const repo = metadata.repo;
+  if (repo === undefined) return metadata;
+  const normalized = normalizeRepositoryName(repo);
+  if (!normalized || normalized === repo) return metadata;
+  return { ...metadata, repo: normalized };
+}
+function repositoryKey(repo: string): string {
+  return normalizeRepositoryName(repo) ?? repo;
+}
 export const rememberProjectsSchema = z
   .array(projectIdSchema)
   .min(1)
@@ -220,34 +272,56 @@ export function listProjects(
   };
 }
 function mappedProject(db: DatabaseSync, repo: string): string | undefined {
+  const key = repositoryKey(repo);
   const row = db
     .prepare(
       `SELECT m.project_id AS projectId FROM project_repo_mappings m
-       JOIN projects p ON p.id = m.project_id WHERE m.repo = ?`,
+       JOIN projects p ON p.id = m.project_id
+       WHERE lower(m.repo) = lower(?)
+       ORDER BY CASE WHEN m.repo = ? THEN 0 ELSE 1 END, m.repo
+       LIMIT 1`,
     )
-    .get(repo) as { projectId?: unknown } | undefined;
+    .get(key, key) as { projectId?: unknown } | undefined;
   return row ? String(row.projectId) : undefined;
+}
+function requireRepository(repo: string): string {
+  const fullName = normalizeRepositoryName(repo);
+  if (fullName) return fullName;
+  repositoryNameSchema.parse(repo);
+  throw new Error("Invalid repository");
 }
 export function mapRepository(
   db: DatabaseSync,
   repo: string,
   projectId: string,
 ): RepositoryMapping {
-  const fullName = repositoryNameSchema.parse(repo);
+  const fullName = requireRepository(repo);
   const id = projectIdSchema.parse(projectId);
   return write(db, () => {
     if (!projectRow(db, id)) throw new UnknownProject([id]);
+    const existing = db
+      .prepare(
+        `SELECT created_at FROM project_repo_mappings
+         WHERE lower(repo) = ? ORDER BY created_at LIMIT 1`,
+      )
+      .get(fullName) as { created_at?: unknown } | undefined;
+    const created =
+      typeof existing?.created_at === "string"
+        ? existing.created_at
+        : new Date().toISOString();
+    db.prepare("DELETE FROM project_repo_mappings WHERE lower(repo) = ?").run(
+      fullName,
+    );
     db.prepare(
-      `INSERT INTO project_repo_mappings (repo, project_id, created_at) VALUES (?, ?, ?)
-       ON CONFLICT(repo) DO UPDATE SET project_id = excluded.project_id`,
-    ).run(fullName, id, new Date().toISOString());
+      "INSERT INTO project_repo_mappings (repo, project_id, created_at) VALUES (?, ?, ?)",
+    ).run(fullName, id, created);
     return { repo: fullName, projectId: id };
   });
 }
 export function unmapRepository(db: DatabaseSync, repo: string): void {
-  const fullName = repositoryNameSchema.parse(repo);
+  const fullName = requireRepository(repo);
   write(db, () => {
-    db.prepare("DELETE FROM project_repo_mappings WHERE repo = ?").run(
+    db.prepare("DELETE FROM project_repo_mappings WHERE lower(repo) = ?").run(
       fullName,
     );
   });
@@ -303,7 +377,7 @@ export function linkConfiguredImport(
   metadata: Record<string, string>,
 ): void {
   const projectId = metadata.repo
-    ? mappedProject(db, metadata.repo)
+    ? mappedProject(db, repositoryKey(metadata.repo))
     : undefined;
   if (!projectId) return;
   insertLinks(db, "source", sourceId, [projectId], "configured");
@@ -360,7 +434,8 @@ export function backfillProjects(db: DatabaseSync): ProjectBackfill {
         continue;
       }
       const id = String(row.source_id);
-      const repo = metadata?.repo || undefined;
+      const raw = metadata?.repo || undefined;
+      const repo = raw ? repositoryKey(raw) : undefined;
       repos.set(id, repos.get(id) || repo);
     }
     let changed = 0;

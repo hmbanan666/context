@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { newStemmer } from "snowball-stemmers-js";
 import { ftsMatchOffset, ftsTerms } from "./package-query.js";
+import { visibleSourceText } from "./source-text.js";
 
 const english = newStemmer("english");
 const russian = newStemmer("russian");
@@ -22,12 +23,25 @@ export interface VectorHit {
   offset: number;
 }
 
+const searchFunctions = new WeakSet<DatabaseSync>();
+export function registerSearchFunctions(db: DatabaseSync): void {
+  if (searchFunctions.has(db)) return;
+  searchFunctions.add(db);
+  db.function("context_stem", { deterministic: true }, (value) =>
+    stemText(String(value ?? "")),
+  );
+  db.function("context_visible_text", { deterministic: true }, (value) =>
+    visibleSourceText(typeof value === "string" ? value : ""),
+  );
+}
+
 // Only derived data is migrated. Every writer registers the deterministic scalar
 // function; SQLite itself still uses the built-in unicode61 FTS5 tokenizer.
 export function installSearchIndex(db: DatabaseSync, table: SearchTable) {
-  db.function("context_stem", { deterministic: true }, (value) =>
-    stemText(String(value)),
-  );
+  registerSearchFunctions(db);
+  const indexed = table === "sources" ? "context_visible_text(text)" : "text";
+  const indexedNew =
+    table === "sources" ? "context_visible_text(new.text)" : "new.text";
   db.exec(`CREATE TABLE IF NOT EXISTS embedding_jobs (
     kind TEXT NOT NULL, record_id TEXT NOT NULL, scope TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued', attempts INTEGER NOT NULL DEFAULT 0,
@@ -50,10 +64,10 @@ export function installSearchIndex(db: DatabaseSync, table: SearchTable) {
         .get(`${table}_stemmed`)
     ) {
       db.exec(`CREATE VIRTUAL TABLE ${table}_stemmed USING fts5(text);
-        INSERT INTO ${table}_stemmed(rowid,text) SELECT rowid,context_stem(text) FROM ${table};
+        INSERT INTO ${table}_stemmed(rowid,text) SELECT rowid,context_stem(${indexed}) FROM ${table};
         INSERT OR IGNORE INTO embedding_jobs(kind,record_id,scope) SELECT '${table}',id,scope FROM ${table};
         CREATE TRIGGER ${table}_search_insert AFTER INSERT ON ${table} BEGIN
-          INSERT INTO ${table}_stemmed(rowid,text) VALUES(new.rowid,context_stem(new.text));
+          INSERT INTO ${table}_stemmed(rowid,text) VALUES(new.rowid,context_stem(${indexedNew}));
           INSERT OR IGNORE INTO embedding_jobs(kind,record_id,scope) VALUES('${table}',new.id,new.scope);
         END;
         CREATE TRIGGER ${table}_search_delete AFTER DELETE ON ${table} BEGIN
@@ -65,6 +79,69 @@ export function installSearchIndex(db: DatabaseSync, table: SearchTable) {
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+const footerSource = `
+  instr(text, 'CURSOR_AGENT_PR_BODY') > 0
+  OR instr(text, 'Open in Cursor') > 0
+  OR instr(text, 'Open in Web') > 0`;
+
+// Existing databases indexed the immutable source, including Cursor PR footers.
+// Rebuild the derived source index from the visible text once. Sources stay put.
+export function ensureVisibleSourceIndex(db: DatabaseSync): void {
+  registerSearchFunctions(db);
+  const schema = (name: string) =>
+    String(
+      db.prepare("SELECT sql FROM sqlite_master WHERE name = ?").get(name)
+        ?.sql ?? "",
+    );
+  const fts = schema("sources_fts");
+  if (
+    fts &&
+    !/content\s*=/iu.test(fts) &&
+    schema("sources_insert").includes("context_visible_text") &&
+    schema("sources_search_insert").includes("context_visible_text")
+  )
+    return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      DROP TRIGGER IF EXISTS sources_insert;
+      DROP TABLE IF EXISTS sources_fts;
+      CREATE VIRTUAL TABLE sources_fts USING fts5(text);
+      INSERT INTO sources_fts(rowid, text)
+        SELECT rowid, context_visible_text(text) FROM sources;
+      CREATE TRIGGER sources_insert AFTER INSERT ON sources BEGIN
+        INSERT INTO sources_fts(rowid, text)
+          VALUES (new.rowid, context_visible_text(new.text));
+      END;
+      DROP TRIGGER IF EXISTS sources_search_insert;
+      CREATE TRIGGER sources_search_insert AFTER INSERT ON sources BEGIN
+        INSERT INTO sources_stemmed(rowid, text)
+          VALUES (new.rowid, context_stem(context_visible_text(new.text)));
+        INSERT OR IGNORE INTO embedding_jobs(kind, record_id, scope)
+          VALUES ('sources', new.id, new.scope);
+      END;
+      DELETE FROM sources_stemmed;
+      INSERT INTO sources_stemmed(rowid, text)
+        SELECT rowid, context_stem(context_visible_text(text)) FROM sources;
+      INSERT OR IGNORE INTO embedding_jobs(kind, record_id, scope)
+        SELECT 'sources', id, scope FROM sources WHERE ${footerSource};
+      UPDATE embedding_jobs
+        SET status = 'queued', attempts = 0, next_at = 0, lease = NULL, error = NULL
+        WHERE kind = 'sources' AND record_id IN (
+          SELECT id FROM sources WHERE ${footerSource}
+        );
+      DELETE FROM embedding_chunks
+        WHERE kind = 'sources' AND record_id IN (
+          SELECT id FROM sources WHERE ${footerSource}
+        );
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
     throw error;
   }
 }
@@ -115,12 +192,16 @@ export function lexicalCandidates(
       .all(...params, queries[i] ?? "", limit);
     return rows.map((row) => {
       const id = String(row.id);
+      const comparable =
+        table === "sources"
+          ? visibleSourceText(String(row.text))
+          : String(row.text);
       if (!offsets.has(id))
         offsets.set(
           id,
           i === 0
-            ? ftsMatchOffset(String(row.text), row.highlighted)
-            : stemOffset(String(row.text), terms),
+            ? ftsMatchOffset(comparable, row.highlighted)
+            : stemOffset(comparable, terms),
         );
       return id;
     });

@@ -7,19 +7,27 @@ import type {
 } from "./knowledge.js";
 import type { Material } from "./materials.js";
 import { contextPackageSchema, questionTerms } from "./package-query.js";
+import { visibleSourceText } from "./source-text.js";
 import type { SourceStore } from "./store.js";
 
-// Offsets are UTF-16 code units into the immutable text; avoid splitting emoji pairs.
+// Offsets are UTF-16 code units into the indexed text; avoid splitting emoji pairs.
+// Source excerpts use the visible text so a stored PR footer is not the excerpt.
 export function excerpt(text: string, matchOffset = 0, maximum = 360) {
-  let start = Math.max(0, matchOffset - 80);
-  if (start > 0 && /[\uDC00-\uDFFF]/u.test(text[start] ?? "")) start--;
-  let end = Math.min(text.length, start + maximum);
-  if (end < text.length && /[\uDC00-\uDFFF]/u.test(text[end] ?? "")) end--;
+  const visible = visibleSourceText(text);
+  const offset =
+    visible === text
+      ? matchOffset
+      : Math.min(Math.max(0, matchOffset), visible.length);
+  let start = Math.max(0, offset - 80);
+  if (start > 0 && /[\uDC00-\uDFFF]/u.test(visible[start] ?? "")) start--;
+  let end = Math.min(visible.length, start + maximum);
+  if (end < visible.length && /[\uDC00-\uDFFF]/u.test(visible[end] ?? ""))
+    end--;
   return {
-    text: text.slice(start, end),
+    text: visible.slice(start, end),
     start,
     end,
-    truncated: start > 0 || end < text.length,
+    truncated: start > 0 || end < visible.length,
   };
 }
 function sourceCard(m: Material, matchOffset = 0, supersededBy?: string) {

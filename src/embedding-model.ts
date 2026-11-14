@@ -65,7 +65,9 @@ export function localEmbedder(
 }
 
 // Small overlapping passages stay below E5's token window and fit source
-// excerpts. Offsets remain UTF-16 positions in the immutable original.
+// excerpts. Offsets are UTF-16 positions in the indexed text. For sources that
+// is the original with a trailing Cursor pull-request footer removed, and the
+// original itself when there is no footer.
 export function textChunks(text: string) {
   const chunks: { text: string; offset: number }[] = [];
   for (let start = 0; start < text.length;) {

@@ -5,10 +5,12 @@ import { type Embedder, textChunks } from "./embedding-model.js";
 import { knowledgeWindowSql } from "./journal.js";
 import { linkedProjectSql } from "./projects.js";
 import {
+  ensureVisibleSourceIndex,
+  registerSearchFunctions,
   type SearchTable,
-  stemText,
   type VectorHit,
 } from "./search-lexical.js";
+import { visibleSourceText } from "./source-text.js";
 
 const MAX_CHUNKS = 50_000;
 // Calibrated on the private RU/EN corpus (see docs/search.md).
@@ -51,9 +53,7 @@ export class EmbeddingIndex {
     this.#db.function("source_timestamp", { deterministic: true }, (value) =>
       typeof value === "string" ? Date.parse(value) : null,
     );
-    this.#db.function("context_stem", { deterministic: true }, (value) =>
-      stemText(String(value)),
-    );
+    registerSearchFunctions(this.#db);
     this.#embedder = embedder;
   }
 
@@ -145,13 +145,19 @@ export class EmbeddingIndex {
   }
 
   rebuild() {
+    ensureVisibleSourceIndex(this.#db);
     this.#db.exec("BEGIN IMMEDIATE");
     try {
-      for (const table of ["sources", "knowledge_items"] as const) {
-        this.#db.exec(`INSERT INTO ${table}_fts(${table}_fts) VALUES('rebuild');
-          DELETE FROM ${table}_stemmed;
-          INSERT INTO ${table}_stemmed(rowid,text) SELECT rowid,context_stem(text) FROM ${table};`);
-      }
+      this.#db
+        .exec(`INSERT INTO knowledge_items_fts(knowledge_items_fts) VALUES('rebuild');
+        DELETE FROM knowledge_items_stemmed;
+        INSERT INTO knowledge_items_stemmed(rowid,text) SELECT rowid,context_stem(text) FROM knowledge_items;
+        DELETE FROM sources_fts;
+        INSERT INTO sources_fts(rowid, text)
+          SELECT rowid, context_visible_text(text) FROM sources;
+        DELETE FROM sources_stemmed;
+        INSERT INTO sources_stemmed(rowid,text)
+          SELECT rowid, context_stem(context_visible_text(text)) FROM sources;`);
       this.#db.exec(`DELETE FROM embedding_chunks; DELETE FROM embedding_jobs;
         INSERT INTO embedding_jobs(kind,record_id,scope) SELECT 'sources',id,scope FROM sources;
         INSERT INTO embedding_jobs(kind,record_id,scope) SELECT 'knowledge_items',id,scope FROM knowledge_items;
@@ -187,7 +193,10 @@ export class EmbeddingIndex {
         .prepare(`SELECT text FROM ${table} WHERE id=? AND scope=?`)
         .get(String(job.record_id), String(job.scope));
       if (!record) throw new Error("Missing embedding record");
-      const chunks = textChunks(String(record.text));
+      const raw = String(record.text);
+      const chunks = textChunks(
+        table === "sources" ? visibleSourceText(raw) : raw,
+      );
       const vectors: Float32Array[] = [];
       for (const chunk of chunks) {
         vectors.push(await this.#embed(chunk.text, "passage"));

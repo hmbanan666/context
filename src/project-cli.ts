@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { ZodError } from "zod";
 import { scopeSchema } from "./contracts.js";
+import { normalizeRepositoryName } from "./projects.js";
 import { SourceStore } from "./store.js";
 
 const usage =
@@ -113,7 +114,10 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
         const repo = text(values.repo);
         if (!repo) throw new Error(usage);
         store.unmapRepository(repo);
-        emit({ repo, mapped: false });
+        emit({
+          repo: normalizeRepositoryName(repo) ?? repo,
+          mapped: false,
+        });
         return;
       }
       if (action === "backfill") {
