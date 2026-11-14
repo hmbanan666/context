@@ -16,4 +16,5 @@ A later ADR narrows an earlier one only where this index says so.
 | [0009](0009-nightly-off-host-backups.md) | Accepted | Nightly SQLite backups with an optional off-host SFTP or S3 copy. | none |
 | [0010](0010-projects-in-the-understanding-layer.md) | Accepted | Projects are understanding-layer entities with configured, client and proposed associations. | [0011](0011-distill-proposed-facts-and-decisions.md) stores processor proposals; [0012](0012-project-profile-journal-and-task-pack.md) adds profile, journal and pack on the catalog |
 | [0011](0011-distill-proposed-facts-and-decisions.md) | Accepted | Nightly tidy distills short proposed facts and decisions and never writes supersession. | none |
-| [0012](0012-project-profile-journal-and-task-pack.md) | Accepted | Load one project's profile, journal and budgeted task pack through `search`. | none |
+| [0012](0012-project-profile-journal-and-task-pack.md) | Accepted | Load one project's profile, journal and budgeted task pack through `search`. | [0013](0013-rank-the-task-pack-by-the-query.md) — pack ranking, the relevance floor, and the source share |
+| [0013](0013-rank-the-task-pack-by-the-query.md) | Accepted | Rank a task pack by the query, including proposed decisions, and reserve room for sources. | none |

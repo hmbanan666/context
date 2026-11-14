@@ -476,6 +476,10 @@ test("the public October project question and pack cases pass", async () => {
     assert.equal(question("pack_for_task")?.pass, true);
     assert.equal(question("pack_budget")?.status, "completed");
     assert.equal(question("pack_budget")?.pass, true);
+    assert.equal(question("pack_proposed_decision")?.pass, true);
+    assert.equal(question("pack_proposed_decision")?.outranks_pass, true);
+    assert.equal(question("pack_russian_task")?.pass, true);
+    assert.equal(question("pack_russian_task")?.outranks_pass, true);
     assert.equal(run.metrics.hit_at_k, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });

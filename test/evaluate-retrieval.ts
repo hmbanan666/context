@@ -72,7 +72,12 @@ assert.equal(
   true,
 );
 assert.equal(projectMemory.metrics.hit_at_k, 1);
-for (const id of ["pack_for_task", "pack_budget"])
+for (const id of [
+  "pack_for_task",
+  "pack_budget",
+  "pack_proposed_decision",
+  "pack_russian_task",
+])
   assert.equal(
     projectMemory.questions.find((q) => q.id === id)?.pass,
     true,

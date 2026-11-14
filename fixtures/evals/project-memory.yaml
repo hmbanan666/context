@@ -1,4 +1,4 @@
-# Accepted synthetic cases for ADRs 0010–0012.
+# Accepted synthetic cases for ADRs 0010–0013.
 # Fictional data only. Corpus layout: docs/evals.md.
 questions:
   - id: october_on_project
@@ -43,3 +43,33 @@ questions:
       - raw shutter wiring dump
     expect_truncated: true
     tags: [project, pack, budget]
+  - id: pack_proposed_decision
+    question: Choose a chart timeframe and keep the saved setting
+    areas: [workshop]
+    read_areas: [workshop]
+    mode: pack
+    project: lantern
+    budget_bytes: 4096
+    expected:
+      - substring: The chart timeframe choice keeps the saved setting.
+    outranks:
+      - substring: A chart legend uses blue.
+    forbidden_substrings:
+      - unrelated violet shade
+      - таймфрейма
+    tags: [project, pack, proposed]
+  - id: pack_russian_task
+    question: добавить новый таймфрейм на график
+    areas: [workshop]
+    read_areas: [workshop]
+    mode: pack
+    project: lantern
+    budget_bytes: 4096
+    expected:
+      - substring: Выбор таймфрейма сохраняет настройку графика.
+    outranks:
+      - substring: Графика была обновлена в холле.
+    forbidden_substrings:
+      - unrelated violet shade
+      - chart timeframe choice
+    tags: [project, pack, russian]

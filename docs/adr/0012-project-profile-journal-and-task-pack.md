@@ -77,6 +77,10 @@ section. Period questions use project search with dates, not pack mode.
 is a field on the discovered `search` tool. Hidden `context_package` modes stay
 `search` and `timeline`.
 
+Amended by [ADR 0013](0013-rank-the-task-pack-by-the-query.md): a pack ranks
+proposed and approved decisions and facts by the task, drops rows the query
+does not match, and reserves part of the budget for raw sources.
+
 ## Consequences
 
 A pack does not write prose answers and does not grant rights. Callers convert

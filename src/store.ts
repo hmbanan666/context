@@ -807,6 +807,7 @@ export class SourceStore {
     return {
       total,
       matchOffsets: new Map<string, number>(),
+      scores: new Map<string, number>(),
       materials: rows.map((row) => {
         const material = this.findMaterial(String(row.id), input.scope);
         if (!material) throw new Error("Missing source candidate");

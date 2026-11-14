@@ -38,7 +38,7 @@ approval. ADRs 0010–0012 are the contract; these rows are the order.
 | 4c | Implemented, not deployed. Project search prefers distilled items and omits cited raw sources. | The public October case passes. The other project's sentence and the raw body phrase are absent. Search without `project` stays area-wide. |
 | 4d | Implemented, not deployed. Owner CLI profile (purpose, rules, up to eight pinned decision ids, 2048 UTF-8 bytes) and a deterministic weekly journal in nightly tidy. | A profile over 2048 bytes is rejected. The processor cannot write the profile. A journal cites only that week's distilled items, and a week with none has no entry. |
 | 4e | Implemented, not deployed. Owner CLI `context project review` lists proposed facts, decisions, processor project proposals and proposed profile pins by project, kind and date, and approves or rejects them by id or by project and ISO week. | A proposed decision is absent from decisions in force. After approval it is present. `remember` with `supersedes` remains the only way to supersede. |
-| 4f | Implemented, not deployed. `search` mode `pack`. | The public pack cases pass. `tools/list` still shows four tools. Omitting `mode` keeps today's evidence search. |
+| 4f | Implemented, not deployed. `search` mode `pack`. ADR 0013 ranks the pack by the task, includes proposed decisions, and reserves source bytes. | The public pack cases pass. `tools/list` still shows four tools. Omitting `mode` keeps today's evidence search. |
 
 Follow-up after the 4a–4d deploy, not a new slice: project search with a project
 id and `since` or `until` includes that window's journals, decisions and facts
