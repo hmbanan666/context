@@ -9,6 +9,7 @@ import {
 import type { PackageSelection } from "./package-query.js";
 import { redactFields } from "./redaction.js";
 import { retrievalRelations } from "./retrieval-relations.js";
+import { installProjects, linkedProjectSql } from "./projects.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { IdempotencyConflict } from "./store.js";
 
@@ -176,6 +177,7 @@ export class KnowledgeStore {
             : null,
       );
       if (options.readOnly) return;
+      installProjects(this.#database);
       this.#database.exec(`
         BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS knowledge_items (
@@ -411,6 +413,10 @@ export class KnowledgeStore {
     conditions.push(
       `NOT EXISTS (SELECT 1 FROM json_each(k.source_refs) ref LEFT JOIN sources s ON s.id=json_extract(ref.value,'$.sourceId') AND s.scope=k.scope LEFT JOIN source_metadata m ON m.source_id=s.id WHERE ${invalid.join(" OR ")})`,
     );
+    if (input.projectId) {
+      conditions.push(linkedProjectSql("knowledge", "k.id"));
+      params.push(input.projectId);
+    }
     if (input.terms.length) {
       const found = lexicalCandidates(
         this.#database,

@@ -3,6 +3,7 @@ import { AuthStore } from "../src/auth-store.js";
 import { readConfig } from "../src/config.js";
 import { evalCommand } from "../src/eval-cli.js";
 import { runIndexCommand } from "../src/index-command.js";
+import { projectCommand } from "../src/project-cli.js";
 import { tidyCommand } from "../src/tidy-cli.js";
 import { runImport } from "./import-jsonl.js";
 
@@ -59,6 +60,10 @@ async function main() {
   }
   if (process.argv[2] === "eval") {
     await evalCommand(process.argv.slice(3), process.env);
+    return;
+  }
+  if (process.argv[2] === "project") {
+    projectCommand(process.argv.slice(3), process.env);
     return;
   }
   const [kind, action, name, ...args] = process.argv.slice(2);
@@ -150,14 +155,21 @@ async function main() {
       return;
     }
     throw new Error(
-      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--expires 90d] | token list|revoke <id>",
+      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--expires 90d] | token list|revoke <id> | project create|rename|list|map|unmap|backfill",
     );
   } finally {
     store.close();
   }
 }
 // Do not serialize raw errors: they may contain credentials or request data.
-void main().catch(() => {
+void main().catch((error: unknown) => {
+  if (process.argv[2] === "project") {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : "Project command failed"}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (process.argv[2] === "import") {
     process.stderr.write(
       '{"type":"error","reason":"import_failed_check_arguments_configuration_or_io"}\n',

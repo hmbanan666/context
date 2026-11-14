@@ -143,6 +143,7 @@ external ID; an edited PR body becomes a revision under the same PR ID. Files ha
 no invented authored timestamp. All output defaults to area `projects`. That
 area is an access boundary, not a project. Project association is an
 understanding-layer link ([ADR 0010](adr/0010-projects-in-the-understanding-layer.md)), not this default.
+The collector writes `metadata.repo` as the repository full name `owner/repo`.
 
 Requests are sequential, bounded to an 8 MiB response and 30-second timeout.
 Directories hitting the GitHub contents API's 1000-entry cap report an error rather
@@ -188,6 +189,45 @@ inspect the counts and delete the temporary export when no longer needed. Import
 stream one bounded line at a time; collectors keep one bounded response/session
 record at a time. No archive is loaded into memory in full. Existing SQLite and
 backup volumes suffice; no runtime memory-limit change is required by design.
+
+## Project association
+
+The owner maps a repository full name to an existing project. The mapping lives
+in the same SQLite database. No new service or environment variable is required.
+Commands use the configured `CONTEXT_DB_PATH` and `CONTEXT_AREAS`, like import,
+and do not need `CONTEXT_PUBLIC_URL`.
+
+```sh
+context project create --id observatory --name "Fictional Observatory" --home projects
+context project rename --id observatory --name "Renamed Observatory"
+context project map --repo fictional-owner/observatory --project observatory
+context project unmap --repo fictional-owner/observatory
+context project list
+context project backfill
+```
+
+`create` stores a stable id (1–64 characters, same character rules as an area),
+a display name and one home area. The id does not change when the name does.
+The home area is where a later profile would be readable; it does not grant
+access and it is not the project. `--home` must already be one of
+`CONTEXT_AREAS`. Mapping again replaces the project for that `owner/repo`.
+`unmap` removes the mapping. `list` prints every project and mapping as JSON.
+
+Import applies the mapping when `metadata.repo` exactly matches an `owner/repo`
+key. GitHub JSONL uses that field. Any other import does the same when it
+carries `metadata.repo`. An unmapped repository stays unassociated. A repository
+does not become a project. A skipped retry does not rewrite associations; a new
+revision uses the mapping current at that import. This does not approve claims
+in the source and does not call a processor.
+
+`context project backfill` is idempotent. It replaces configured associations
+on imported sources, and on derived items that cite them, from the current
+mapping and each source's stored import metadata. Client and proposed
+associations stay as stored. Run it again after changing a mapping. It prints
+`{"sources":N,"derived":N,"changed":N}`.
+
+`remember` can also attach one to eight existing project ids. That path is
+documented with the MCP tools. Unknown ids are rejected and nothing is saved.
 
 ## Verification and release
 

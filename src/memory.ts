@@ -55,6 +55,7 @@ interface MemoryContext {
 export function buildMemoryContext(
   sources: SourceStore,
   input: z.input<typeof memoryContextSchema>,
+  projectId?: string,
 ): MemoryContext {
   const request = memoryContextSchema.parse(input);
   const terms = [
@@ -71,12 +72,17 @@ export function buildMemoryContext(
     ]);
   const selection = createHash("sha256")
     .update(
-      JSON.stringify([
-        request.scope,
-        request.from ?? null,
-        request.until ?? null,
-        terms,
-      ]),
+      JSON.stringify(
+        projectId === undefined
+          ? [request.scope, request.from ?? null, request.until ?? null, terms]
+          : [
+              request.scope,
+              request.from ?? null,
+              request.until ?? null,
+              terms,
+              projectId,
+            ],
+      ),
     )
     .digest("hex");
   let cursor: z.infer<typeof cursorSchema> | undefined;
@@ -98,6 +104,7 @@ export function buildMemoryContext(
     ...(request.from === undefined ? {} : { from: request.from }),
     ...(request.until === undefined ? {} : { until: request.until }),
     ...(cursor ? { snapshot: cursor.snapshot, after: cursor.after } : {}),
+    ...(projectId === undefined ? {} : { projectId }),
     limit: request.limit + 1,
   });
   const continuation = (position: MemoryPosition) =>
