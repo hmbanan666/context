@@ -76,7 +76,7 @@ are also possible through authorized agents via MCP.
     for subsequent owner deletions and revoked credentials before reopening access.
 11. As the owner, I want an architect client to ask what happened on one project
     in a month, and to load a pack for a task, so that it receives that project's
-    profile, decisions in force and recent facts. Raw pull-request bodies from
+    profile and the decisions and facts that match the task. Raw pull-request bodies from
     other projects in the same area stay in the archive.
 
 ## Requirements and implementation decisions
@@ -254,11 +254,17 @@ implemented and not deployed.
   has no journal row, so that case still returns the distilled sentence.
 - A task pack is `search` with `mode: "pack"`, a project and a task query.
   Optional `budgetBytes` is 512–65536 and defaults to 8192. The pack returns
-  the profile, other decisions in force ranked by project search, approved
-  facts newest first, proposed facts newest first, then raw excerpts only for
-  sources not already cited. Pinned decisions are not repeated. Journals are
-  omitted. Whole items and whole profile sentences are kept; if the profile
-  alone exceeds the budget, the response is a prefix of the profile. A header
+  the profile, then proposed and approved decisions and facts ranked by the
+  hybrid project search against the task (ADR 0013). Approved rows get a 1.25
+  score boost. Recency breaks ties. Superseded and rejected rows are omitted.
+  A row the query does not match is omitted rather than used to fill the
+  budget. About 25% of the budget is held for at most two uncited raw sources,
+  and about 15% for at most two journals that match the task (newest weeks
+  first). Unused reserved bytes go back to the ranked items. A source excerpt
+  starts at a sentence boundary. Pinned decisions are not repeated. Proposed
+  decisions are labelled `proposed`. Whole items and whole profile sentences
+  are kept; if the profile alone exceeds the budget, the response is a prefix
+  of the profile. The pack reports `bytesUsed` and `budgetBytes`. A header
   lists what was included or omitted. The server does not measure tokens and
   does not call the processor. No fifth discovered tool is added.
   `context search --mode pack` returns the same pack.
@@ -402,8 +408,9 @@ unverified. Supersession is explicit through `remember` with `supersedes`;
 automatic supersession stays removed. Proposals never become owner approval by
 inference. A project-scoped month question returns that project's distilled
 sentences and does not return other projects' raw pull-request bodies inside
-the budget. A task pack returns the profile, relevant decisions in force and
-recent facts within the caller's byte budget. Public synthetic cases cover both;
+the budget. A task pack returns the profile, task-ranked decisions and facts
+(including proposed decisions) and a reserved share of raw sources within the
+caller's byte budget. Public synthetic cases cover both;
 private questions stay private. Daily sorting respects area policy and ambiguous
 items await owner decisions. Hard delete removes the record and derivations from
 reads, search, history and pending processing; only the tombstone remains. Test

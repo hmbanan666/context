@@ -158,9 +158,12 @@ and a date bound ranks journals, then decisions, then facts in that window
 even when the query does not match them, ahead of uncited raw sources.
 Slice 4e records owner approval in `knowledge_reviews`
 and, for a suggested project name, creates or links the project. Approval
-does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012):
-one budgeted pack with the profile, decisions in force, facts, then uncited
-raw sources. Journals are not in the pack. `context search --mode pack`
+does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012, amended by ADR 0013):
+one budgeted pack with the profile, then decisions and facts ranked by the
+task, including proposed decisions labelled `proposed`. Rows the query does
+not match are left out. About a quarter of the budget is held for at most two
+uncited raw sources, and a smaller share for at most two matching journals.
+The pack reports `bytesUsed` and `budgetBytes`. `context search --mode pack`
 returns the same pack. No fifth MCP tool is added.
 Hard delete remains a later slice. None of that is complete stage 4 acceptance.
 

@@ -157,6 +157,135 @@ export function seedProjectMemoryCorpus(path: string) {
         rules: packRules(),
         pinned: [pinned.id],
       });
+      sources.createProject({
+        id: "lantern",
+        name: "Lantern",
+        homeArea: "workshop",
+      });
+      const timeframe = sources.captureMaterial(
+        {
+          version: 1,
+          scope: "workshop",
+          origin: "synthetic:eval",
+          idempotencyKey: "lantern-timeframe",
+          text: "Early note that led to the chart timeframe rule.",
+          metadata: { createdAt: "2026-01-15T00:00:00Z" },
+        },
+        undefined,
+        ["lantern"],
+      );
+      knowledge.addDistilled({
+        scope: "workshop",
+        sourceId: timeframe.material.source.id,
+        kind: "decision",
+        text: "The chart timeframe choice keeps the saved setting.",
+        createdAt: "2026-01-15T00:00:00Z",
+      });
+      const legend = sources.captureMaterial(
+        {
+          version: 1,
+          scope: "workshop",
+          origin: "synthetic:eval",
+          idempotencyKey: "lantern-legend",
+          text: "A chart legend uses blue ink on the fictional panel.",
+          metadata: { createdAt: "2026-11-20T00:00:00Z" },
+        },
+        undefined,
+        ["lantern"],
+      );
+      knowledge.addDistilled({
+        scope: "workshop",
+        sourceId: legend.material.source.id,
+        kind: "fact",
+        text: "A chart legend uses blue.",
+        createdAt: "2026-11-20T00:00:00Z",
+      });
+      for (let index = 0; index < 8; index++) {
+        const note = sources.captureMaterial(
+          {
+            version: 1,
+            scope: "workshop",
+            origin: "synthetic:eval",
+            idempotencyKey: `lantern-lamp-${index}`,
+            text: `Lamp note ${index} records an unrelated violet shade.`,
+            metadata: {
+              createdAt: `2026-11-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+            },
+          },
+          undefined,
+          ["lantern"],
+        );
+        knowledge.addDistilled({
+          scope: "workshop",
+          sourceId: note.material.source.id,
+          kind: "fact",
+          text: `Lamp note ${index} records an unrelated violet shade.`,
+          createdAt: `2026-11-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+        });
+      }
+      const russian = sources.captureMaterial(
+        {
+          version: 1,
+          scope: "workshop",
+          origin: "synthetic:eval",
+          idempotencyKey: "lantern-russian",
+          text: "Исходная заметка про выбор таймфрейма.",
+          metadata: { createdAt: "2026-02-01T00:00:00Z" },
+        },
+        undefined,
+        ["lantern"],
+      );
+      knowledge.addDistilled({
+        scope: "workshop",
+        sourceId: russian.material.source.id,
+        kind: "decision",
+        text: "Выбор таймфрейма сохраняет настройку графика.",
+        createdAt: "2026-02-01T00:00:00Z",
+      });
+      const duty = sources.captureMaterial(
+        {
+          version: 1,
+          scope: "workshop",
+          origin: "synthetic:eval",
+          idempotencyKey: "lantern-duty",
+          text: "Графика была обновлена в холле.",
+          metadata: { createdAt: "2026-11-21T00:00:00Z" },
+        },
+        undefined,
+        ["lantern"],
+      );
+      knowledge.addDistilled({
+        scope: "workshop",
+        sourceId: duty.material.source.id,
+        kind: "fact",
+        text: "Графика была обновлена в холле.",
+        createdAt: "2026-11-21T00:00:00Z",
+      });
+      const lamps = sources.captureMaterial(
+        {
+          version: 1,
+          scope: "workshop",
+          origin: "synthetic:eval",
+          idempotencyKey: "lantern-lamps-ru",
+          text: "Еженедельная заметка перечисляет цвета ламп.",
+          metadata: { createdAt: "2026-11-22T00:00:00Z" },
+        },
+        undefined,
+        ["lantern"],
+      );
+      knowledge.addDistilled({
+        scope: "workshop",
+        sourceId: lamps.material.source.id,
+        kind: "fact",
+        text: "Еженедельная заметка перечисляет цвета ламп.",
+        createdAt: "2026-11-22T00:00:00Z",
+      });
+      sources.setProfile({
+        projectId: "lantern",
+        purpose: "Track the fictional lantern.",
+        rules: "Keep the fictional notes short.",
+        pinned: [],
+      });
     } finally {
       knowledge.close();
     }

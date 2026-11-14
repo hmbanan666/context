@@ -239,7 +239,7 @@ corpus, so record corpus changes when interpreting history deltas.
 
 ## Project memory cases
 
-ADRs 0010–0012 accept three public questions.
+ADRs 0010–0013 accept the public questions below.
 `pnpm run eval:retrieval` runs
 [`example.yaml`](../fixtures/evals/example.yaml) and
 [`project-memory.yaml`](../fixtures/evals/project-memory.yaml). The harness
@@ -260,8 +260,8 @@ match the package's `truncated` flag when the field is set. Questions without
 budget. Substring matching against source or knowledge excerpts stays as
 defined above.
 
-The fictional corpus uses area `workshop` and projects `observatory` and
-`notebook`. The October slice is three records in that area:
+The fictional corpus uses area `workshop` and projects `observatory`,
+`notebook` and `lantern`. The October slice is three records in that area:
 
 | Record | Project | What retrieval may return |
 | --- | --- | --- |
@@ -301,3 +301,14 @@ index` are forbidden.
 `pack_budget` uses the same task and project with `budget_bytes: 512`. The
 purpose is required, truncation is required, and the pinned decision sentence
 and `raw shutter wiring dump` are forbidden.
+
+`pack_proposed_decision` asks `Choose a chart timeframe and keep the saved
+setting` on project `lantern` with `budget_bytes: 4096`. The expected sentence
+is a proposed decision dated before eight newer unrelated lamp notes. It must
+outrank `A chart legend uses blue.` `unrelated violet shade` and `таймфрейма`
+are forbidden.
+
+`pack_russian_task` asks `добавить новый таймфрейм на график` on the same
+project. The expected sentence is the proposed decision `Выбор таймфрейма
+сохраняет настройку графика.` It must outrank `Графика была обновлена в холле.`
+`unrelated violet shade` and `chart timeframe choice` are forbidden.

@@ -731,28 +731,45 @@ export class KnowledgeStore {
     return { total, items, matchOffsets: new Map<string, number>() };
   }
 
-  // Facts and decisions linked to one project, newest first. Rejected rows
-  // stay out. The caller ranks decisions; this order is the fact order.
-  projectDistilled(
-    scope: string,
-    projectId: string,
-  ): { items: KnowledgeItem[]; truncated: boolean } {
-    scopeSchema.parse(scope);
-    projectIdSchema.parse(projectId);
-    const where = `k.scope = ? AND k.kind IN ('fact', 'decision') AND ${linkedProjectSql("knowledge", "k.id")} AND ${latestReviewStatusSql("k.id", "k.scope", "proposed")} <> 'rejected'`;
-    const params = [scope, projectId];
-    const total = Number(
-      this.#database
-        .prepare(`SELECT count(*) n FROM knowledge_items k WHERE ${where}`)
-        .get(...params)?.n,
+  // Hybrid ranks for one project's facts and decisions together, or for its
+  // journals. Only rows the query matched. Scores are the shared RRF of exact
+  // FTS, stemmed FTS and embedding hits; this method does not sort by date.
+  projectHybrid(input: PackageSelection, group: "memory" | "journal") {
+    if (
+      !Number.isInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > 101 ||
+      !input.projectId ||
+      !input.terms.length
+    )
+      throw new Error("Invalid candidate bound");
+    const conditions = [
+      "k.scope = ?",
+      "status <> 'rejected'",
+      group === "journal"
+        ? "k.kind = 'journal'"
+        : "k.kind IN ('fact', 'decision')",
+    ];
+    const params: (string | number)[] = [input.scope];
+    const window = knowledgeWindowSql(
+      this.#database,
+      "k",
+      input.from,
+      input.until,
     );
-    const items = this.#database
-      .prepare(
-        `${itemSelection} WHERE ${where} ORDER BY k.created_at DESC, k.id ASC LIMIT 100`,
-      )
-      .all(...params)
-      .map(decodeItem);
-    return { items, truncated: total > 100 };
+    conditions.push(window.sql);
+    params.push(...window.params);
+    conditions.push(linkedProjectSql("knowledge", "k.id"));
+    params.push(input.projectId);
+    return lexicalCandidates(
+      this.#database,
+      "knowledge_items",
+      `${itemSelection.replace("SELECT k.id", "SELECT k.rowid,k.id")} WHERE ${conditions.join(" AND ")}`,
+      params,
+      input.terms,
+      input.limit,
+      input.vectors,
+    );
   }
 
   retrievalRelations(scope: string) {

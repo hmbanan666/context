@@ -63,7 +63,8 @@ items. It is not a decision, and it is not the deletion journal that holds tombs
 _Avoid_: source, owner approval, a claim that the week is complete, deletion tombstone.
 
 **Task pack**: A budgeted `search` result for one project and a task: the profile,
-relevant decisions in force and recent facts, preferring distilled items over raw sources.
+then decisions and facts ranked by that task, including proposed decisions, plus a
+reserved share of matching raw sources.
 _Avoid_: a separate tool, an unfiltered recent dump, a generated answer.
 
 **Person**: Someone represented in the owner's context, with source-grounded

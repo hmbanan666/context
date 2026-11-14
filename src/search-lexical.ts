@@ -182,7 +182,7 @@ export function stemOffset(text: string, terms: readonly string[]): number {
 // Each list has already passed area, date and provenance predicates before
 // receiving a rank. RRF never compares BM25 magnitudes across indexes.
 // Lists are ordered exact, stemmed, vector; the first two share lexical evidence.
-export function reciprocalRanks(lists: readonly (readonly string[])[]) {
+export function reciprocalRankScores(lists: readonly (readonly string[])[]) {
   const scores = new Map<string, number>();
   for (const [index, list] of lists.entries()) {
     const weight = index === 2 ? VECTOR_RRF_WEIGHT : 1;
@@ -190,7 +190,11 @@ export function reciprocalRanks(lists: readonly (readonly string[])[]) {
       scores.set(id, (scores.get(id) ?? 0) + weight / (60 + rank + 1));
     }
   }
-  return [...scores]
+  return scores;
+}
+
+export function reciprocalRanks(lists: readonly (readonly string[])[]) {
+  return [...reciprocalRankScores(lists)]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([id]) => id);
 }
@@ -257,9 +261,14 @@ export function lexicalCandidates(
     ${vectors.length ? `OR e.id IN (${placeholders})` : ""}`)
       .get(...params, ...queries, ...vectorIds)?.n,
   );
+  const scores = reciprocalRankScores(lists);
   return {
     total,
-    ids: reciprocalRanks(lists).slice(0, limit),
+    ids: [...scores]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, limit)
+      .map(([id]) => id),
     matchOffsets: offsets,
+    scores,
   };
 }

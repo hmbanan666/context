@@ -1,16 +1,27 @@
 import type { SemanticHits } from "./embedding-index.js";
+import { knowledgeExcerpt } from "./context-package.js";
 import type { KnowledgeItem, KnowledgeStore } from "./knowledge.js";
 import type { Material } from "./materials.js";
 import { questionTerms } from "./package-query.js";
 import { profileId, type ProjectProfile } from "./projects.js";
-import { excerpt } from "./context-package.js";
 import type { SourceStore } from "./store.js";
 
 export const packBudgetMin = 512;
 export const packBudgetMax = 65536;
 export const packBudgetDefault = 8192;
+export const packSourceShare = 0.25;
+export const packJournalShare = 0.15;
+export const packApprovedBoost = 1.25;
+export const packSourceLimit = 2;
+export const packJournalLimit = 2;
 
-const sections = ["profile", "decisions", "facts", "sources"] as const;
+const sections = [
+  "profile",
+  "decisions",
+  "facts",
+  "journals",
+  "sources",
+] as const;
 type Section = (typeof sections)[number];
 type Presence = "off" | "partial" | "full";
 type Flags = Record<Section, Presence>;
@@ -28,11 +39,17 @@ interface PackItem {
   sourceIds: string[];
   sourceLinks?: { id: string; url?: string }[];
   pins?: { id: string }[];
+  citedIds?: string[];
+}
+interface Ranked {
+  id: string;
+  status?: string;
+  createdAt?: string;
 }
 interface PackSource {
   id: string;
   sourceDate: string;
-  excerpt: ReturnType<typeof excerpt>;
+  excerpt: ReturnType<typeof knowledgeExcerpt>;
 }
 export interface TaskPack {
   version: 1;
@@ -45,6 +62,8 @@ export interface TaskPack {
   relations: [];
   coverage?: { reasons: string[] };
   truncated: boolean;
+  budgetBytes: number;
+  bytesUsed: number;
 }
 
 interface PackInput {
@@ -59,8 +78,40 @@ const off = (): Flags => ({
   profile: "off",
   decisions: "off",
   facts: "off",
+  journals: "off",
   sources: "off",
 });
+
+export function packRelevance(
+  score: number,
+  status: string | undefined,
+): number {
+  return status === "approved" ? score * packApprovedBoost : score;
+}
+
+/** Hybrid score, then an approved boost, then recency. A missing score is below the floor. */
+export function rankPackItems<T extends Ranked>(
+  items: readonly T[],
+  scores: ReadonlyMap<string, number>,
+): T[] {
+  return items
+    .filter((item) => (scores.get(item.id) ?? 0) > 0)
+    .sort((a, b) => {
+      const delta =
+        packRelevance(scores.get(b.id) ?? 0, b.status) -
+        packRelevance(scores.get(a.id) ?? 0, a.status);
+      if (delta !== 0) return delta;
+      const recency = (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+      if (recency) return recency;
+      return a.id.localeCompare(b.id);
+    });
+}
+
+function presence(included: number, eligible: number): Presence {
+  if (included <= 0) return "off";
+  if (included < eligible) return "partial";
+  return "full";
+}
 
 /** Purpose, then rules, then pinned decisions that are still in force. */
 export function profileSection(profile: ProjectProfile): string {
@@ -80,7 +131,6 @@ function packHeader(flags: Flags): string {
     else if (presence === "partial") included.push(`${section} (partial)`);
     else included.push(section);
   }
-  omitted.push("journals");
   const present = included.length ? included.join(", ") : "none";
   return `Included: ${present}. Omitted: ${omitted.join(", ")}.`;
 }
@@ -142,11 +192,28 @@ function memoryCard(
   };
 }
 
+function sourceDate(material: Material): string {
+  return material.metadata.createdAt ?? material.source.capturedAt;
+}
+
 function sourceCard(material: Material, offset = 0): PackSource {
   return {
     id: material.source.id,
-    sourceDate: material.metadata.createdAt ?? material.source.capturedAt,
-    excerpt: excerpt(material.source.text, offset),
+    sourceDate: sourceDate(material),
+    excerpt: knowledgeExcerpt(material.source.text, offset),
+  };
+}
+
+function journalCard(
+  item: KnowledgeItem,
+  sources: SourceStore,
+  scope: string,
+  citedIds: readonly string[] | undefined,
+): PackItem {
+  return {
+    ...memoryCard(item, sources, scope),
+    excerpt: { text: item.text },
+    ...(citedIds?.length ? { citedIds: [...citedIds] } : {}),
   };
 }
 
@@ -166,8 +233,9 @@ function profileCard(
 }
 
 /**
- * One budgeted pack for a task. No processor call. Ranking of decisions and
- * raw sources is the existing project search; facts are newest first.
+ * One budgeted pack for a task. No processor call. Decisions and facts use the
+ * hybrid project rank (FTS RU/EN plus embeddings). Recency breaks ties.
+ * Unmatched rows are left out. A share of the budget is held for raw sources.
  */
 export function buildTaskPack(
   sources: SourceStore,
@@ -191,66 +259,74 @@ export function buildTaskPack(
     const item = knowledge.find(pin.id, input.scope);
     pinSources.set(pin.text, item?.sourceRefs.map((ref) => ref.sourceId) ?? []);
   }
-  const distilled = knowledge.projectDistilled(input.scope, input.projectId);
   const superseded = knowledge.retrievalRelations(input.scope).superseded;
   const pinned = new Set(loaded?.pinned ?? []);
-  const ranked = knowledge.packageCandidates(
-    {
-      scope: input.scope,
-      terms,
-      limit: 101,
-      projectId: input.projectId,
-      ...(input.semantic?.items.length
-        ? { vectors: input.semantic.items }
-        : {}),
-    },
-    [],
-  );
-  const searchRank = new Map<string, number>();
-  for (const item of ranked.items) {
-    if (item.kind === "decision" && !searchRank.has(item.id))
-      searchRank.set(item.id, searchRank.size);
-  }
-  const inForce = distilled.items.filter(
-    (item) =>
-      item.kind === "decision" &&
-      item.status === "approved" &&
-      !superseded.has(item.id) &&
-      !pinned.has(item.id),
-  );
-  const decisions = [
-    ...inForce
-      .filter((item) => searchRank.has(item.id))
-      .sort(
-        (a, b) => (searchRank.get(a.id) ?? 0) - (searchRank.get(b.id) ?? 0),
-      ),
-    ...inForce.filter((item) => !searchRank.has(item.id)),
-  ];
-  const facts = [
-    ...distilled.items.filter(
-      (item) =>
-        item.kind === "fact" &&
-        item.status === "approved" &&
-        !superseded.has(item.id),
-    ),
-    ...distilled.items.filter(
-      (item) =>
-        item.kind === "fact" &&
-        item.status !== "approved" &&
-        !superseded.has(item.id),
-    ),
-  ];
-  const found = sources.packageCandidates({
+  const hybrid = {
     scope: input.scope,
     terms,
     limit: 101,
     projectId: input.projectId,
+  };
+  const memory = knowledge.projectHybrid(
+    {
+      ...hybrid,
+      ...(input.semantic?.items.length
+        ? { vectors: input.semantic.items }
+        : {}),
+    },
+    "memory",
+  );
+  const journals = knowledge.projectHybrid(
+    {
+      ...hybrid,
+      ...(input.semantic?.items.length
+        ? { vectors: input.semantic.items }
+        : {}),
+    },
+    "journal",
+  );
+  const found = sources.packageCandidates({
+    ...hybrid,
     ...(input.semantic?.sources.length
       ? { vectors: input.semantic.sources }
       : {}),
   });
+  const load = (id: string) => knowledge.find(id, input.scope);
+  const eligible = (item: KnowledgeItem | undefined): item is KnowledgeItem =>
+    !!item && item.status !== "rejected" && !superseded.has(item.id);
+  const ranked = rankPackItems(
+    memory.ids
+      .map(load)
+      .filter(eligible)
+      .filter(
+        (item) =>
+          (item.kind === "fact" || item.kind === "decision") &&
+          !(item.kind === "decision" && pinned.has(item.id)),
+      ),
+    memory.scores,
+  );
+  const journalCandidates = journals.ids
+    .map(load)
+    .filter(eligible)
+    .filter(
+      (item) =>
+        item.kind === "journal" && (journals.scores.get(item.id) ?? 0) > 0,
+    )
+    .sort(
+      (a, b) =>
+        b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id),
+    );
+  const rankedSources = [...found.materials].sort((a, b) => {
+    const delta =
+      (found.scores.get(b.source.id) ?? 0) -
+      (found.scores.get(a.source.id) ?? 0);
+    if (delta !== 0) return delta;
+    const recency = sourceDate(b).localeCompare(sourceDate(a));
+    if (recency) return recency;
+    return a.source.id.localeCompare(b.source.id);
+  });
   const reasons = [...new Set(input.semantic?.reasons ?? [])];
-  if (distilled.truncated || ranked.total > 100 || found.total > 100)
+  if (memory.total > 100 || journals.total > 100 || found.total > 100)
     reasons.push("candidate_limit");
 
   const render = (
@@ -270,9 +346,20 @@ export function buildTaskPack(
     relations: [],
     ...(coverage ? { coverage: { reasons: [...reasons] } } : {}),
     truncated,
+    budgetBytes: budget,
+    bytesUsed: 0,
   });
+  const settle = (pack: TaskPack): TaskPack => {
+    let current = pack;
+    for (let step = 0; step < 6; step++) {
+      const size = Buffer.byteLength(JSON.stringify(current), "utf8");
+      if (size === current.bytesUsed) return current;
+      current = { ...current, bytesUsed: size };
+    }
+    return current;
+  };
   const bytes = (pack: TaskPack) =>
-    Buffer.byteLength(JSON.stringify(pack), "utf8");
+    Buffer.byteLength(JSON.stringify(settle(pack)), "utf8");
   let coverage = bytes(render(off(), [], [], true, true)) <= budget;
   const fits = (
     flags: Flags,
@@ -341,7 +428,7 @@ export function buildTaskPack(
     }
   }
 
-  const cited = new Set<string>();
+  let cited = new Set<string>();
   const profileText = items.find((item) => item.kind === "profile")?.excerpt
     .text;
   if (profileText) {
@@ -351,74 +438,139 @@ export function buildTaskPack(
     }
   }
 
-  const take = (section: "decisions" | "facts", cards: PackItem[]) => {
+  const profileItems = items;
+  const memoryCards: PackItem[] = [];
+  const journalCards: PackItem[] = [];
+  let sourceCards: PackSource[] = [];
+  const decisionEligible = ranked.filter(
+    (item) => item.kind === "decision",
+  ).length;
+  const factEligible = ranked.filter((item) => item.kind === "fact").length;
+  const journalGoal = Math.min(packJournalLimit, journalCandidates.length);
+  const view = () => [...profileItems, ...memoryCards, ...journalCards];
+  const sourceGoal = () =>
+    Math.min(
+      packSourceLimit,
+      sourceCards.length +
+        rankedSources.filter((material) => !cited.has(material.source.id))
+          .length,
+    );
+  const sectionFlags = (): Flags => ({
+    ...flags,
+    decisions: presence(
+      memoryCards.filter((item) => item.kind === "decision").length,
+      decisionEligible,
+    ),
+    facts: presence(
+      memoryCards.filter((item) => item.kind === "fact").length,
+      factEligible,
+    ),
+    journals: presence(journalCards.length, journalGoal),
+    sources: presence(sourceCards.length, sourceGoal()),
+  });
+  const packOf = (truncated: boolean, reason: string | undefined) => {
+    const nextFlags = sectionFlags();
+    const pack = render(nextFlags, view(), sourceCards, truncated, coverage);
+    if (reason && pack.coverage)
+      pack.coverage = { reasons: [...pack.coverage.reasons, reason] };
+    else if (reason) pack.coverage = { reasons: [reason] };
+    return pack;
+  };
+
+  const pushMemory = (ceiling: number) => {
     if (cut) return;
-    for (let index = 0; index < cards.length; index++) {
-      const card = cards[index];
-      if (!card) continue;
-      const last = index === cards.length - 1;
-      const nextFlags = {
-        ...flags,
-        [section]: last ? ("full" as const) : ("partial" as const),
-      };
-      const next = [...items, card];
-      const more = !last || section === "decisions";
-      const stopReason = more || reasons.length > 0 ? "byte_limit" : undefined;
-      if (!fits(nextFlags, next, [], more || reasons.length > 0, stopReason)) {
-        cut = true;
+    while (memoryCards.length < ranked.length) {
+      const item = ranked[memoryCards.length];
+      if (!item) break;
+      const card = memoryCard(item, sources, input.scope);
+      const nextCited = new Set(cited);
+      for (const id of card.sourceIds) nextCited.add(id);
+      const nextSources = sourceCards.filter(
+        (source) => !nextCited.has(source.id),
+      );
+      const savedSources = sourceCards;
+      const saved = memoryCards.length;
+      sourceCards = nextSources;
+      memoryCards.push(card);
+      const probe = packOf(true, "byte_limit");
+      const size = bytes(probe);
+      if (size > ceiling || size > budget) {
+        memoryCards.splice(saved);
+        sourceCards = savedSources;
         return;
       }
-      flags = nextFlags;
-      items = next;
-      for (const id of card.sourceIds) cited.add(id);
+      cited = nextCited;
+      flags = sectionFlags();
     }
   };
-  take(
-    "decisions",
-    decisions.map((item) => memoryCard(item, sources, input.scope)),
-  );
-  take(
-    "facts",
-    facts.map((item) => memoryCard(item, sources, input.scope)),
-  );
 
-  const packSources: PackSource[] = [];
   if (!cut) {
-    const materials = found.materials.filter(
-      (material) => !cited.has(material.source.id),
-    );
-    for (let index = 0; index < materials.length; index++) {
-      const material = materials[index];
-      if (!material) continue;
+    const sourceReserve = Math.floor(budget * packSourceShare);
+    const journalReserve = Math.floor(budget * packJournalShare);
+    pushMemory(budget - sourceReserve - journalReserve);
+    const beforeSources = bytes(packOf(true, "byte_limit"));
+    for (const material of rankedSources) {
+      if (sourceCards.length >= packSourceLimit) break;
+      if (cited.has(material.source.id)) continue;
       const card = sourceCard(
         material,
         found.matchOffsets.get(material.source.id) ?? 0,
       );
-      const last = index === materials.length - 1;
-      const nextFlags = {
-        ...flags,
-        sources: last ? ("full" as const) : ("partial" as const),
-      };
-      const next = [...packSources, card];
-      const stopReason = !last || reasons.length > 0 ? "byte_limit" : undefined;
-      if (
-        !fits(nextFlags, items, next, !last || reasons.length > 0, stopReason)
-      ) {
-        cut = true;
-        break;
+      sourceCards.push(card);
+      const size = bytes(packOf(true, "byte_limit"));
+      if (size > budget || size - beforeSources > sourceReserve) {
+        sourceCards.pop();
+        continue;
       }
-      flags = nextFlags;
-      packSources.push(card);
+      flags = sectionFlags();
     }
+    const beforeJournals = bytes(packOf(true, "byte_limit"));
+    for (const item of journalCandidates) {
+      if (journalCards.length >= packJournalLimit) break;
+      const card = journalCard(
+        item,
+        sources,
+        input.scope,
+        knowledge.journalCitations(item.id)?.citedIds,
+      );
+      journalCards.push(card);
+      const nextCited = new Set(cited);
+      for (const id of card.sourceIds) nextCited.add(id);
+      const savedSources = sourceCards;
+      sourceCards = sourceCards.filter((source) => !nextCited.has(source.id));
+      const size = bytes(packOf(true, "byte_limit"));
+      if (size > budget || size - beforeJournals > journalReserve) {
+        journalCards.pop();
+        sourceCards = savedSources;
+        continue;
+      }
+      cited = nextCited;
+      flags = sectionFlags();
+    }
+    pushMemory(budget);
   }
 
-  const truncated = cut || reasons.length > 0;
-  const pack = render(flags, items, packSources, truncated, coverage);
-  if (cut) {
+  const memoryShort = !cut && memoryCards.length < ranked.length;
+  const truncated = cut || memoryShort || reasons.length > 0;
+  flags = sectionFlags();
+  const pack = packOf(truncated, undefined);
+  if (cut || memoryShort) {
     const list = [...(pack.coverage?.reasons ?? reasons), "byte_limit"];
     pack.coverage = { reasons: [...new Set(list)] };
     if (bytes(pack) > budget) delete pack.coverage;
   }
   if (pack.coverage && bytes(pack) > budget) delete pack.coverage;
-  return pack;
+  let settled = settle(pack);
+  while (settled.bytesUsed > budget && memoryCards.length > 0) {
+    memoryCards.pop();
+    flags = sectionFlags();
+    const retry = packOf(true, "byte_limit");
+    if (retry.coverage && bytes(retry) > budget) delete retry.coverage;
+    settled = settle(retry);
+  }
+  if (settled.bytesUsed > budget) {
+    delete settled.coverage;
+    settled = settle({ ...settled, truncated: true });
+  }
+  return settled;
 }
