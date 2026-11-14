@@ -88,10 +88,11 @@ results retain only a per-question boolean, not matching text.
 ## Processing and recovery
 
 `tidy.ts` processes each area independently: deterministic exact/vector dedup,
-then optional model-driven confident inbox sorting. Automatic supersession was
-removed after owner-reported live precision of 3/12 proposals: record-level
-replacement can hide still-valid claims in multi-claim notes. Clients supersede
-explicitly via `remember` with `supersedes`; search demotion is unchanged.
+then optional model-driven confident inbox sorting, then distillation.
+Automatic supersession was removed after owner-reported live precision of 3/12
+proposals: record-level replacement can hide still-valid claims in multi-claim
+notes. Clients supersede explicitly via `remember` with `supersedes`; search
+demotion is unchanged. Distillation never writes a supersedes link.
 `knowledge_relations` accepts source or knowledge endpoints, with `duplicates`
 added by a transactional
 CHECK/FK table migration preserving historical rows and retry keys. Both endpoints
@@ -110,8 +111,14 @@ history fields are ignored. Project catalog, repository mappings and
 associations are implemented (ADR 0010 slice 4a): import and `context project
 backfill` write configured links, `remember` can attach client links, and
 `search` / `timeline` can filter by project. Processor proposals are stored
-without a usable id; approval is not implemented. Distillation, profiles,
-journals and task packs are accepted in ADRs 0011–0012 and are not implemented.
+without a usable id; approval is not implemented. Distillation (ADR 0011) writes
+one proposed `fact` or `decision` per source revision that does not already have
+one, copying configured and client project links and storing any other model
+project string as a proposal. Calls are capped separately from inbox sorting and
+resume from a cursor. Sentences that copy 80 contiguous characters of the stored
+body are rejected and stay pending. Proposed sentences are readable by id and
+are omitted from `search` and `timeline` until slice 4c. Profiles, journals and
+task packs are accepted in ADR 0012 and are not implemented.
 Hard delete remains a later slice. None of that is complete stage 4 acceptance.
 
 Inbox moves are transactional metadata changes. FTS/stemmed rows retain their

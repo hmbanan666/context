@@ -229,6 +229,8 @@ test("tidy without a key deduplicates within areas, preserves originals, and dry
     const dry = await runTidy({ ...options, dryRun: true });
     assert.equal(dry.duplicates, 1);
     assert.equal(dry.llm, "not_configured");
+    assert.equal(dry.distillStatus, "skipped_not_configured");
+    assert.equal(dry.distillCalls, 0);
     assert.deepEqual(f.knowledge.relations("personal"), []);
     await assert.rejects(readFile(join(f.directory, "tidy/history.jsonl")));
     const run = await runTidy(options);
@@ -250,7 +252,7 @@ test("tidy without a key deduplicates within areas, preserves originals, and dry
   }
 });
 
-test("tidy deduplicates with vectors without asking a model to supersede notes", async () => {
+test("tidy deduplicates with vectors without letting distillation write supersedes", async () => {
   const { EmbeddingIndex } = await import("../src/embedding-index.js");
   const f = await fixture();
   const index = new EmbeddingIndex(f.path, {
@@ -285,10 +287,12 @@ test("tidy deduplicates with vectors without asking a model to supersede notes",
       /* synthetic vector preparation */
     }
     let calls = 0;
+    let instruction = "";
     const llm = {
       model: "fake",
-      async ask(_instruction: string, data: unknown) {
+      async ask(next: string, data: unknown) {
         calls++;
+        instruction = next;
         assert.ok(!JSON.stringify(data).includes("limit 8"));
         return [{ index: 0, current: "a" }];
       },
@@ -303,7 +307,9 @@ test("tidy deduplicates with vectors without asking a model to supersede notes",
     assert.equal(run.duplicates, 1);
     assert.equal(run.failures, 0);
     assert.equal(run.outcome, "completed");
-    assert.equal(calls, 0);
+    assert.equal(calls, 1);
+    assert.match(instruction, /cannot approve/i);
+    assert.match(instruction, /supersedes/i);
     assert.deepEqual(
       f.knowledge.relations("personal").map(({ kind, fromId, toId }) => ({
         kind,
@@ -314,7 +320,13 @@ test("tidy deduplicates with vectors without asking a model to supersede notes",
     );
     assert.ok(f.sources.find("old", "personal"));
     assert.equal((await runTidy(options)).duplicates, 0);
-    assert.equal(calls, 0);
+    assert.equal(calls, 2);
+    assert.equal(
+      f.knowledge
+        .relations("personal")
+        .some((link) => link.kind === "supersedes"),
+      false,
+    );
   } finally {
     await index.close();
     await f.close();
@@ -462,6 +474,8 @@ test("tidy CLI dry-run reports synthetic counts without changing database bytes 
     assert.equal(summary.dryRun, true);
     assert.equal(summary.llm, "not_configured");
     assert.equal(summary.llmCalls, 0);
+    assert.equal(summary.distillCalls, 0);
+    assert.equal(summary.distillStatus, "skipped_not_configured");
     assert.equal(summary.processor, "openai");
     assert.deepEqual(await readFile(f.path), before);
     await assert.rejects(readFile(join(f.directory, "tidy/history.jsonl")));
@@ -618,13 +632,31 @@ respond(data.map(({index}) => ({index, area:null, confidence:0})));
           await readFile(join(fake.directory, "preflights"), "utf8"),
           "11",
         );
-      assert.equal(batches.length, 13);
-      assert.ok(batches.every((batch) => batch.length <= 25));
-      assert.equal(batches.flat().length, 320);
+      const inboxBatches = batches.filter((batch) =>
+        batch.every(
+          (item) =>
+            !!item &&
+            typeof item === "object" &&
+            "areas" in (item as Record<string, unknown>),
+        ),
+      );
+      const distillBatches = batches.filter((batch) =>
+        batch.every(
+          (item) =>
+            !!item &&
+            typeof item === "object" &&
+            "body" in (item as Record<string, unknown>),
+        ),
+      );
+      assert.equal(inboxBatches.length, 13);
+      assert.ok(inboxBatches.every((batch) => batch.length <= 25));
+      assert.equal(inboxBatches.flat().length, 320);
       assert.equal(
-        new Set(batches.flat().map((item) => JSON.stringify(item))).size,
+        new Set(inboxBatches.flat().map((item) => JSON.stringify(item))).size,
         320,
       );
+      assert.ok(distillBatches.length > 0);
+      assert.ok(distillBatches.every((batch) => batch.length <= 8));
       const history = await readFile(
         join(f.directory, "tidy/history.jsonl"),
         "utf8",

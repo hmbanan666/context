@@ -70,9 +70,14 @@ capture, with lexical fallback if the model is unavailable. [Search details](doc
 sorts confident inbox items. Clients supersede explicitly through `remember`.
 Project catalog and association are implemented
 ([ADR 0010](docs/adr/0010-projects-in-the-understanding-layer.md)).
-Distillation, profiles and task packs are decided in
-[ADRs 0011–0012](docs/adr/0011-distill-proposed-facts-and-decisions.md) and are
-not implemented. Hard delete remains [planned](docs/roadmap.md).
+Nightly tidy also distills one proposed sentence per source revision when a
+processor is configured
+([ADR 0011](docs/adr/0011-distill-proposed-facts-and-decisions.md)).
+Profiles and task packs are decided in
+[ADR 0012](docs/adr/0012-project-profile-journal-and-task-pack.md) and are not
+implemented. Hard delete remains [planned](docs/roadmap.md).
+Run `context tidy` once to distill a capped batch, or `context tidy --dry-run`
+to preview it. See [Nightly tidy](docs/deployment.md#nightly-tidy).
 Capture and reading work without an inference provider.
 
 Every night at 03:30, Context verifies a SQLite snapshot and retains seven local
