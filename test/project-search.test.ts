@@ -450,7 +450,7 @@ test("project search starts a decision excerpt on a sentence boundary after jour
   }
 });
 
-test("the public October project question passes and pack cases stay skipped", async () => {
+test("the public October project question and pack cases pass", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-project-eval-"));
   const path = join(directory, "context.db");
   try {
@@ -472,8 +472,10 @@ test("the public October project question passes and pack cases stay skipped", a
     assert.equal(run.metrics.isolation_violations, 0);
     assert.equal(question("october_on_project")?.pass, true);
     assert.equal(question("october_on_project")?.hit_at_k, 1);
-    assert.equal(question("pack_for_task")?.status, "skipped");
-    assert.equal(question("pack_budget")?.status, "skipped");
+    assert.equal(question("pack_for_task")?.status, "completed");
+    assert.equal(question("pack_for_task")?.pass, true);
+    assert.equal(question("pack_budget")?.status, "completed");
+    assert.equal(question("pack_budget")?.pass, true);
     assert.equal(run.metrics.hit_at_k, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });

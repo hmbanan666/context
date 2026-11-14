@@ -1,6 +1,5 @@
 # Accepted synthetic cases for ADRs 0010–0012.
-# Fictional data only. Pack cases stay skipped until slice 4f.
-# Corpus layout: docs/evals.md.
+# Fictional data only. Corpus layout: docs/evals.md.
 questions:
   - id: october_on_project
     question: What happened in October on the observatory project?

@@ -158,8 +158,10 @@ and a date bound ranks journals, then decisions, then facts in that window
 even when the query does not match them, ahead of uncited raw sources.
 Slice 4e records owner approval in `knowledge_reviews`
 and, for a suggested project name, creates or links the project. Approval
-does not write supersedes. Task packs are accepted in ADR 0012 and are not
-implemented.
+does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012):
+one budgeted pack with the profile, decisions in force, facts, then uncited
+raw sources. Journals are not in the pack. `context search --mode pack`
+returns the same pack. No fifth MCP tool is added.
 Hard delete remains a later slice. None of that is complete stage 4 acceptance.
 
 Inbox moves are transactional metadata changes. FTS/stemmed rows retain their

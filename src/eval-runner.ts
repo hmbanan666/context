@@ -166,8 +166,7 @@ export async function evaluate(
         latency_ms: null,
       };
       run.questions.push(result);
-      // Pack mode is slice 4f. Accept the cases and skip them until then.
-      if (q.placeholder || q.mode === "pack") continue;
+      if (q.placeholder) continue;
       let violationKeys: string[] = [];
       let hybridScores: (number | null)[] = [];
       const start = performance.now();
@@ -189,8 +188,20 @@ export async function evaluate(
         result.isolation_violations = retrieved.isolationViolations;
         result.status = retrieved.failed ? "failed" : "completed";
         if (retrieved.failed) run.outcome = "failed";
+        const packComplete =
+          q.mode !== "pack" ||
+          q.expected.every(
+            (expected) =>
+              !("substring" in expected) ||
+              retrieved.hits.some((hit) =>
+                hit.excerpts.some((excerpt) =>
+                  excerpt.includes(expected.substring),
+                ),
+              ),
+          );
         result.pass =
           !retrieved.failed &&
+          packComplete &&
           (result.hit_at_k === null || result.hit_at_k === 1) &&
           !result.isolation_violations &&
           result.outranks_pass !== false &&

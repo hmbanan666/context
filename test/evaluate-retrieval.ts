@@ -74,7 +74,7 @@ assert.equal(
 assert.equal(projectMemory.metrics.hit_at_k, 1);
 for (const id of ["pack_for_task", "pack_budget"])
   assert.equal(
-    projectMemory.questions.find((q) => q.id === id)?.status,
-    "skipped",
+    projectMemory.questions.find((q) => q.id === id)?.pass,
+    true,
     id,
   );

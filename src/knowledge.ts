@@ -731,6 +731,30 @@ export class KnowledgeStore {
     return { total, items, matchOffsets: new Map<string, number>() };
   }
 
+  // Facts and decisions linked to one project, newest first. Rejected rows
+  // stay out. The caller ranks decisions; this order is the fact order.
+  projectDistilled(
+    scope: string,
+    projectId: string,
+  ): { items: KnowledgeItem[]; truncated: boolean } {
+    scopeSchema.parse(scope);
+    projectIdSchema.parse(projectId);
+    const where = `k.scope = ? AND k.kind IN ('fact', 'decision') AND ${linkedProjectSql("knowledge", "k.id")} AND ${latestReviewStatusSql("k.id", "k.scope", "proposed")} <> 'rejected'`;
+    const params = [scope, projectId];
+    const total = Number(
+      this.#database
+        .prepare(`SELECT count(*) n FROM knowledge_items k WHERE ${where}`)
+        .get(...params)?.n,
+    );
+    const items = this.#database
+      .prepare(
+        `${itemSelection} WHERE ${where} ORDER BY k.created_at DESC, k.id ASC LIMIT 100`,
+      )
+      .all(...params)
+      .map(decodeItem);
+    return { items, truncated: total > 100 };
+  }
+
   retrievalRelations(scope: string) {
     return retrievalRelations(this.#database, scope);
   }
