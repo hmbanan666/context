@@ -4,12 +4,15 @@ import { scopeSchema } from "./contracts.js";
 import { SourceStore } from "./store.js";
 
 const usage =
-  "Usage: context project create --id <id> --name <name> --home <area> | rename --id <id> --name <name> | list | map --repo <owner/repo> --project <id> | unmap --repo <owner/repo> | backfill";
+  "Usage: context project create --id <id> --name <name> --home <area> | rename --id <id> --name <name> | list | map --repo <owner/repo> --project <id> | unmap --repo <owner/repo> | backfill | profile show --id <id> | profile set --id <id> --purpose <text> --rules <text> [--pin <decision-id> ...] | profile clear --id <id>";
 
+function text(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
 function flags(
   args: string[],
-  options: Record<string, { type: "string" }>,
-): Record<string, string | undefined> {
+  options: Record<string, { type: "string"; multiple?: boolean }>,
+): Record<string, string | string[] | undefined> {
   try {
     return parseArgs({
       args,
@@ -48,7 +51,15 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
     const rest = args.slice(1);
     if (
       !action ||
-      !["create", "rename", "list", "map", "unmap", "backfill"].includes(action)
+      ![
+        "create",
+        "rename",
+        "list",
+        "map",
+        "unmap",
+        "backfill",
+        "profile",
+      ].includes(action)
     )
       throw new Error(usage);
     const configured = areas(env);
@@ -59,15 +70,12 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
           name: { type: "string" },
           home: { type: "string" },
         });
-        if (!values.id || !values.name || !values.home) throw new Error(usage);
-        if (!configured.includes(values.home)) throw new Error("Unknown area");
-        emit(
-          store.createProject({
-            id: values.id,
-            name: values.name,
-            homeArea: values.home,
-          }),
-        );
+        const id = text(values.id);
+        const name = text(values.name);
+        const home = text(values.home);
+        if (!id || !name || !home) throw new Error(usage);
+        if (!configured.includes(home)) throw new Error("Unknown area");
+        emit(store.createProject({ id, name, homeArea: home }));
         return;
       }
       if (action === "rename") {
@@ -75,8 +83,10 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
           id: { type: "string" },
           name: { type: "string" },
         });
-        if (!values.id || !values.name) throw new Error(usage);
-        emit(store.renameProject(values.id, values.name));
+        const id = text(values.id);
+        const name = text(values.name);
+        if (!id || !name) throw new Error(usage);
+        emit(store.renameProject(id, name));
         return;
       }
       if (action === "list") {
@@ -92,21 +102,69 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
           repo: { type: "string" },
           project: { type: "string" },
         });
-        if (!values.repo || !values.project) throw new Error(usage);
-        emit(store.mapRepository(values.repo, values.project));
+        const repo = text(values.repo);
+        const project = text(values.project);
+        if (!repo || !project) throw new Error(usage);
+        emit(store.mapRepository(repo, project));
         return;
       }
       if (action === "unmap") {
         const values = flags(rest, { repo: { type: "string" } });
-        if (!values.repo) throw new Error(usage);
-        store.unmapRepository(values.repo);
-        emit({ repo: values.repo, mapped: false });
+        const repo = text(values.repo);
+        if (!repo) throw new Error(usage);
+        store.unmapRepository(repo);
+        emit({ repo, mapped: false });
         return;
       }
       if (action === "backfill") {
         if (rest.length) throw new Error(usage);
         emit(store.backfillProjects());
         return;
+      }
+      if (action === "profile") {
+        const which = rest[0];
+        const profileArgs = rest.slice(1);
+        if (which === "show" || which === "clear") {
+          const values = flags(profileArgs, { id: { type: "string" } });
+          const id = values.id;
+          if (typeof id !== "string") throw new Error(usage);
+          if (which === "clear") {
+            store.clearProfile(id);
+            emit({ profile: null });
+            return;
+          }
+          emit({ profile: store.profile(id) ?? null });
+          return;
+        }
+        if (which === "set") {
+          const values = flags(profileArgs, {
+            id: { type: "string" },
+            purpose: { type: "string" },
+            rules: { type: "string" },
+            pin: { type: "string", multiple: true },
+          });
+          const id = values.id;
+          const purpose = values.purpose;
+          const rules = values.rules;
+          const pinned = values.pin;
+          if (
+            typeof id !== "string" ||
+            typeof purpose !== "string" ||
+            typeof rules !== "string" ||
+            (pinned !== undefined && !Array.isArray(pinned))
+          )
+            throw new Error(usage);
+          emit(
+            store.setProfile({
+              projectId: id,
+              purpose,
+              rules,
+              ...(pinned ? { pinned } : {}),
+            }),
+          );
+          return;
+        }
+        throw new Error(usage);
       }
       throw new Error(usage);
     };

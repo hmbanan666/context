@@ -26,7 +26,9 @@ import {
   addClientAssociation,
   associationsFor,
   backfillProjects,
+  clearProjectProfile,
   createProject,
+  getProjectProfile,
   hasProject,
   installProjects,
   isLinkedToProject,
@@ -35,9 +37,12 @@ import {
   linkedProjectSql,
   listProjects,
   mapRepository,
+  type ProjectProfile,
   proposeProjectLink,
+  readProjectProfile,
   rememberProjectsSchema,
   renameProject,
+  setProjectProfile,
   repositoryMappings,
   unmapRepository,
   type Project,
@@ -865,6 +870,27 @@ export class SourceStore {
     suggestedName?: string;
   }): void {
     proposeProjectLink(this.#database, input);
+  }
+
+  setProfile(input: {
+    projectId: string;
+    purpose: string;
+    rules: string;
+    pinned?: readonly string[];
+  }): ProjectProfile {
+    return setProjectProfile(this.#database, input);
+  }
+
+  profile(projectId: string): ProjectProfile | undefined {
+    return getProjectProfile(this.#database, projectId);
+  }
+
+  clearProfile(projectId: string): void {
+    clearProjectProfile(this.#database, projectId);
+  }
+
+  readProfile(id: string, scope: string): ProjectProfile | undefined {
+    return readProjectProfile(this.#database, id, scope);
   }
 
   checkHealth(): void {

@@ -262,13 +262,25 @@ still run. Repeat `context tidy` to continue a capped backlog. Distillation
 never approves an item and never writes a supersedes link. There is no new
 environment variable; the batch and call maxima are fixed.
 
+### Weekly journal
+
+After distillation, the same tidy run refreshes each project's journal for the
+current ISO week and the previous ISO week in `TZ` (ADR 0012). The paragraph
+is deterministic: it names the project id and the week and cites that week's
+distilled facts and decisions in the project's home area, up to 800 characters.
+It does not call the processor and does not spend the distillation or inbox
+call caps, so it still runs when no processor is configured. A week with no
+such items has no entry. An unchanged item set does not rewrite the paragraph.
+`--dry-run` does not write journals. The history field `journals` counts
+paragraphs written on that run.
+
 The OpenAI-compatible API remains the default (`CONTEXT_PROCESSOR` unset or
 `openai`). Compose forwards the selector and these existing API settings:
 
 - `CONTEXT_LLM_API_KEY`: endpoint credential (a placeholder is enough for a local
   endpoint that requires no authentication).
 - `CONTEXT_LLM_MODEL`: provider model name. Both key and model must be nonempty;
-  otherwise tidy reports `llm: "not_configured"` and only deduplicates.
+  otherwise tidy reports `llm: "not_configured"` and deduplicates without distilling.
 - `CONTEXT_LLM_BASE_URL`: defaults to `https://api.openai.com/v1`; set an
   OpenRouter or compatible Ollama/llama.cpp base URL to choose another provider.
 

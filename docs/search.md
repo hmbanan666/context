@@ -282,4 +282,6 @@ ranks that project's distilled facts and decisions in the requested dates ahead
 of raw sources. Each item is labelled with its stored status, `proposed` or
 `approved`, and carries the source id and URL. A raw source cited by a returned
 item is omitted. `budgetBytes` (2048–65536) overrides the 8192-byte package
-budget. Profiles, journals and pack mode are not implemented.
+budget. A project filter also ranks that project's weekly journal paragraphs
+for weeks that overlap the requested dates; area-wide search omits them.
+Pack mode is not implemented.

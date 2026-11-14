@@ -136,9 +136,9 @@ are also possible through authorized agents via MCP.
 
 Accepted in ADRs 0010–0012. Caps and call limits live in those
 ADRs so this spec does not keep a second copy. Slices 4a (project catalog
-and association), 4b (nightly distillation) and 4c (project search) are
-implemented and not deployed. Profiles, journals, approval and task packs
-are not implemented.
+and association), 4b (nightly distillation), 4c (project search) and 4d
+(profile and weekly journal) are implemented and not deployed. Approval and
+task packs are not implemented.
 
 - A project is an understanding-layer entity with a stable id and one home
   area. It is not an area and not a permission. Association comes from an owner
@@ -158,24 +158,44 @@ are not implemented.
   Capture does not wait. Slice 4b stores each sentence with status `proposed`.
   `read` returns it by id. Area-wide `search` and `timeline` omit these
   sentences, so that mix of raw results stays as it is. With a `project`
-  filter, slice 4c ranks the project's distilled facts and decisions in the
-  requested dates ahead of raw sources and omits a raw source cited by a
-  returned item. Each item keeps its stored status: `proposed`, or `approved`
-  when a review says so. Optional `budgetBytes` (2048–65536) overrides the
-  package budget; the default stays 8192. A missing or failed processor skips
-  distillation and still runs dedup and inbox sorting. `context tidy` distills
-  one capped pass; `context tidy --dry-run` calls the processor and writes
-  nothing.
+  filter, search ranks that project's weekly journal and distilled facts and
+  decisions in the requested dates ahead of raw sources and omits a raw source
+  cited by a returned item. Each distilled item keeps its stored status:
+  `proposed`, or `approved` when a review says so. Optional `budgetBytes`
+  (2048–65536) overrides the package budget; the default stays 8192. A missing
+  or failed processor skips distillation and still runs dedup, inbox sorting
+  and the journal refresh. `context tidy` distills one capped pass; `context
+  tidy --dry-run` calls the processor and writes nothing, including no journal.
 - Supersession stays explicit: `remember` with `supersedes`. Distillation must
   not write a supersedes link or set `approved`. A claimed `approved` status
-  stays `proposed`.
-- Each project has a small owner-written profile (purpose, rules, pinned
-  decisions in force) and a weekly journal built from distilled items. A missing
-  journal is not an empty week.
-- Period questions use `search` with `project` and dates. Slice 4c returns
-  that project's distilled items for the period before raw excerpts and omits
-  a raw source those items cite. Journal entries are not stored yet. Search
-  without `project` stays area-wide.
+  stays `proposed`. A journal cannot supersede a decision.
+- Each project has one owner-written profile in its home area: purpose, then
+  rules, then up to eight pinned decision ids. The stored document is those
+  fields joined by newlines and is at most 2048 UTF-8 bytes. `context project
+  profile set`, `show` and `clear` are the only writers. The processor cannot
+  write it, and no fifth MCP tool is added. `read` with id `profile:<project id>`
+  returns it only when `scope` is the home area. A pinned id must already be a
+  decision linked to that project in the home area. The read result's `inForce`
+  list is the pinned decisions that are approved and not superseded; a proposed
+  pin stays stored and is not in force. The owner CLI that approves or rejects
+  a proposal is a later slice.
+- For each project and ISO week in the instance timezone (`TZ`), tidy stores
+  one replaceable paragraph of at most 800 characters in the home area. It is
+  built only from that week's non-rejected distilled facts and decisions in
+  that area. The paragraph names the project id and the week (`YYYY-Www`) and
+  cites the item ids that fit. Tidy refreshes the current week and the previous
+  week, and rewrites a paragraph only when that week's item set changes. The
+  same items on the next run do not write. A week with no such items has no
+  journal entry. A missing journal is not an empty week of sources: tidy does
+  not backfill older weeks, and it does not copy items out of another area.
+  Generation does not call the processor and does not spend the distillation
+  or inbox call caps. `read` returns the paragraph by id. Search without
+  `project` stays area-wide and omits journals.
+- Period questions use `search` with `project` and dates. The project's journal
+  entries whose week overlaps the range, then its distilled items for the
+  period, come before raw excerpts. A raw source cited by a returned item is
+  omitted. The public October fixture has no journal row, so that case still
+  returns the distilled sentence.
 - A task pack is `search` with `mode: "pack"`, a project, a task query and a
   caller-supplied byte budget. It returns the profile, relevant decisions in
   force and recent facts, then raw excerpts only for sources not already cited.
@@ -303,8 +323,8 @@ calls; exact source retrieval remains usable while its index rebuilds.
 
 Deduplication, explicit supersession and history, guarded inbox sorting and
 nightly evaluation are already merged. Slices 4a (project catalog and
-association), 4b (nightly distillation) and 4c (project search) are
-implemented and not deployed. Still to build: profiles, journals, approval,
+association), 4b (nightly distillation), 4c (project search) and 4d (profile
+and weekly journal) are implemented and not deployed. Still to build: approval,
 task packs and people through the pluggable processor, plus hard delete with
 tombstones.
 Automatic supersession is not part of this stage. Uncertain inbox items still
@@ -325,9 +345,10 @@ items await owner decisions. Hard delete removes the record and derivations from
 reads, search, history and pending processing; only the tombstone remains. Test
 that restore reconciliation prevents silent resurrection, with an explicit
 backup-retention contract. Private and synthetic nightly evals report failures
-without exposing private questions or results publicly. Slices 4a–4c are the catalog, association, proposed distillation and
-project-search ranking. Profiles, journals, approval and pack mode remain unmet.
-Area-wide search still omits distilled sentences. A project filter prefers them.
+without exposing private questions or results publicly. Slices 4a–4d are the catalog, association, proposed distillation,
+project-search ranking, the owner-written profile and the weekly journal.
+Approval and pack mode remain unmet. Area-wide search still omits distilled
+sentences and journals. A project filter prefers the journal and those sentences.
 
 ### Stage 5 — Owner UI and more imports (planned)
 

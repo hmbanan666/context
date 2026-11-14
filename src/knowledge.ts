@@ -10,6 +10,11 @@ import type { PackageSelection } from "./package-query.js";
 import { redactFields } from "./redaction.js";
 import { retrievalRelations } from "./retrieval-relations.js";
 import {
+  knowledgeWindowSql,
+  refreshProjectJournals,
+  type JournalRefresh,
+} from "./journal.js";
+import {
   copyLinkedAssociations,
   installProjects,
   linkedProjectSql,
@@ -73,7 +78,10 @@ export const storedKindSchema = z.enum([
   "decision_proposal",
   "fact",
   "decision",
+  "journal",
 ]);
+const knowledgeKindCheck =
+  "'idea', 'observation', 'decision_proposal', 'fact', 'decision', 'journal'";
 export type StoredKnowledgeKind = z.infer<typeof storedKindSchema>;
 export type AddKnowledgeInput = z.infer<typeof addKnowledgeSchema>;
 export type RelateKnowledgeInput = z.infer<typeof relateKnowledgeSchema>;
@@ -115,7 +123,8 @@ function migrateKnowledgeKinds(db: DatabaseSync) {
     .get() as { sql?: unknown } | undefined;
   const sql = String(row?.sql ?? "");
   // Match the kind token. SQLite may reflow whitespace around the CHECK.
-  if (!sql || sql.includes("'fact'")) return;
+  // 'journal' is the newest kind, so a fact-era table still needs this copy.
+  if (!sql || sql.includes("'journal'")) return;
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -127,7 +136,7 @@ function migrateKnowledgeKinds(db: DatabaseSync) {
       CREATE TABLE knowledge_items_new (
         id TEXT PRIMARY KEY NOT NULL,
         scope TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('idea', 'observation', 'decision_proposal', 'fact', 'decision')),
+        kind TEXT NOT NULL CHECK(kind IN (${knowledgeKindCheck})),
         text TEXT NOT NULL,
         source_refs TEXT NOT NULL,
         creator TEXT NOT NULL,
@@ -308,7 +317,7 @@ export class KnowledgeStore {
         CREATE TABLE IF NOT EXISTS knowledge_items (
           id TEXT PRIMARY KEY NOT NULL,
           scope TEXT NOT NULL,
-          kind TEXT NOT NULL CHECK(kind IN ('idea', 'observation', 'decision_proposal', 'fact', 'decision')),
+          kind TEXT NOT NULL CHECK(kind IN (${knowledgeKindCheck})),
           text TEXT NOT NULL,
           source_refs TEXT NOT NULL,
           creator TEXT NOT NULL,
@@ -597,24 +606,20 @@ export class KnowledgeStore {
       throw new Error("Invalid candidate bound");
     if (!input.terms.length && !sourceIds.length)
       return { total: 0, items: [], matchOffsets: new Map<string, number>() };
-    // Area-wide search keeps its mix and omits distilled sentences.
+    // Area-wide search keeps its mix and omits distilled sentences and journals.
     // A project filter includes them so project search can rank them first.
     const conditions = ["k.scope = ?", "status <> 'rejected'"];
-    if (!input.projectId) conditions.push("k.kind NOT IN ('fact', 'decision')");
+    if (!input.projectId)
+      conditions.push("k.kind NOT IN ('fact', 'decision', 'journal')");
     const params: (string | number)[] = [input.scope];
-    const invalid = ["s.id IS NULL"];
-    const date = "source_timestamp(COALESCE(m.created_at,s.captured_at))";
-    if (input.from) {
-      invalid.push(`${date} < ?`);
-      params.push(Date.parse(input.from));
-    }
-    if (input.until) {
-      invalid.push(`${date} >= ?`);
-      params.push(Date.parse(input.until));
-    }
-    conditions.push(
-      `NOT EXISTS (SELECT 1 FROM json_each(k.source_refs) ref LEFT JOIN sources s ON s.id=json_extract(ref.value,'$.sourceId') AND s.scope=k.scope LEFT JOIN source_metadata m ON m.source_id=s.id WHERE ${invalid.join(" OR ")})`,
+    const window = knowledgeWindowSql(
+      this.#database,
+      "k",
+      input.from,
+      input.until,
     );
+    conditions.push(window.sql);
+    params.push(...window.params);
     if (input.projectId) {
       conditions.push(linkedProjectSql("knowledge", "k.id"));
       params.push(input.projectId);
@@ -647,17 +652,21 @@ export class KnowledgeStore {
         const found = matches("");
         return materialize(found.ids, found.total, found.matchOffsets);
       }
-      // Keep distilled rows inside the candidate cap even when other notes rank higher.
+      // Journals, then distilled rows, stay inside the cap ahead of other notes.
+      const journals = matches("k.kind = 'journal'");
       const distilled = matches("k.kind IN ('fact', 'decision')");
-      const rest = matches("k.kind NOT IN ('fact', 'decision')");
-      const ids = [...distilled.ids];
+      const rest = matches("k.kind NOT IN ('fact', 'decision', 'journal')");
+      const ids = [...journals.ids];
+      for (const id of distilled.ids) if (!ids.includes(id)) ids.push(id);
       for (const id of rest.ids) if (!ids.includes(id)) ids.push(id);
       const matchOffsets = new Map(rest.matchOffsets);
       for (const [id, offset] of distilled.matchOffsets)
         matchOffsets.set(id, offset);
+      for (const [id, offset] of journals.matchOffsets)
+        matchOffsets.set(id, offset);
       return materialize(
         ids.slice(0, input.limit),
-        distilled.total + rest.total,
+        journals.total + distilled.total + rest.total,
         matchOffsets,
       );
     }
@@ -673,7 +682,7 @@ export class KnowledgeStore {
     );
     const items = this.#database
       .prepare(
-        `${itemSelection} WHERE ${where} ORDER BY ${input.projectId ? "CASE WHEN k.kind IN ('fact', 'decision') THEN 0 ELSE 1 END, k.created_at DESC, k.id" : "k.created_at DESC, k.id"} LIMIT ?`,
+        `${itemSelection} WHERE ${where} ORDER BY ${input.projectId ? "CASE WHEN k.kind = 'journal' THEN 0 WHEN k.kind IN ('fact', 'decision') THEN 1 ELSE 2 END, k.created_at DESC, k.id" : "k.created_at DESC, k.id"} LIMIT ?`,
       )
       .all(...params, input.limit)
       .map(decodeItem);
@@ -682,6 +691,15 @@ export class KnowledgeStore {
 
   retrievalRelations(scope: string) {
     return retrievalRelations(this.#database, scope);
+  }
+
+  refreshJournals(input: {
+    areas: readonly string[];
+    now: Date;
+    timeZone: string;
+    dryRun: boolean;
+  }): JournalRefresh {
+    return refreshProjectJournals(this.#database, input);
   }
 
   packageRelations(scope: string, ids: readonly string[]) {
