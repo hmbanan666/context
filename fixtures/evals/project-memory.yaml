@@ -1,7 +1,6 @@
 # Accepted synthetic cases for ADRs 0010–0012.
-# Fictional data only. Today's eval schema rejects these fields.
-# Do not pass this file to `context eval run` or `pnpm run eval:retrieval`
-# until the project-memory harness slice lands. Corpus layout: docs/evals.md.
+# Fictional data only. Pack cases stay skipped until slice 4f.
+# Corpus layout: docs/evals.md.
 questions:
   - id: october_on_project
     question: What happened in October on the observatory project?

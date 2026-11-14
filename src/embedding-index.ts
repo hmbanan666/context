@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { setImmediate as yieldEventLoop } from "node:timers/promises";
 import { type Embedder, textChunks } from "./embedding-model.js";
+import { linkedProjectSql } from "./projects.js";
 import {
   type SearchTable,
   stemText,
@@ -19,6 +20,7 @@ export interface SemanticSelection {
   question: string;
   from?: string | undefined;
   until?: string | undefined;
+  projectId?: string | undefined;
 }
 export interface SemanticHits {
   available: boolean;
@@ -346,8 +348,9 @@ export class EmbeddingIndex {
       conditions.push(
         "COALESCE((SELECT status FROM knowledge_reviews v WHERE v.knowledge_id=r.id AND v.scope=r.scope ORDER BY v.rowid DESC LIMIT 1),'suggested')<>'rejected'",
       );
-      // Proposed distillations stay out of retrieval until slice 4c ranks them.
-      conditions.push("r.kind NOT IN ('fact', 'decision')");
+      // Area-wide retrieval still omits distilled sentences. Project search ranks them.
+      if (!input.projectId)
+        conditions.push("r.kind NOT IN ('fact', 'decision')");
       const invalid = ["s.id IS NULL"];
       for (const [bound, op] of [
         [input.from, "<"],
@@ -362,6 +365,12 @@ export class EmbeddingIndex {
       conditions.push(
         `NOT EXISTS (SELECT 1 FROM json_each(r.source_refs) ref LEFT JOIN sources s ON s.id=json_extract(ref.value,'$.sourceId') AND s.scope=r.scope LEFT JOIN source_metadata m ON m.source_id=s.id WHERE ${invalid.join(" OR ")})`,
       );
+    }
+    if (input.projectId) {
+      conditions.push(
+        linkedProjectSql(table === "sources" ? "source" : "knowledge", "r.id"),
+      );
+      params.push(input.projectId);
     }
     const from = `FROM embedding_chunks c JOIN ${table} r ON r.id=c.record_id ${table === "sources" ? "LEFT JOIN source_metadata m ON m.source_id=r.id" : ""} WHERE ${conditions.join(" AND ")}`;
     const top = new Map<

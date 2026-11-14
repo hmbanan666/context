@@ -276,5 +276,10 @@ Catalog and association are implemented: `search` and `timeline` accept an
 optional `project` id, and `search` with `listProjects: true` returns at most
 64 ids and names without searching. See
 [ADR 0010](adr/0010-projects-in-the-understanding-layer.md). Nightly distillation
-stores proposed facts and decisions (ADR 0011) and does not change this ranking.
-`search` and `timeline` omit those sentences until project search prefers them.
+stores proposed facts and decisions (ADR 0011). Area-wide search still omits
+those sentences, and `timeline` stays a source list. With a project id, search
+ranks that project's distilled facts and decisions in the requested dates ahead
+of raw sources. Each item is labelled with its stored status, `proposed` or
+`approved`, and carries the source id and URL. A raw source cited by a returned
+item is omitted. `budgetBytes` (2048–65536) overrides the 8192-byte package
+budget. Profiles, journals and pack mode are not implemented.

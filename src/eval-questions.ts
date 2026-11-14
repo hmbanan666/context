@@ -4,6 +4,7 @@ import { parseDocument } from "yaml";
 import { z } from "zod";
 import { scopeSchema } from "./contracts.js";
 import { contextPackageSchema } from "./package-query.js";
+import { projectIdSchema } from "./projects.js";
 
 const areas = z
   .array(scopeSchema)
@@ -20,9 +21,19 @@ export const evalQuestionSchema = z
     question: contextPackageSchema.shape.question,
     areas: areas.refine((a) => a.length > 0),
     read_areas: areas,
+    project: projectIdSchema.optional(),
+    since: z.iso.datetime({ offset: true }).optional(),
+    until: z.iso.datetime({ offset: true }).optional(),
+    mode: z.enum(["pack"]).optional(),
+    budget_bytes: z.number().int().min(512).max(65536).optional(),
     expected: z.array(matcher).max(100),
     outranks: z.array(matcher).min(1).max(100).optional(),
     forbidden_areas: areas.default([]),
+    forbidden_substrings: z
+      .array(z.string().min(1).max(2048))
+      .max(20)
+      .optional(),
+    expect_truncated: z.boolean().optional(),
     tags: z.array(z.string().min(1).max(64)).max(16).default([]),
     placeholder: z.boolean().default(false),
   })
@@ -32,7 +43,14 @@ export const evalQuestionSchema = z
         q.expected.length > 0 ||
         q.forbidden_areas.length > 0) &&
       (!q.outranks || q.expected.length > 0),
-  );
+  )
+  .refine(
+    (q) => !q.since || !q.until || Date.parse(q.since) < Date.parse(q.until),
+    { message: "since must precede until" },
+  )
+  .refine((q) => q.mode !== "pack" || q.project !== undefined, {
+    message: "pack mode requires a project",
+  });
 export type EvalQuestion = z.infer<typeof evalQuestionSchema>;
 const fileSchema = z
   .strictObject({ questions: z.array(evalQuestionSchema).min(1).max(500) })

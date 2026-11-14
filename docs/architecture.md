@@ -116,8 +116,12 @@ one proposed `fact` or `decision` per source revision that does not already have
 one, copying configured and client project links and storing any other model
 project string as a proposal. Calls are capped separately from inbox sorting and
 resume from a cursor. Sentences that copy 80 contiguous characters of the stored
-body are rejected and stay pending. Proposed sentences are readable by id and
-are omitted from `search` and `timeline` until slice 4c. Profiles, journals and
+body are rejected and stay pending. Proposed sentences are readable by id.
+Area-wide `search` and `timeline` still omit them. `search` with a project id
+ranks that project's distilled facts and decisions in the requested dates ahead
+of raw sources, labels each with its stored status (`proposed` or `approved`)
+and omits a raw source cited by a returned item (ADR 0012 slice 4c). Optional
+`budgetBytes` overrides the package budget. Profiles, journals, approval and
 task packs are accepted in ADR 0012 and are not implemented.
 Hard delete remains a later slice. None of that is complete stage 4 acceptance.
 

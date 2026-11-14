@@ -100,19 +100,38 @@ export async function retrieveForEval(
     const violations = new Set<string>();
     const lists: EvalHit[][] = [];
     let failed = false;
+    let forbiddenHits = 0;
+    let truncated = false;
     for (const area of new Set([
       ...question.areas,
       ...question.forbidden_areas,
     ])) {
       try {
+        const projectSearch = question.project !== undefined;
         const response = await client.callTool({
-          name: "context_package",
-          arguments: {
-            question: question.question,
-            scope: area,
-            limit: k,
-            maxBytes: 65536,
-          },
+          name: projectSearch ? "search" : "context_package",
+          arguments: projectSearch
+            ? {
+                scope: area,
+                query: question.question,
+                k,
+                project: question.project,
+                ...(question.since === undefined
+                  ? {}
+                  : { since: question.since }),
+                ...(question.until === undefined
+                  ? {}
+                  : { until: question.until }),
+                ...(question.budget_bytes === undefined
+                  ? {}
+                  : { budgetBytes: question.budget_bytes }),
+              }
+            : {
+                question: question.question,
+                scope: area,
+                limit: k,
+                maxBytes: 65536,
+              },
         });
         const authorized = question.read_areas.includes(area);
         if (response.isError) {
@@ -157,24 +176,55 @@ export async function retrieveForEval(
           for (const id of relation.sourceIds)
             check("source", id, sourceInfo.get(id));
         }
-        if (question.areas.includes(area))
+        if (question.areas.includes(area)) {
+          const body = JSON.stringify(response.structuredContent ?? {});
+          for (const phrase of question.forbidden_substrings ?? [])
+            if (body.includes(phrase)) forbiddenHits += 1;
+          if (
+            z
+              .object({ truncated: z.boolean() })
+              .safeParse(response.structuredContent).data?.truncated
+          )
+            truncated = true;
+          const externalIds = (id: string) => {
+            const info = sourceInfo.get(id);
+            return [info?.external_id, info?.source_uri].filter(
+              (value): value is string => typeof value === "string",
+            );
+          };
           lists.push(
-            result.sources.map((source) => {
-              const info = sourceInfo.get(source.id);
-              return {
-                id: source.id,
-                excerpts: [
-                  source.excerpt.text,
-                  ...result.items
-                    .filter((item) => item.sourceIds.includes(source.id))
-                    .map((item) => item.excerpt.text),
-                ],
-                externalIds: [info?.external_id, info?.source_uri].filter(
-                  (id): id is string => typeof id === "string",
-                ),
-              };
-            }),
+            projectSearch
+              ? [
+                  ...result.items.map((item) => ({
+                    id: item.id,
+                    excerpts: [item.excerpt.text],
+                    externalIds: item.sourceIds.flatMap(externalIds),
+                  })),
+                  ...result.sources
+                    .filter(
+                      (source) =>
+                        !result.items.some((item) =>
+                          item.sourceIds.includes(source.id),
+                        ),
+                    )
+                    .map((source) => ({
+                      id: source.id,
+                      excerpts: [source.excerpt.text],
+                      externalIds: externalIds(source.id),
+                    })),
+                ]
+              : result.sources.map((source) => ({
+                  id: source.id,
+                  excerpts: [
+                    source.excerpt.text,
+                    ...result.items
+                      .filter((item) => item.sourceIds.includes(source.id))
+                      .map((item) => item.excerpt.text),
+                  ],
+                  externalIds: externalIds(source.id),
+                })),
           );
+        }
       } catch {
         failed = true;
       }
@@ -196,6 +246,8 @@ export async function retrieveForEval(
       failed,
       semanticUsed,
       semanticUnavailable,
+      forbiddenHits,
+      truncated,
     };
   } finally {
     await client.close();

@@ -34,7 +34,15 @@ function sourceCard(m: Material, matchOffset = 0, supersededBy?: string) {
     excerpt: excerpt(m.source.text, matchOffset),
   };
 }
-function itemCard(k: KnowledgeItem, matchOffset = 0, supersededBy?: string) {
+function distilledKind(kind: KnowledgeItem["kind"]) {
+  return kind === "fact" || kind === "decision";
+}
+function itemCard(
+  k: KnowledgeItem,
+  matchOffset = 0,
+  supersededBy?: string,
+  sourceLinks?: { id: string; url?: string }[],
+) {
   return {
     id: k.id,
     ...(supersededBy ? { supersededBy } : {}),
@@ -44,6 +52,7 @@ function itemCard(k: KnowledgeItem, matchOffset = 0, supersededBy?: string) {
     creator: k.creator,
     excerpt: excerpt(k.text, matchOffset, 480),
     sourceIds: k.sourceRefs.map((r) => r.sourceId),
+    ...(sourceLinks ? { sourceLinks } : {}),
   };
 }
 function relationCard(r: KnowledgeRelation) {
@@ -181,6 +190,8 @@ export function buildContextPackage(
     item.scope === request.scope &&
     item.status !== "rejected" &&
     linked("knowledge", item.id);
+  // Sources cited by a distilled item that was actually returned.
+  const citedSources = new Set<string>();
   const add = (
     ms: Material[],
     ks: KnowledgeItem[] = [],
@@ -199,7 +210,9 @@ export function buildContextPackage(
         : k;
     });
     if (projectId !== undefined) {
-      ms = ms.filter((m) => linked("source", m.source.id));
+      ms = ms.filter(
+        (m) => linked("source", m.source.id) && !citedSources.has(m.source.id),
+      );
       ks = ks.filter((k) => linked("knowledge", k.id));
       rs = rs.filter((r) =>
         [r.fromId, r.toId].every(
@@ -245,6 +258,12 @@ export function buildContextPackage(
             k,
             derived.matchOffsets.get(k.id),
             state.superseded.get(k.id),
+            projectId !== undefined && distilledKind(k.kind)
+              ? k.sourceRefs.map((ref) => {
+                  const url = material(ref.sourceId)?.metadata.sourceUri;
+                  return url ? { id: ref.sourceId, url } : { id: ref.sourceId };
+                })
+              : undefined,
           ),
         ),
       ],
@@ -278,17 +297,32 @@ export function buildContextPackage(
     return true;
   };
   // Interleave the independently ranked lists; raw BM25 scores are not comparable across indexes.
+  // Project search puts distilled items in tier 0. Journal entries join that tier in slice 4d.
   const candidates: Array<{
     source?: Material;
     item?: KnowledgeItem;
     rank: number;
+    tier: number;
   }> = [];
-  original.materials.slice(0, 100).forEach((source, i) => {
-    candidates.push({ source, rank: i * 2 + 1 });
-  });
-  derived.items.slice(0, 100).forEach((item, i) => {
-    candidates.push({ item, rank: i * 2 });
-  });
+  if (projectId === undefined) {
+    original.materials.slice(0, 100).forEach((source, i) => {
+      candidates.push({ source, rank: i * 2 + 1, tier: 0 });
+    });
+    derived.items.slice(0, 100).forEach((item, i) => {
+      candidates.push({ item, rank: i * 2, tier: 0 });
+    });
+  } else {
+    let distilledRank = 0;
+    let restRank = 0;
+    for (const item of derived.items.slice(0, 100)) {
+      if (distilledKind(item.kind))
+        candidates.push({ item, rank: distilledRank++, tier: 0 });
+      else candidates.push({ item, rank: restRank++, tier: 1 });
+    }
+    original.materials.slice(0, 100).forEach((source, i) => {
+      candidates.push({ source, rank: i, tier: 1 });
+    });
+  }
   // Substitute a readable canonical even when only its copy matched.
   for (const candidate of candidates) {
     const id = candidate.source?.source.id ?? candidate.item?.id;
@@ -312,16 +346,21 @@ export function buildContextPackage(
         !!c.item?.sourceRefs.some((r) => state.superseded.has(r.sourceId)),
     );
   for (const candidate of candidates.sort(
-    (a, b) => historical(a) - historical(b) || a.rank - b.rank,
+    (a, b) =>
+      historical(a) - historical(b) || a.tier - b.tier || a.rank - b.rank,
   )) {
     if (candidate.source) {
+      if (citedSources.has(candidate.source.source.id)) continue;
       if (eligible(candidate.source)) add([candidate.source]);
       continue;
     }
     const item = candidate.item;
     if (!item || !validItem(item)) continue;
     const refs = references(item.sourceRefs);
-    if (refs) add(refs, [item]);
+    if (!refs) continue;
+    const prefer = projectId !== undefined && distilledKind(item.kind);
+    if (add(prefer ? [] : refs, [item]) && prefer)
+      for (const source of refs) citedSources.add(source.source.id);
   }
   // Expand only the included search/timeline seeds, never recursively traverse the graph.
   const links = knowledge.packageRelations(request.scope, [
@@ -357,7 +396,28 @@ export function buildContextPackage(
   result.items.sort(
     (a, b) => Number(!!a.supersededBy) - Number(!!b.supersededBy),
   );
+  if (projectId !== undefined) {
+    const cited = new Set(
+      result.items
+        .filter((item) => distilledKind(item.kind))
+        .flatMap((item) => item.sourceIds),
+    );
+    result.sources = result.sources.filter((source) => !cited.has(source.id));
+  }
   result.coverage.reasons = [...reasons];
   result.truncated = reasons.size > 0;
-  return result;
+  if (projectId === undefined) return result;
+  // Serialise distilled items before raw excerpts for the caller.
+  return {
+    version: result.version,
+    scope: result.scope,
+    mode: result.mode,
+    dateBasis: result.dateBasis,
+    items: result.items,
+    sources: result.sources,
+    relations: result.relations,
+    coverage: result.coverage,
+    truncated: result.truncated,
+    readMore: result.readMore,
+  };
 }
