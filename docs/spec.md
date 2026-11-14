@@ -134,14 +134,24 @@ are also possible through authorized agents via MCP.
 
 ### Projects and distilled memory
 
-Accepted in ADRs 0010–0012. Not implemented. Caps and call limits live in those
-ADRs so this spec does not keep a second copy.
+Accepted in ADRs 0010–0012. Caps and call limits live in those
+ADRs so this spec does not keep a second copy. Slice 4a is implemented: the
+project catalog, repository mappings, import and backfill of configured
+associations, optional `project` on `remember`, `search` and `timeline`,
+association fields on `read`, and `search` with `listProjects: true`.
+Distillation, profiles, journals, approval and task packs are not implemented.
 
-- A project is an understanding-layer entity with a stable id, independent of
-  area. Association comes from an owner repository→project mapping, from an
-  optional `project` field on `remember`, or from a processor proposal. Unknown
-  ids on `remember` are rejected. Proposals do not affect default retrieval
-  until the owner approves them. Association is not permission.
+- A project is an understanding-layer entity with a stable id and one home
+  area. It is not an area and not a permission. Association comes from an owner
+  `owner/repo` mapping (`metadata.repo` on import; `context project backfill`
+  rewrites configured links), from an optional `project` field on `remember`,
+  or from a processor proposal stored with no usable id until a later approval
+  slice. Unknown ids on `remember` are rejected. Proposals do not affect
+  retrieval. Association is not permission.
+- `search` and `timeline` take an optional `project` filter and otherwise stay
+  area-wide. `search` with `listProjects: true` returns the bounded id-and-name
+  catalog and does not search. `read` returns each association's project id,
+  origin and status. The catalog is not the project profile.
 - The configured processor distills a source revision into one proposed sentence
   (`fact` or `decision`) with its project, date and source link. GitHub pull
   requests remain archive evidence; the sentence states what was decided or
@@ -151,8 +161,10 @@ ADRs so this spec does not keep a second copy.
 - Each project has a small owner-written profile (purpose, rules, pinned
   decisions in force) and a weekly journal built from distilled items. A missing
   journal is not an empty week.
-- Period questions use `search` with `project` and dates. That search prefers
-  distilled items and journal entries and omits a raw source those items cite.
+- Period questions use `search` with `project` and dates. Slice 4a returns
+  linked records in the current area-wide ranking. Preferring distilled items
+  and journal entries, and omitting a raw source those items cite, is a later
+  slice.
 - A task pack is `search` with `mode: "pack"`, a project, a task query and a
   caller-supplied byte budget. It returns the profile, relevant decisions in
   force and recent facts, then raw excerpts only for sources not already cited.
@@ -279,9 +291,10 @@ calls; exact source retrieval remains usable while its index rebuilds.
 ### Stage 4 — Understanding, consolidation and nightly evals (partially merged)
 
 Deduplication, explicit supersession and history, guarded inbox sorting and
-nightly evaluation are already merged. Still to build: facts, decisions,
-projects and people through the pluggable processor, including the
-project-memory slices in the roadmap, plus hard delete with tombstones.
+nightly evaluation are already merged. Slice 4a (project catalog and
+association) is implemented and not deployed. Still to build: distillation,
+profiles, journals, approval, task packs and people through the pluggable
+processor, plus hard delete with tombstones.
 Automatic supersession is not part of this stage. Uncertain inbox items still
 await an owner decision.
 
@@ -300,9 +313,9 @@ items await owner decisions. Hard delete removes the record and derivations from
 reads, search, history and pending processing; only the tombstone remains. Test
 that restore reconciliation prevents silent resurrection, with an explicit
 backup-retention contract. Private and synthetic nightly evals report failures
-without exposing private questions or results publicly. The project-memory
-slices in the roadmap are the remaining path to this acceptance; they are not
-met by the current deployment.
+without exposing private questions or results publicly. Slice 4a is only the
+catalog and association. Distillation, project-search ranking, profiles,
+journals, approval and pack mode remain unmet.
 
 ### Stage 5 — Owner UI and more imports (planned)
 

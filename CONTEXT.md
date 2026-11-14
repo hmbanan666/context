@@ -45,9 +45,12 @@ sentence; inference does not approve it or supersede another item.
 _Avoid_: suggestion (for an approved choice), inferred authorization, automatic supersession.
 
 **Project**: An owner-defined undertaking in the understanding layer, with a
-stable id. Sources and derived items may associate with several projects. A
-project is independent of area: the area controls access, the project says which
-undertaking the record belongs to.
+stable id and a display name. Sources and derived items may associate with
+several projects. A project is independent of area: the area controls access,
+the project says which undertaking the record belongs to. Association comes
+from an owner `owner/repo` mapping or an optional `remember` field. A processor
+proposal has no id that `remember` or `search` can use until the owner approves
+it.
 _Avoid_: area, permission, repository (as a universal synonym), the removed `project_context` tool.
 
 **Project profile**: The small owner-written description of one project: purpose,

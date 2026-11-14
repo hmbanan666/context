@@ -87,6 +87,7 @@ export function buildContextPackage(
   knowledge: KnowledgeStore,
   input: z.input<typeof contextPackageSchema>,
   semantic?: SemanticHits,
+  projectId?: string,
 ): ContextPackage {
   const request = contextPackageSchema.parse(input);
   const terms =
@@ -97,6 +98,7 @@ export function buildContextPackage(
     limit: 101,
     ...(request.from ? { from: request.from } : {}),
     ...(request.until ? { until: request.until } : {}),
+    ...(projectId ? { projectId } : {}),
   };
   const original = sources.packageCandidates({
     ...selection,
@@ -142,13 +144,16 @@ export function buildContextPackage(
       materialCache.set(id, sources.findMaterial(id, request.scope));
     return materialCache.get(id);
   };
+  const linked = (kind: "source" | "knowledge", id: string) =>
+    projectId === undefined || sources.linkedToProject(kind, id, projectId);
   const eligible = (m: Material) => {
     const date = Date.parse(m.metadata.createdAt ?? m.source.capturedAt);
     return (
       m.source.scope === request.scope &&
       Number.isFinite(date) &&
       (!request.from || date >= Date.parse(request.from)) &&
-      (!request.until || date < Date.parse(request.until))
+      (!request.until || date < Date.parse(request.until)) &&
+      linked("source", m.source.id)
     );
   };
   const references = (refs: KnowledgeItem["sourceRefs"]) => {
@@ -173,7 +178,9 @@ export function buildContextPackage(
     return found;
   };
   const validItem = (item: KnowledgeItem) =>
-    item.scope === request.scope && item.status !== "rejected";
+    item.scope === request.scope &&
+    item.status !== "rejected" &&
+    linked("knowledge", item.id);
   const add = (
     ms: Material[],
     ks: KnowledgeItem[] = [],
@@ -191,6 +198,16 @@ export function buildContextPackage(
         ? canonical
         : k;
     });
+    if (projectId !== undefined) {
+      ms = ms.filter((m) => linked("source", m.source.id));
+      ks = ks.filter((k) => linked("knowledge", k.id));
+      rs = rs.filter((r) =>
+        [r.fromId, r.toId].every(
+          (id) => linked("source", id) || linked("knowledge", id),
+        ),
+      );
+      if (ms.length + ks.length === 0) return false;
+    }
     const newSources = ms.filter(
       (m, i) =>
         !result.sources.some((s) => s.id === m.source.id) &&

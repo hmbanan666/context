@@ -106,9 +106,13 @@ Without a configured processor, tidy does dedup only; no inference provider is
 needed for capture or reading.
 Tidy history is content-free JSONL beside eval history, including the last-success
 time, processor, model, counts (including LLM calls) and duration. Old supersession
-history fields are ignored. Project association, distillation, profiles, journals
-and task packs are accepted in ADRs 0010–0012 and are not implemented. Hard
-delete remains a later slice. Neither is complete stage 4 acceptance.
+history fields are ignored. Project catalog, repository mappings and
+associations are implemented (ADR 0010 slice 4a): import and `context project
+backfill` write configured links, `remember` can attach client links, and
+`search` / `timeline` can filter by project. Processor proposals are stored
+without a usable id; approval is not implemented. Distillation, profiles,
+journals and task packs are accepted in ADRs 0011–0012 and are not implemented.
+Hard delete remains a later slice. None of that is complete stage 4 acceptance.
 
 Inbox moves are transactional metadata changes. FTS/stemmed rows retain their
 rowids/text and enforce area by joining sources; embedding scopes move and active

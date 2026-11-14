@@ -68,8 +68,10 @@ Search combines exact text, Russian/English stemming and local semantic
 embeddings. The image includes the model; background indexing catches up after
 capture, with lexical fallback if the model is unavailable. [Search details](docs/search.md). Nightly tidy collapses near-identical sources and, when a processor is configured,
 sorts confident inbox items. Clients supersede explicitly through `remember`.
-Project distillation, profiles and task packs are decided in
-[ADRs 0010–0012](docs/adr/0010-projects-in-the-understanding-layer.md) and are
+Project catalog and association are implemented
+([ADR 0010](docs/adr/0010-projects-in-the-understanding-layer.md)).
+Distillation, profiles and task packs are decided in
+[ADRs 0011–0012](docs/adr/0011-distill-proposed-facts-and-decisions.md) and are
 not implemented. Hard delete remains [planned](docs/roadmap.md).
 Capture and reading work without an inference provider.
 
@@ -97,10 +99,10 @@ Only these four tools appear in `tools/list`:
 
 | Tool | Purpose |
 | --- | --- |
-| `search` | Find source-grounded context with `query`, optional `scope`, `k` (1–20), `since` and `until`. |
-| `remember` | Save `text` or `file` with optional metadata and authenticated-client provenance; supply an `idempotencyKey`. Files use `filename`, `mediaType` and canonical `contentBase64` (UTF-8 `.txt`/`.md`, at most 16 KiB). |
-| `read` | Read a source/material/file or knowledge item by `id` and `scope`, including file bytes and up to 50 existing relations; reports truncation. |
-| `timeline` | List recent original source records, newest first, with optional `scope`, `since`, `until` and `limit` (1–20). |
+| `search` | Find source-grounded context with `query`, optional `scope`, `project`, `k` (1–20), `since` and `until`. `listProjects: true` returns up to 64 project ids and names and does not search. |
+| `remember` | Save `text` or `file` with optional metadata, optional `project` ids and authenticated-client provenance; supply an `idempotencyKey`. Files use `filename`, `mediaType` and canonical `contentBase64` (UTF-8 `.txt`/`.md`, at most 16 KiB). |
+| `read` | Read a source/material/file or knowledge item by `id` and `scope`, including file bytes, project associations and up to 50 existing relations; reports truncation. |
+| `timeline` | List recent original source records, newest first, with optional `scope`, `project`, `since`, `until` and `limit` (1–20). |
 
 Dates are ISO timestamps with timezone: `since` is inclusive, `until` exclusive.
 They filter source creation dates when supplied, otherwise capture dates.

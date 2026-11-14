@@ -24,6 +24,7 @@ export type PackageSelection = Pick<
   terms: readonly string[];
   limit: number;
   vectors?: readonly import("./search-lexical.js").VectorHit[];
+  projectId?: string;
 };
 // Small explicit question-word list, not a language model, stemmer or synonym map.
 const stop = new Set(

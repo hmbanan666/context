@@ -1,6 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { ZodError } from "zod";
 import type { OperationScope, personalDataScope } from "./contracts.js";
+import { UnknownProject } from "./projects.js";
 import { IdempotencyConflict } from "./store.js";
 
 export type AuthorizeTool = (
@@ -30,14 +31,17 @@ export function toolResult(
 }
 
 export function storageError(error: unknown): CallToolResult {
+  const unknown = error instanceof UnknownProject;
   return toolResult(
     {
-      error:
-        error instanceof IdempotencyConflict
+      error: unknown
+        ? "unknown_project"
+        : error instanceof IdempotencyConflict
           ? "idempotency_conflict"
           : error instanceof ZodError
             ? "invalid_input"
             : "storage_unavailable",
+      ...(unknown ? { message: error.message } : {}),
     },
     true,
   );

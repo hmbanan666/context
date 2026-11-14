@@ -22,6 +22,30 @@ import {
   type MaterialMetadata,
 } from "./materials.js";
 import type { PackageSelection } from "./package-query.js";
+import {
+  addClientAssociation,
+  associationsFor,
+  backfillProjects,
+  createProject,
+  hasProject,
+  installProjects,
+  isLinkedToProject,
+  linkClientProjects,
+  linkConfiguredImport,
+  linkedProjectSql,
+  listProjects,
+  mapRepository,
+  proposeProjectLink,
+  rememberProjectsSchema,
+  renameProject,
+  repositoryMappings,
+  unmapRepository,
+  type Project,
+  type ProjectAssociation,
+  type ProjectBackfill,
+  type ProjectRecordKind,
+  type RepositoryMapping,
+} from "./projects.js";
 import { redact, redactFields } from "./redaction.js";
 import { retrievalRelations } from "./retrieval-relations.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
@@ -65,6 +89,7 @@ export interface MemorySelection {
   readonly snapshot?: number;
   readonly after?: MemoryPosition;
   readonly limit: number;
+  readonly projectId?: string;
 }
 
 function materialMetadata(
@@ -169,6 +194,7 @@ export class SourceStore {
         ) STRICT;
         COMMIT;
       `);
+      installProjects(this.#database);
       installSearchIndex(this.#database, "sources");
     } catch (error) {
       this.#database.close();
@@ -196,6 +222,7 @@ export class SourceStore {
   captureMaterial(
     input: CaptureMaterialInput,
     supersession?: CaptureSupersession,
+    projectIds?: readonly string[],
   ): {
     material: Material;
     duplicate: boolean;
@@ -218,6 +245,7 @@ export class SourceStore {
       { metadata },
       undefined,
       supersession,
+      projectIds,
     );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
@@ -256,6 +284,7 @@ export class SourceStore {
   captureFile(
     input: CaptureFileInput,
     supersession?: CaptureSupersession,
+    projectIds?: readonly string[],
   ): {
     material: Material;
     duplicate: boolean;
@@ -289,6 +318,7 @@ export class SourceStore {
       { metadata, file },
       undefined,
       supersession,
+      projectIds,
     );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
@@ -325,7 +355,17 @@ export class SourceStore {
     material?: StoredMaterial,
     imported?: ImportProvenance,
     supersession?: CaptureSupersession,
+    projectIds?: readonly string[],
   ): { source: Source; duplicate: boolean; changed?: boolean } {
+    // Omit projects from the hash unless the client sent them, so older retries match.
+    const sortedProjects = projectIds
+      ? [...rememberProjectsSchema.parse(projectIds)].sort()
+      : undefined;
+    const projectFingerprint = sortedProjects
+      ? createHash("sha256")
+          .update(JSON.stringify([captureFingerprint, sortedProjects]))
+          .digest("hex")
+      : captureFingerprint;
     const replacing = supersession
       ? {
           ids: supersedesSchema.parse(supersession.ids).sort(),
@@ -338,9 +378,9 @@ export class SourceStore {
     // Preserve old fingerprints when no supersession was requested.
     const fingerprint = replacing
       ? createHash("sha256")
-          .update(JSON.stringify([captureFingerprint, replacing]))
+          .update(JSON.stringify([projectFingerprint, replacing]))
           .digest("hex")
-      : captureFingerprint;
+      : projectFingerprint;
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       const knowledge = replacing
@@ -437,6 +477,10 @@ export class SourceStore {
         INSERT INTO capture_requests (scope, request_key, fingerprint, source_id) VALUES (?, ?, ?, ?)
       `)
           .run(request.scope, request.idempotencyKey, fingerprint, source.id);
+      if (imported)
+        linkConfiguredImport(this.#database, source.id, imported.metadata);
+      if (sortedProjects)
+        linkClientProjects(this.#database, source.id, sortedProjects);
       if (replacing && knowledge)
         for (const id of replacing.ids) {
           knowledge.relate({
@@ -636,6 +680,10 @@ export class SourceStore {
       conditions.push(`${date} < ?`);
       params.push(Date.parse(input.until));
     }
+    if (input.projectId) {
+      conditions.push(linkedProjectSql("source", "s.id"));
+      params.push(input.projectId);
+    }
     if (input.terms.length) {
       conditions.push(
         "s.rowid IN (SELECT rowid FROM sources_fts WHERE sources_fts MATCH ?)",
@@ -703,6 +751,10 @@ export class SourceStore {
       conditions.push(`${date} < ?`);
       params.push(Date.parse(input.until));
     }
+    if (input.projectId) {
+      conditions.push(linkedProjectSql("source", "s.id"));
+      params.push(input.projectId);
+    }
     if (input.terms.length) {
       const found = lexicalCandidates(
         this.#database,
@@ -744,6 +796,75 @@ export class SourceStore {
         return material;
       }),
     };
+  }
+
+  createProject(input: {
+    id: string;
+    name: string;
+    homeArea: string;
+  }): Project {
+    return createProject(this.#database, input);
+  }
+
+  renameProject(id: string, name: string): Project {
+    return renameProject(this.#database, id, name);
+  }
+
+  listProjects(limit?: number): { projects: Project[]; truncated: boolean } {
+    return listProjects(this.#database, limit);
+  }
+
+  mapRepository(repo: string, projectId: string): RepositoryMapping {
+    return mapRepository(this.#database, repo, projectId);
+  }
+
+  unmapRepository(repo: string): void {
+    unmapRepository(this.#database, repo);
+  }
+
+  repositoryMappings(): RepositoryMapping[] {
+    return repositoryMappings(this.#database);
+  }
+
+  backfillProjects(): ProjectBackfill {
+    return backfillProjects(this.#database);
+  }
+
+  associationsFor(
+    kind: ProjectRecordKind,
+    recordId: string,
+  ): ProjectAssociation[] {
+    return associationsFor(this.#database, kind, recordId);
+  }
+
+  hasProject(id: string): boolean {
+    return hasProject(this.#database, id);
+  }
+
+  linkedToProject(
+    kind: ProjectRecordKind,
+    recordId: string,
+    projectId: string,
+  ): boolean {
+    return isLinkedToProject(this.#database, kind, recordId, projectId);
+  }
+
+  addClientAssociation(
+    kind: ProjectRecordKind,
+    recordId: string,
+    projectIds: readonly string[],
+  ): void {
+    addClientAssociation(this.#database, kind, recordId, projectIds);
+  }
+
+  proposeProjectLink(input: {
+    recordKind: ProjectRecordKind;
+    recordId: string;
+    sourceId: string;
+    projectId?: string;
+    suggestedName?: string;
+  }): void {
+    proposeProjectLink(this.#database, input);
   }
 
   checkHealth(): void {
