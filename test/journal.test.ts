@@ -11,6 +11,7 @@ import {
 import {
   isoWeek,
   journalCharacterLimit,
+  journalExcerpt,
   journalId,
   journalParagraph,
 } from "../src/journal.js";
@@ -94,17 +95,64 @@ test("a journal paragraph summarizes decisions before facts in the source langua
   ]);
   assert.equal(paragraph.text.startsWith("expi 2026-W42: "), true);
   assert.equal([...paragraph.text].length <= journalCharacterLimit, true);
+  assert.equal(paragraph.text.includes("…"), false);
+  assert.equal(paragraph.text.includes("decision-early"), false);
+  assert.equal(paragraph.text.includes("fact-early"), false);
+  assert.equal(paragraph.text.includes("fact-late"), false);
   assert.deepEqual(paragraph.citedIds, [
     "decision-early",
     "fact-early",
     "fact-late",
   ]);
-  const decisionAt = paragraph.text.indexOf("decision-early");
-  const factAt = paragraph.text.indexOf("fact-early");
+  const decisionAt = paragraph.text.indexOf("Решение: оставить журнал");
+  const factAt = paragraph.text.indexOf("Факт: записали зеркало");
   assert.ok(decisionAt > 0 && decisionAt < factAt);
-  assert.equal(paragraph.text.includes("Решение: оставить журнал"), true);
   assert.equal(paragraph.text.includes("починили вход в Matrix"), true);
+  assert.equal(paragraph.text.endsWith("."), true);
   assert.equal(/\bcomplete\b/i.test(paragraph.text), false);
+});
+
+test("a journal omits a sentence that does not fit and does not cut it", () => {
+  const fitted = `D ${"d".repeat(390)}`;
+  const overflow = "n".repeat(400);
+  const later = "A later short fact.";
+  const paragraph = journalParagraph("observatory", "2026-W46", [
+    {
+      id: "long-decision",
+      kind: "decision",
+      text: fitted,
+      createdAt: "2026-11-10T00:00:00.000Z",
+    },
+    {
+      id: "overflow-decision",
+      kind: "decision",
+      text: overflow,
+      createdAt: "2026-11-11T00:00:00.000Z",
+    },
+    {
+      id: "short-fact",
+      kind: "fact",
+      text: later,
+      createdAt: "2026-11-12T00:00:00.000Z",
+    },
+  ]);
+  assert.deepEqual(paragraph.citedIds, ["long-decision", "short-fact"]);
+  assert.equal(paragraph.text.includes(later), true);
+  assert.equal(paragraph.text.includes(overflow), false);
+  assert.equal(paragraph.text.includes("…"), false);
+  assert.equal(paragraph.text.includes("long-decision"), false);
+  assert.equal(paragraph.text.endsWith("."), true);
+  assert.equal([...paragraph.text].length <= journalCharacterLimit, true);
+  const clipped = journalExcerpt(`${paragraph.text} ${"Z".repeat(400)}`);
+  assert.equal(clipped.truncated, true);
+  assert.equal(clipped.text.endsWith("."), true);
+  assert.equal(clipped.text.includes("…"), false);
+  assert.equal(clipped.text.length <= 480, true);
+  const boundary = `${"A".repeat(479)}.${"B".repeat(40)}`;
+  const exact = journalExcerpt(boundary, 480);
+  assert.equal(exact.text, `${"A".repeat(479)}.`);
+  assert.equal(exact.truncated, true);
+  assert.equal(exact.text.includes("B"), false);
 });
 
 test("ISO weeks follow the instance timezone, including a DST boundary", () => {
@@ -275,14 +323,36 @@ test("tidy writes one journal for the current and previous weeks and skips an em
       scope,
     );
     assert.equal(currentJournal?.kind, "journal");
-    assert.equal(currentJournal?.text.includes(currentItem.id), true);
-    assert.equal(currentJournal?.text.includes(previousItem.id), false);
+    assert.equal(currentJournal?.text.includes(currentItem.id), false);
+    assert.equal(currentJournal?.text.includes("cobalt mirror mount"), true);
+    assert.equal(currentJournal?.text.includes("…"), false);
+    assert.deepEqual(
+      f.knowledge.journalCitations(currentJournal?.id ?? "")?.citedIds,
+      [currentItem.id],
+    );
+    assert.equal(
+      f.knowledge
+        .journalCitations(currentJournal?.id ?? "")
+        ?.citedIds.includes(previousItem.id),
+      false,
+    );
     assert.equal(currentJournal?.text.includes(notebookItem.id), false);
     assert.equal(currentJournal?.text.includes("personal note"), false);
-    assert.equal(currentJournal?.text.includes(rejected.id), false);
+    assert.equal(
+      f.knowledge
+        .journalCitations(currentJournal?.id ?? "")
+        ?.citedIds.includes(rejected.id),
+      false,
+    );
     assert.equal(/\bcomplete\b/i.test(currentJournal?.text ?? ""), false);
-    assert.equal(previousJournal?.text.includes(previousItem.id), true);
-    assert.equal(notebookJournal?.text.includes(notebookItem.id), true);
+    assert.deepEqual(
+      f.knowledge.journalCitations(previousJournal?.id ?? "")?.citedIds,
+      [previousItem.id],
+    );
+    assert.deepEqual(
+      f.knowledge.journalCitations(notebookJournal?.id ?? "")?.citedIds,
+      [notebookItem.id],
+    );
     assert.equal(
       f.knowledge.find(journalId("observatory", "2026-W44"), scope),
       undefined,
@@ -343,8 +413,14 @@ test("tidy writes one journal for the current and previous weeks and skips an em
       scope,
     );
     assert.equal(rewritten?.id, currentJournal?.id);
-    assert.equal(rewritten?.text.includes(currentItem.id), true);
-    assert.equal(rewritten?.text.includes(addedItem.id), true);
+    assert.equal(rewritten?.text.includes(currentItem.id), false);
+    assert.equal(rewritten?.text.includes(addedItem.id), false);
+    assert.deepEqual(
+      f.knowledge.journalCitations(rewritten?.id ?? "")?.citedIds,
+      [currentItem.id, addedItem.id],
+    );
+    assert.equal(rewritten?.text.includes("cobalt mirror mount"), true);
+    assert.equal(rewritten?.text.includes("second November note"), true);
   } finally {
     await f.close();
   }
@@ -395,8 +471,14 @@ test("a journal paragraph stays within 800 characters and does not spend distill
     );
     assert.ok(journal);
     assert.equal([...journal.text].length <= journalCharacterLimit, true);
-    assert.equal(journal.text.includes("m".repeat(200)), false);
-    for (const id of ids) assert.equal(journal.text.includes(id), true);
+    assert.equal(journal.text.includes("…"), false);
+    assert.equal(journal.text.endsWith("."), true);
+    for (const id of ids) assert.equal(journal.text.includes(id), false);
+    assert.deepEqual(f.knowledge.journalCitations(journal.id)?.citedIds, [
+      ids[0],
+    ]);
+    assert.equal(journal.text.includes("beta"), false);
+    assert.equal(journal.text.includes("gamma"), false);
     const extra = capture(
       f.sources,
       "extra",
@@ -407,7 +489,7 @@ test("a journal paragraph stays within 800 characters and does not spend distill
       scope,
       sourceId: extra.id,
       kind: "fact",
-      text: `delta ${"d".repeat(394)}`,
+      text: "The observatory logged a second November note.",
       createdAt: "2026-11-13T00:00:00.000Z",
     }).item;
     const refreshed = f.knowledge.refreshJournals({
@@ -420,7 +502,13 @@ test("a journal paragraph stays within 800 characters and does not spend distill
     const updated = f.knowledge.find(journal.id, scope);
     assert.ok(updated);
     assert.equal([...updated.text].length <= journalCharacterLimit, true);
-    assert.equal(updated.text.includes(delta.id), true);
+    assert.equal(updated.text.includes(delta.id), false);
+    assert.equal(updated.text.includes("second November note"), true);
+    assert.equal(updated.text.includes("…"), false);
+    assert.deepEqual(f.knowledge.journalCitations(journal.id)?.citedIds, [
+      ids[0],
+      delta.id,
+    ]);
     const kept = new DatabaseSync(f.path, { readOnly: true });
     const row = kept
       .prepare("SELECT rowid FROM knowledge_items WHERE id = ?")
@@ -497,7 +585,13 @@ test("project search reads the journal by id and keeps area-wide results unchang
       associations?: { projectId?: string; status: string }[];
     };
     assert.equal(record.item?.kind, "journal");
-    assert.equal(record.item?.text.includes(item.id), true);
+    assert.equal(record.item?.text.includes(item.id), false);
+    assert.equal(record.item?.text.includes("cobalt mirror mount"), true);
+    assert.deepEqual(
+      (read.structuredContent as { citations?: { citedIds: string[] } })
+        .citations?.citedIds,
+      [item.id],
+    );
     assert.equal(
       record.associations?.some(
         (link) => link.projectId === "observatory" && link.status === "linked",
@@ -516,11 +610,19 @@ test("project search reads the journal by id and keeps area-wide results unchang
       until: "2026-11-16T00:00:00.000Z",
     });
     const body = project.structuredContent as {
-      items: { id: string; kind: string; excerpt: { text: string } }[];
+      items: {
+        id: string;
+        kind: string;
+        excerpt: { text: string };
+        citedIds?: string[];
+      }[];
       sources: { excerpt: { text: string } }[];
     };
     assert.equal(body.items[0]?.kind, "journal");
     assert.equal(body.items[0]?.id, id);
+    assert.deepEqual(body.items[0]?.citedIds, [item.id]);
+    assert.equal(body.items[0]?.excerpt.text.includes(item.id), false);
+    assert.equal(body.items[0]?.excerpt.text.includes("…"), false);
     assert.equal(
       body.items.some((entry) => entry.kind === "fact"),
       false,
@@ -652,11 +754,18 @@ test("journal backfill summarizes older weeks and does not rewrite them", async 
     const week = f.knowledge.find(journalId("observatory", "2026-W44"), scope);
     assert.ok(week);
     assert.equal([...week.text].length <= journalCharacterLimit, true);
-    assert.equal(week.text.includes(decision.id), true);
-    assert.equal(week.text.includes(fact.id), true);
-    assert.equal(week.text.includes(earlier.id), true);
+    assert.equal(week.text.includes(decision.id), false);
+    assert.equal(week.text.includes(fact.id), false);
+    assert.equal(week.text.includes(earlier.id), false);
+    assert.equal(week.text.includes("…"), false);
+    assert.deepEqual(f.knowledge.journalCitations(week.id)?.citedIds, [
+      decision.id,
+      earlier.id,
+      fact.id,
+    ]);
     assert.equal(
-      week.text.indexOf(decision.id) < week.text.indexOf(fact.id),
+      week.text.indexOf("Решение: оставить журнал") <
+        week.text.indexOf("починили вход в Matrix"),
       true,
     );
     assert.equal(week.text.includes("Решение: оставить журнал"), true);
@@ -674,11 +783,10 @@ test("journal backfill summarizes older weeks and does not rewrite them", async 
       journalBackfillLimit: 1,
     });
     assert.equal(second.journals, 1);
-    assert.equal(
-      f.knowledge
-        .find(journalId("observatory", "2026-W43"), scope)
-        ?.text.includes(ancient.id),
-      true,
+    assert.deepEqual(
+      f.knowledge.journalCitations(journalId("observatory", "2026-W43"))
+        ?.citedIds,
+      [ancient.id],
     );
     const rowDb = new DatabaseSync(f.path, { readOnly: true });
     const row = rowDb
@@ -712,6 +820,77 @@ test("journal backfill summarizes older weeks and does not rewrite them", async 
         }),
       /Invalid journal backfill limit/,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("journal backfill regenerates an older paragraph and nightly tidy leaves it", async () => {
+  const f = await open("journal-rebuild");
+  try {
+    const source = capture(
+      f.sources,
+      "ancient",
+      "Observatory archive from an older week.",
+      "2026-10-19T00:00:00.000Z",
+    );
+    const item = f.knowledge.addDistilled({
+      scope,
+      sourceId: source.id,
+      kind: "fact",
+      text: "The observatory project stored an older lantern.",
+      createdAt: "2026-10-19T00:00:00.000Z",
+    }).item;
+    const seeded = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      journalBackfill: true,
+      journalBackfillLimit: 1,
+    });
+    assert.equal(seeded.journals, 1);
+    const id = journalId("observatory", "2026-W43");
+    const stale = `observatory 2026-W43: The observatory project stored an older lantern (${item.id})…`;
+    const db = new DatabaseSync(f.path);
+    db.prepare("UPDATE knowledge_items SET text = ? WHERE id = ?").run(
+      stale,
+      id,
+    );
+    db.close();
+    const nightly = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+    });
+    assert.equal(nightly.journals, 0);
+    assert.equal(f.knowledge.find(id, scope)?.text, stale);
+    const rebuilt = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      journalBackfill: true,
+      journalBackfillLimit: 1,
+    });
+    assert.equal(rebuilt.journals, 1);
+    const week = f.knowledge.find(id, scope);
+    assert.equal(week?.text.includes(item.id), false);
+    assert.equal(week?.text.includes("…"), false);
+    assert.equal(week?.text.includes("older lantern"), true);
+    assert.equal(week?.text.endsWith("."), true);
+    assert.deepEqual(f.knowledge.journalCitations(id)?.citedIds, [item.id]);
+    const again = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      journalBackfill: true,
+      journalBackfillLimit: 1,
+    });
+    assert.equal(again.journals, 0);
+    assert.equal(f.knowledge.find(id, scope)?.text, week?.text);
   } finally {
     await f.close();
   }

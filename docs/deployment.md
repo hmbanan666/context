@@ -266,24 +266,32 @@ environment variable; the batch and call maxima are fixed.
 
 After distillation, the same tidy run refreshes each project's journal for the
 current ISO week and the previous ISO week in `TZ` (ADR 0012). The paragraph
-is a deterministic summary: it names the project id and the week, groups
-decisions before facts, compresses each item, cites the ids that fit, and stays
-within 800 characters in the source language. It does not call the processor
+is a deterministic summary: it names the project id and the week, then up to
+eight complete sentences, decisions before facts, within 800 characters in
+the source language. A sentence that does not fit is omitted whole. Item ids
+are not written into the paragraph; `read` returns them as `citations` and
+search returns them as `citedIds`. The summary does not call the processor
 and does not spend the distillation or inbox call caps, so it still runs when
 no processor is configured. A week with no such items has no entry. An unchanged
 summary does not rewrite the paragraph. `--dry-run` does not write journals.
 The history field `journals` counts paragraphs written on that run.
 
-To fill older weeks that already have distilled items:
+To fill older weeks that already have distilled items, and to regenerate
+paragraphs whose summary text changed (including journals written by the
+previous concatenated formatter):
 
 ```sh
 context tidy --journal-backfill --json
 context tidy --journal-backfill --journal-backfill-limit 8 --json
 ```
 
-The default bound is 24 writes per run and the maximum is 52. Newest older
-weeks are written first. A later run skips a week whose paragraph is unchanged.
-Nightly tidy does not pass this flag.
+The default bound is 24 older-week writes per run and the maximum is 52.
+Newest older weeks are written first. Repeat until `journals` is 0. A later
+run skips a week whose paragraph is unchanged. Nightly tidy does not pass
+this flag, so it refreshes only the current and previous weeks. An offset
+on a source date, such as `2026-09-29T12:00:00+01:00`, is accepted and the
+distilled item stores that instant in UTC. A source that is already linked
+to a project does not need the project id spelled in the sentence.
 
 `distillRejections` in the tidy JSON counts `copy-80`, `empty`,
 `invalid-project`, `parse-error`, and the other rejection checks. A few

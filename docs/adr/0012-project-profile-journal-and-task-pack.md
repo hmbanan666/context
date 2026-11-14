@@ -29,13 +29,21 @@ claims `approved` is stored as `proposed` or rejected, never as in force.
 **Journal.** For each project and ISO week in the instance timezone (`TZ`),
 tidy stores one replaceable paragraph of at most 800 characters built only from
 that week's distilled facts and decisions. The paragraph names the project and
-the week, groups decisions before facts, compresses each item, and cites the
-item ids that fit. It is a summary in the source language, not a verbatim copy
-of one item. The processor is not called. Nightly tidy refreshes the current
-week and the previous week when the cited set changes. An explicit bounded
-backfill writes older weeks that have items and does not rewrite an unchanged
-paragraph. Weeks with no distilled items have no journal entry. A journal entry
-does not claim the week is complete, is not a decision, and cannot supersede one.
+the week, then gives up to eight complete sentences: decisions first, then
+facts, in the source language. A sentence that does not fit is left out whole.
+Item ids are stored beside the paragraph and returned as `citations` on `read`
+and `citedIds` on a search card. They are not written into the sentence. The
+processor is not called. These sentences are already distilled, and another
+model pass would spend a call cap to rewrite them and could leave the source
+language. If a later change does call the processor, that call has to use the
+existing processor, its own cap, and this sentence list as the fallback.
+Nightly tidy refreshes the current week and the previous week when the summary
+changes. `context tidy --journal-backfill` writes older weeks that have items,
+at most 24 per run, and rewrites a paragraph whose text changed. That is how
+to regenerate journals left by the older concatenated formatter. An unchanged
+paragraph is not rewritten. Weeks with no distilled items have no journal
+entry. A journal entry does not claim the week is complete, is not a decision,
+and cannot supersede one.
 
 **Project search.** With a `project` filter, `search` ranks that project's
 journal entries, then decisions, then facts in the requested dates ahead of raw

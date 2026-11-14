@@ -158,8 +158,12 @@ the current follow-up and are not deployed. Task packs are not implemented.
   catalog and does not search. `read` returns each association's project id,
   origin and status. The catalog is not the project profile.
 - The configured processor distills a source revision into one proposed sentence
-  (`fact` or `decision`) with its project, date and source link. GitHub pull
-  requests remain archive evidence; the sentence states what changed and, when
+  (`fact` or `decision`) with its project, date and source link. A source date
+  with a numeric offset is accepted and stored on the item as UTC. When the
+  source already has a configured or client project link, the item inherits
+  it and the sentence does not have to contain the id. An unmapped source
+  stays unlinked unless the model proposes a project that the sentence names.
+  GitHub pull requests remain archive evidence; the sentence states what changed and, when
   the source says so, why. Nightly calls are batched and capped, separately
   from inbox sorting. Each run spreads that cap across projects: round-robin
   by project, newest revision first within a project, and unlinked sources
@@ -217,19 +221,23 @@ the current follow-up and are not deployed. Task packs are not implemented.
   one replaceable paragraph of at most 800 characters in the home area. It is
   built only from that week's non-rejected distilled facts and decisions in
   that area. The paragraph names the project id and the week (`YYYY-Www`),
-  groups decisions before facts, compresses each item, and cites the item ids
-  that fit. It keeps the source language. Tidy refreshes the current week and
-  the previous week, and rewrites a paragraph only when that week's item set or
-  summary changes. The same items on the next run do not write. A week with no
-  such items has no journal entry. A missing journal is not an empty week of
-  sources. Nightly tidy does not walk older weeks. `context tidy
-  --journal-backfill` writes older weeks that have items, at most 24 per run
-  unless `--journal-backfill-limit` sets another bound from 1 to 52, newest
-  older week first, and does not copy items out of another area. A second run
-  does not rewrite an unchanged paragraph. Generation does not call the
-  processor and does not spend the distillation or inbox call caps. `read`
-  returns the paragraph by id. Search without `project` stays area-wide and
-  omits journals.
+  then up to eight complete sentences, decisions before facts. A sentence that
+  does not fit the 800 characters is omitted whole. Item ids stay in journal
+  metadata: `read` returns them as `citations`, and a project search card
+  returns them as `citedIds`. The paragraph keeps the source language and does
+  not embed those ids. Tidy refreshes the current week and the previous week,
+  and rewrites a paragraph only when that week's item set or summary changes.
+  The same items on the next run do not write. A week with no such items has
+  no journal entry. A missing journal is not an empty week of sources. Nightly
+  tidy does not walk older weeks. `context tidy --journal-backfill` writes
+  older weeks that have items, at most 24 per run unless
+  `--journal-backfill-limit` sets another bound from 1 to 52, newest older
+  week first, and does not copy items out of another area. It also rewrites an
+  older paragraph whose summary text changed, which regenerates journals
+  written before this sentence format. A second run does not rewrite an
+  unchanged paragraph. Generation does not call the processor and does not
+  spend the distillation or inbox call caps. `read` returns the paragraph by
+  id. Search without `project` stays area-wide and omits journals.
 - Period questions use `search` with `project` and dates. The project's journal
   entries whose week overlaps the range, then its decisions, then its facts for
   the period, come before raw excerpts even when the question shares no words

@@ -30,7 +30,8 @@ export const distillInstruction = [
   "State what changed, and state why or the impact when the source says so.",
   "Keep product and project terms as the source writes them; do not replace them with generic words.",
   "Write in the dominant language of the source: a Russian source yields a Russian sentence.",
-  "Include every id listed in projects.",
+  "When projects lists ids, the item inherits those links and the sentence does not have to spell the id.",
+  "When projects is empty and project is set, the sentence must name that project.",
   "project is an existing project id that is not already linked, a suggested name for a new project, or null.",
   "Do not copy 80 or more contiguous characters from body.",
   "You cannot approve an item, write supersedes, or write a project profile.",
@@ -116,6 +117,32 @@ export function sourceBody(text: string, title: string | null) {
     return text.slice(title.length + 2);
   return text;
 }
+const sourceInstant = z.iso.datetime({ offset: true });
+const storedInstant = z.iso.datetime();
+
+/** Accept Z or a numeric offset. Knowledge rows store UTC with a Z suffix. */
+export function distillCreatedAt(value: string): string | undefined {
+  const parsed = sourceInstant.safeParse(value);
+  if (!parsed.success) return undefined;
+  if (/[zZ]$/u.test(parsed.data)) return parsed.data;
+  const utc = new Date(parsed.data).toISOString();
+  return storedInstant.safeParse(utc).success ? utc : undefined;
+}
+
+/**
+ * Case-insensitive project mention. Hyphens, spaces and similar separators
+ * are ignored, so `kosarev-space` matches "Kosarev Space" and "kosarevspace".
+ */
+export function mentionsProject(text: string, label: string): boolean {
+  const fold = (value: string) =>
+    value
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[\s._:-]+/gu, "");
+  const needle = fold(label);
+  return needle.length > 0 && fold(text).includes(needle);
+}
+
 export function clipText(text: string, max: number) {
   let end = Math.min(text.length, max);
   if (end > 0 && end < text.length && /[\uDC00-\uDFFF]/u.test(text[end] ?? ""))
@@ -367,7 +394,8 @@ function rejectionReason(input: {
   text: string;
   parsed: boolean;
   dated: boolean;
-  projects: readonly string[];
+  linked: readonly string[];
+  mention?: string;
   copied: boolean;
   proposal: boolean;
 }): DistillRejectionReason | undefined {
@@ -377,7 +405,13 @@ function rejectionReason(input: {
   if (!input.parsed) return "parse-error";
   if (/[\r\n]/u.test(input.text)) return "newline";
   if (!input.dated) return "invalid-date";
-  if (!input.projects.every((id) => input.text.includes(id)))
+  // A mapped source already carries its projects onto the item. Require a
+  // mention only when the source is unmapped and the model proposes one.
+  if (
+    input.linked.length === 0 &&
+    input.mention !== undefined &&
+    !mentionsProject(input.text, input.mention)
+  )
     return "missing-project";
   if (input.copied) return "copy-80";
   if (!input.proposal) return "invalid-project";
@@ -488,18 +522,26 @@ export async function distillSources(input: {
       const projects = linkedIds(input.db, source.id);
       const text = answer?.text.trim() ?? "";
       const parsed = sentence.safeParse(text);
-      const dated = z.iso.datetime().safeParse(source.date);
+      const createdAt = distillCreatedAt(source.date);
       const proposal = answer
         ? proposalFor(input.db, answer.project, projects)
         : { ok: false as const };
+      const mention = !proposal.ok
+        ? undefined
+        : "proposedProjectId" in proposal
+          ? proposal.proposedProjectId
+          : "suggestedProjectName" in proposal
+            ? proposal.suggestedProjectName
+            : undefined;
       const body = sourceBody(source.text, source.title);
       const reason = rejectionReason({
         answers,
         answer,
         text,
         parsed: parsed.success,
-        dated: dated.success,
-        projects,
+        dated: createdAt !== undefined,
+        linked: projects,
+        ...(mention ? { mention } : {}),
         copied: copiesStoredBody(text, body),
         proposal: proposal.ok,
       });
@@ -507,7 +549,7 @@ export async function distillSources(input: {
         reason ||
         !answer ||
         !parsed.success ||
-        !dated.success ||
+        createdAt === undefined ||
         !proposal.ok
       ) {
         if (reason) reject(reason, text);
@@ -522,7 +564,7 @@ export async function distillSources(input: {
         sourceId: source.id,
         kind: answer.kind,
         text,
-        createdAt: dated.data,
+        createdAt,
         ...("proposedProjectId" in proposal
           ? { proposedProjectId: proposal.proposedProjectId }
           : {}),
