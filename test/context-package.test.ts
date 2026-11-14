@@ -10,7 +10,11 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
-import { buildContextPackage, excerpt } from "../src/context-package.js";
+import {
+  buildContextPackage,
+  excerpt,
+  knowledgeExcerpt,
+} from "../src/context-package.js";
 import { VISIBLE_TEXT_VERSION } from "../src/search-lexical.js";
 import { visibleSourceText } from "../src/source-text.js";
 import { KnowledgeStore } from "../src/knowledge.js";
@@ -663,6 +667,31 @@ test("an old full-text index drops the footer on open without rewriting the sour
     sources.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("knowledge excerpts start at a sentence boundary and trim the end", () => {
+  const text =
+    "Alpha stays behind. Beta violetlatch continues past the budget and should stop on a sentence when one fits. Gamma is extra.";
+  const whole = knowledgeExcerpt(text, text.indexOf("violetlatch"));
+  assert.equal(whole.text.startsWith("Beta violetlatch"), true);
+  assert.equal(whole.text.includes("Alpha"), false);
+  assert.equal(whole.text.includes("Gamma is extra."), true);
+  assert.equal(whole.text.endsWith("."), true);
+  assert.equal(whole.text, text.slice(whole.start, whole.end));
+  const beta = text.slice(text.indexOf("Beta"), text.indexOf(" Gamma"));
+  const cut = knowledgeExcerpt(
+    text,
+    text.indexOf("violetlatch"),
+    beta.length + 6,
+  );
+  assert.equal(cut.text, beta);
+  assert.equal(cut.text.endsWith("."), true);
+  assert.equal(cut.text.includes("Gamma"), false);
+  assert.equal(cut.text, text.slice(cut.start, cut.end));
+  const emoji = "😀 done. Next 😀 violetlatch sentence stays whole.";
+  const shifted = knowledgeExcerpt(emoji, emoji.indexOf("violetlatch"), 80);
+  assert.equal(shifted.text.startsWith("Next 😀 violetlatch"), true);
+  assert.equal(shifted.text, emoji.slice(shifted.start, shifted.end));
 });
 
 test("Unicode excerpts are exact and never split surrogate pairs", () => {

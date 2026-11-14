@@ -21,6 +21,12 @@ import { journalBackfillDefault, journalBackfillMax } from "./journal.js";
 import { E5_VERSION } from "./embedding-model.js";
 import { KnowledgeStore } from "./knowledge.js";
 import type { Llm } from "./llm.js";
+import {
+  askLlm,
+  classifyLlmError,
+  LlmCallError,
+  type LlmFailureReport,
+} from "./llm-call.js";
 
 // Conservative synthetic calibration; see docs/search.md. Never merge a
 // changed number/negation merely because its semantic vector is almost equal.
@@ -53,6 +59,7 @@ export interface TidyOptions {
   timeZone?: string;
   journalBackfill?: boolean;
   journalBackfillLimit?: number;
+  retryBackoffMs?: readonly number[];
 }
 export interface TidyRun {
   timestamp: string;
@@ -82,6 +89,7 @@ export interface TidyRun {
   distillFrontiers: DistillFrontiers | null;
   distillStatus: DistillStatus;
   journals: number;
+  llmFailures: LlmFailureReport[];
 }
 async function previousRun(
   path: string,
@@ -224,21 +232,54 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     distillFrontiers: resumeFrontiers(previous),
     distillStatus: options.llm ? "completed" : "skipped_not_configured",
     journals: 0,
+    llmFailures: [],
   };
   const unavailable = () => run.llm === "unavailable";
+  const backoffMs = options.retryBackoffMs;
+  const recordLlmFailure = (
+    failure: LlmCallError,
+    attempt: number,
+    abandoned: boolean,
+  ) => {
+    const entry: LlmFailureReport = {
+      reason: failure.reason,
+      exitCode: failure.exitCode,
+      attempt,
+      stderrTail: failure.stderrTail,
+      abandoned,
+    };
+    // Server logs and tidy JSON share this shape. The tail is already redacted.
+    console.error(JSON.stringify({ event: "llm_failure", ...entry }));
+    run.llmFailures.push(entry);
+    if (run.llmFailures.length > 8) run.llmFailures.shift();
+    if (abandoned) run.failures++;
+    if (abandoned && failure.reason === "unavailable") run.llm = "unavailable";
+  };
   const judgeBatch = async (instruction: string, data: unknown[]) => {
     const answers = new Map<number, z.infer<typeof sortSchema>>();
     if (!options.llm || unavailable() || run.llmCalls >= MAX_LLM_CALLS)
       return answers;
-    run.llmCalls++;
     let raw: unknown[];
     try {
-      const response = await options.llm.ask(instruction, data);
-      if (!Array.isArray(response)) throw new Error("invalid_output");
+      const response = await askLlm(options.llm, instruction, data, {
+        canAttempt: () => run.llmCalls < MAX_LLM_CALLS,
+        onAttempt: () => {
+          run.llmCalls++;
+        },
+        onFailure: recordLlmFailure,
+        ...(backoffMs ? { backoffMs } : {}),
+      });
+      if (!Array.isArray(response)) {
+        recordLlmFailure(
+          new LlmCallError("parse", { transient: false }),
+          1,
+          true,
+        );
+        return answers;
+      }
       raw = response;
     } catch {
-      run.failures++;
-      run.llm = "unavailable";
+      // askLlm already recorded the abandoned attempt.
       return answers;
     }
     for (let index = 0; index < data.length; index++) {
@@ -262,10 +303,10 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
   let db: DatabaseSync | undefined;
   try {
     try {
-      await options.llm?.preflight?.();
-    } catch {
+      if (!backfill.backfillLimit) await options.llm?.preflight?.();
+    } catch (error) {
+      recordLlmFailure(classifyLlmError(error), 1, true);
       run.llm = "unavailable";
-      run.failures++;
     }
     knowledge = new KnowledgeStore(options.databasePath, {
       readOnly: !!options.dryRun,
@@ -374,7 +415,8 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
           canonicals.push(source);
         }
       }
-      if (!options.llm || unavailable()) continue;
+      if (backfill.backfillLimit !== undefined || !options.llm || unavailable())
+        continue;
       if (area === "inbox") {
         const destinations = options.areas.filter(
           (a) => a !== "inbox" && safeDestination(connection, a),
@@ -430,29 +472,41 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     }
     if (!run.capped) run.inboxAfter = null;
     if (!knowledge) throw new Error("Missing knowledge store");
-    const distilled = await distillSources({
-      db: connection,
-      knowledge,
-      areas,
-      dryRun: !!options.dryRun,
-      ...(options.llm ? { llm: options.llm } : {}),
-      unavailable: unavailable(),
-      batchSize: distillBatchSize,
-      callCap: distillCallCap,
-      resumeAfter: run.distillAfter,
-      frontiers: run.distillFrontiers,
-    });
-    run.distillCalls = distilled.calls;
-    run.distilled = distilled.distilled;
-    run.distillRejected = distilled.rejected;
-    run.distillRejections = distilled.rejections;
-    run.distillCapped = distilled.capped;
-    run.distillAfter = distilled.after;
-    run.distillFrontiers = distilled.frontiers;
-    run.distillStatus = distilled.status;
-    if (distilled.becameUnavailable) {
-      run.failures++;
-      run.llm = "unavailable";
+    if (backfill.backfillLimit !== undefined) {
+      // Distillation writes new items and reopens weeks, so a backfill pass
+      // would never reach journals 0. Keep the distill cursor for the next
+      // normal tidy. New items are picked up then, or on the next pass.
+      run.distillStatus = "skipped_backfill";
+      run.distillCalls = 0;
+      run.distillCapped = previous?.distillCapped ?? false;
+      run.distillAfter = previous?.distillCapped
+        ? (previous.distillAfter ?? null)
+        : null;
+      run.distillFrontiers = resumeFrontiers(previous);
+    } else {
+      const distilled = await distillSources({
+        db: connection,
+        knowledge,
+        areas,
+        dryRun: !!options.dryRun,
+        ...(options.llm ? { llm: options.llm } : {}),
+        unavailable: unavailable(),
+        batchSize: distillBatchSize,
+        callCap: distillCallCap,
+        resumeAfter: run.distillAfter,
+        frontiers: run.distillFrontiers,
+        onLlmFailure: recordLlmFailure,
+        ...(backoffMs ? { backoffMs } : {}),
+      });
+      run.distillCalls = distilled.calls;
+      run.distilled = distilled.distilled;
+      run.distillRejected = distilled.rejected;
+      run.distillRejections = distilled.rejections;
+      run.distillCapped = distilled.capped;
+      run.distillAfter = distilled.after;
+      run.distillFrontiers = distilled.frontiers;
+      run.distillStatus = distilled.status;
+      if (distilled.becameUnavailable) run.llm = "unavailable";
     }
     const journals = knowledge.refreshJournals({
       areas,

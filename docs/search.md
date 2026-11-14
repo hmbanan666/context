@@ -290,6 +290,9 @@ stored status, `proposed` or `approved`, and carries the source id and URL. A
 raw source cited by a returned item is omitted. `budgetBytes` (2048–65536)
 overrides the 8192-byte package budget. Journal paragraphs are the week's
 summary in complete sentences for weeks that overlap the requested dates.
-`citedIds` lists the item ids. Area-wide search omits journals.
+`citedIds` lists the item ids. Area-wide search omits journals. A decision
+or fact excerpt starts at a sentence boundary and is trimmed only at the end,
+on a whole sentence when one fits, so a card after a journal does not open
+mid-sentence. Source excerpts stay anchored on the match.
 The owner sets that status with `context project review`; distillation does
 not. Pack mode is not implemented.

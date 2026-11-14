@@ -674,7 +674,7 @@ for (const [name, body] of [
   ["invalid JSON", "console.log('not-json synthetic-private-diagnostic');"],
   [
     "not logged in",
-    "console.error('synthetic-private-diagnostic'); process.exit(1);",
+    "console.error('login failed sk-proj-abcdefghijklmnopqrstuvwxyz'); process.exit(1);",
   ],
   ["timeout", "setInterval(() => {}, 1000);"],
   ["login timeout", "setInterval(() => {}, 1000);"],
@@ -709,6 +709,7 @@ for (const [name, body] of [
       const run = await runTidy({
         databasePath: f.path,
         areas: ["inbox", "personal", "vault"],
+        retryBackoffMs: [0, 0],
         llm: createCodexLlm(
           fake.env,
           "fixture",
@@ -716,9 +717,24 @@ for (const [name, body] of [
         ),
       });
       assert.ok(performance.now() - started < 5000);
-      assert.equal(run.llm, "unavailable");
-      assert.equal(run.llmCalls, preflightFails ? 0 : 1);
-      assert.equal(run.failures, 1);
+      const transient = name === "timeout";
+      assert.equal(
+        run.llm,
+        transient || name === "invalid JSON" ? "configured" : "unavailable",
+      );
+      assert.equal(run.llmCalls, transient ? 3 : preflightFails ? 0 : 1);
+      assert.equal(run.failures, transient || name === "invalid JSON" ? 2 : 1);
+      const failure = run.llmFailures.at(-1);
+      assert.ok(failure);
+      if (name === "timeout" || name === "login timeout")
+        assert.equal(failure.reason, "timeout");
+      else if (name === "invalid JSON") assert.equal(failure.reason, "parse");
+      else if (name === "not logged in") {
+        assert.equal(failure.reason, "nonzero_exit");
+        assert.equal(failure.exitCode, 1);
+        assert.match(failure.stderrTail, /\[REDACTED\]/);
+        assert.equal(failure.stderrTail.includes("sk-proj-"), false);
+      } else assert.equal(failure.reason, "unavailable");
       assert.equal(run.duplicates, 1);
       assert.equal(run.lastSuccessfulAt, null);
       assert.deepEqual(f.sources.find(old.id, "inbox"), old);
@@ -810,5 +826,57 @@ test("invalid inbox entries are retried after capped sorting resumes and wraps",
     assert.ok(f.sources.find("inbox-0", "personal"));
   } finally {
     await f.close();
+  }
+});
+
+test("Codex rate limit is retried and logged without the secret", async () => {
+  const { createCodexLlm } = await import("../src/codex-llm.js");
+  const { fakeCodex } = await import("./fake-codex.js");
+  const secret = `sk-proj-${"b".repeat(24)}`;
+  const fake = await fakeCodex(`
+    console.error('usage limit ${secret}');
+    process.exit(7);
+  `);
+  const logs: string[] = [];
+  const original = console.error;
+  console.error = (line?: unknown) => {
+    logs.push(String(line ?? ""));
+  };
+  const f = await fixture();
+  try {
+    f.add(
+      "note",
+      "Synthetic rate limit note describing lunar garden watering schedules and seasonal observations.",
+      "personal",
+    );
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      retryBackoffMs: [0, 0],
+      llm: createCodexLlm(fake.env, "fixture", 5000),
+    });
+    assert.equal(run.llm, "configured");
+    assert.equal(run.outcome, "partial");
+    assert.equal(run.distillCalls, 3);
+    assert.equal(run.distilled, 0);
+    assert.equal(run.llmFailures.length, 3);
+    assert.equal(run.llmFailures[0]?.reason, "rate_limit");
+    assert.equal(run.llmFailures[0]?.exitCode, 7);
+    assert.equal(run.llmFailures[0]?.abandoned, false);
+    assert.equal(run.llmFailures[2]?.abandoned, true);
+    assert.match(run.llmFailures[0]?.stderrTail ?? "", /usage limit/);
+    assert.match(run.llmFailures[0]?.stderrTail ?? "", /\[REDACTED\]/);
+    const history = await readFile(
+      join(f.directory, "tidy/history.jsonl"),
+      "utf8",
+    );
+    assert.equal(history.includes(secret), false);
+    assert.equal(history.includes("lunar garden"), false);
+    assert.ok(logs.some((line) => line.includes('"reason":"rate_limit"')));
+    assert.ok(logs.every((line) => !line.includes(secret)));
+  } finally {
+    console.error = original;
+    await f.close();
+    await fake.close();
   }
 });

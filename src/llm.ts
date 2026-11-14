@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { createCodexLlm } from "./codex-llm.js";
 import { processingOutputSchema } from "./jobs.js";
-import { type Extractor, ModelUnavailableError } from "./processor.js";
+import { LlmCallError } from "./llm-call.js";
+import { type Extractor } from "./processor.js";
 import { redactFields } from "./redaction.js";
 
 export interface Llm {
@@ -64,7 +65,14 @@ export function createLlm(
       });
       if (!response.ok || !response.body) {
         await response.body?.cancel();
-        throw new ModelUnavailableError("model_unavailable");
+        if (response.status === 429)
+          throw new LlmCallError("rate_limit", { exitCode: response.status });
+        if (response.status === 408 || response.status >= 500)
+          throw new LlmCallError("nonzero_exit", { exitCode: response.status });
+        throw new LlmCallError("unavailable", {
+          transient: false,
+          exitCode: response.status,
+        });
       }
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];

@@ -229,19 +229,26 @@ the current follow-up and are not deployed. Task packs are not implemented.
   and rewrites a paragraph only when that week's item set or summary changes.
   The same items on the next run do not write. A week with no such items has
   no journal entry. A missing journal is not an empty week of sources. Nightly
-  tidy does not walk older weeks. `context tidy --journal-backfill` writes
-  older weeks that have items, at most 24 per run unless
+  tidy does not walk older weeks. `context tidy --journal-backfill` is a
+  backfill-only pass: it does not distill and does not sort the inbox. It
+  writes older weeks that already have items, at most 24 per run unless
   `--journal-backfill-limit` sets another bound from 1 to 52, newest older
   week first, and does not copy items out of another area. It also rewrites an
   older paragraph whose summary text changed, which regenerates journals
-  written before this sentence format. A second run does not rewrite an
-  unchanged paragraph. Generation does not call the processor and does not
-  spend the distillation or inbox call caps. `read` returns the paragraph by
+  written before this sentence format. Repeat the command until `journals` is
+  0. The pass can finish while new sources are still undistilled. A normal
+  tidy rewrites the current and previous weeks when their items change. Items
+  that later land in an older week are written on the next backfill pass.
+  A run does not rewrite an unchanged paragraph. Generation does not call the
+  processor and does not spend the distillation or inbox call caps. `read`
+  returns the paragraph by
   id. Search without `project` stays area-wide and omits journals.
 - Period questions use `search` with `project` and dates. The project's journal
   entries whose week overlaps the range, then its decisions, then its facts for
   the period, come before raw excerpts even when the question shares no words
-  with them. A raw source cited by a returned item is omitted. Uncited sources
+  with them. A decision or fact excerpt starts at a sentence boundary and is
+  trimmed at the end, on a whole sentence when one fits. It does not open
+  mid-sentence. A raw source cited by a returned item is omitted. Uncited sources
   appear only when the byte budget still has room. The public October fixture
   has no journal row, so that case still returns the distilled sentence.
 - A task pack is `search` with `mode: "pack"`, a project, a task query and a
