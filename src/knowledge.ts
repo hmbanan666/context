@@ -22,6 +22,15 @@ import {
   projectNameSchema,
   proposeProjectLink,
 } from "./projects.js";
+import {
+  decideProposals,
+  listOpenProposals,
+  type DecideProposalsInput,
+  type OpenProposal,
+  type ReviewDecision,
+  type ReviewListInput,
+} from "./review.js";
+import { latestReviewStatusSql } from "./review-status.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { IdempotencyConflict } from "./store.js";
 
@@ -231,18 +240,15 @@ const relationSchema = z.strictObject({
   createdAt: z.iso.datetime(),
   status: z.literal("suggested"),
 });
-// Distilled facts and decisions are proposed until a later approval slice.
-// Historical rows without a review stay suggested. Review writes stay closed.
+// Distilled facts and decisions are proposed until the owner reviews them.
+// Historical rows without a review stay suggested. Project-proposal audits in
+// knowledge_reviews are excluded from this status.
 const itemSelection = `SELECT k.id, k.scope, k.kind, k.text,
   k.source_refs AS sourceRefs, k.creator, k.created_at AS createdAt,
   CASE WHEN k.kind IN ('fact', 'decision') THEN
-    COALESCE((SELECT r.status FROM knowledge_reviews r
-      WHERE r.knowledge_id = k.id AND r.scope = k.scope
-      ORDER BY r.rowid DESC LIMIT 1), 'proposed')
+    ${latestReviewStatusSql("k.id", "k.scope", "proposed")}
   ELSE
-    COALESCE((SELECT r.status FROM knowledge_reviews r
-      WHERE r.knowledge_id = k.id AND r.scope = k.scope
-      ORDER BY r.rowid DESC LIMIT 1), 'suggested')
+    ${latestReviewStatusSql("k.id", "k.scope", "suggested")}
   END AS status
   FROM knowledge_items k`;
 const relationSelection = `SELECT id, scope, kind, from_id AS fromId, to_id AS toId,
@@ -780,6 +786,19 @@ export class KnowledgeStore {
       if (!row) throw new Error("Missing inserted relation");
       return { relation: decodeRelation(row), duplicate: false };
     });
+  }
+
+  listProposals(filter: ReviewListInput = {}): {
+    proposals: OpenProposal[];
+    truncated: boolean;
+  } {
+    return listOpenProposals(this.#database, filter);
+  }
+
+  decideProposals(input: DecideProposalsInput): {
+    decisions: ReviewDecision[];
+  } {
+    return decideProposals(this.#database, input);
   }
 
   relations(scope: string, limit = 20): KnowledgeRelation[] {

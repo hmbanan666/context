@@ -77,7 +77,8 @@ Search with a project id prefers the weekly journal and those sentences for
 the requested dates and omits raw sources they already cite. The owner writes
 each project's profile with `context project profile`; tidy writes the journal
 ([ADR 0012](docs/adr/0012-project-profile-journal-and-task-pack.md)).
-Approval and task packs are not implemented. Hard delete
+The owner approves or rejects proposals with `context project review`.
+Task packs are not implemented. Hard delete
 remains [planned](docs/roadmap.md).
 Run `context tidy` once to distill a capped batch, or `context tidy --dry-run`
 to preview it. See [Nightly tidy](docs/deployment.md#nightly-tidy).

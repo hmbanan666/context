@@ -155,7 +155,7 @@ async function main() {
       return;
     }
     throw new Error(
-      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--expires 90d] | token list|revoke <id> | project create|rename|list|map|unmap|backfill|profile",
+      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--expires 90d] | token list|revoke <id> | project create|rename|list|map|unmap|backfill|profile|review",
     );
   } finally {
     store.close();

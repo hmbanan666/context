@@ -3,9 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { identifierSchema, nonblankText, scopeSchema } from "./contracts.js";
 import { installJournalMeta } from "./journal.js";
+import { latestReviewStatusSql } from "./review-status.js";
 
-// ADR 0010. A project is not an area and not a permission. Processor proposals
-// are stored here; approval is a later slice, so a suggestion has no project id.
+// ADR 0010. A project is not an area and not a permission. A suggested name
+// has no project id until the owner approves it and assigns one.
 export const maxListedProjects = 64;
 export const projectIdSchema = scopeSchema.pipe(z.string().max(64));
 export const projectNameSchema = nonblankText(128);
@@ -132,7 +133,9 @@ export function installProjects(db: DatabaseSync): void {
       record_id TEXT NOT NULL CHECK(length(record_id) > 0),
       project_id TEXT NOT NULL CHECK(length(project_id) BETWEEN 1 AND 64),
       origin TEXT NOT NULL CHECK(origin IN ('configured', 'client', 'proposed')),
-      status TEXT NOT NULL CHECK(status IN ('linked', 'proposed')),
+      status TEXT NOT NULL CHECK(status IN ('linked', 'proposed', 'rejected')),
+      reviewer TEXT,
+      reviewed_at TEXT,
       PRIMARY KEY (record_kind, record_id, project_id, origin)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS project_associations_project
@@ -146,6 +149,10 @@ export function installProjects(db: DatabaseSync): void {
       source_id TEXT NOT NULL CHECK(length(source_id) > 0),
       suggested_name TEXT NOT NULL CHECK(length(suggested_name) BETWEEN 1 AND 128),
       created_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'approved', 'rejected')),
+      project_id TEXT,
+      reviewer TEXT,
+      reviewed_at TEXT,
       UNIQUE (record_kind, record_id, suggested_name)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS project_proposals_record
@@ -159,7 +166,88 @@ export function installProjects(db: DatabaseSync): void {
       FOREIGN KEY (project_id) REFERENCES projects(id)
     ) STRICT;
   `);
+  migrateProjectTables(db);
   installJournalMeta(db);
+}
+
+function tableColumns(
+  db: DatabaseSync,
+  table: "project_associations" | "project_proposals",
+): string[] {
+  return (
+    db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  ).map((row) => row.name);
+}
+
+function migrateProjectTables(db: DatabaseSync): void {
+  const associations = String(
+    (
+      db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE name = 'project_associations'",
+        )
+        .get() as { sql?: string } | undefined
+    )?.sql ?? "",
+  );
+  const proposalColumns = tableColumns(db, "project_proposals");
+  if (associations.includes("'rejected'") && proposalColumns.includes("status"))
+    return;
+  write(db, () => {
+    if (!associations.includes("'rejected'")) {
+      db.exec(`
+        DROP INDEX IF EXISTS project_associations_project;
+        DROP INDEX IF EXISTS project_associations_record;
+        ALTER TABLE project_associations RENAME TO project_associations_old;
+        CREATE TABLE project_associations (
+          record_kind TEXT NOT NULL CHECK(record_kind IN ('source', 'knowledge')),
+          record_id TEXT NOT NULL CHECK(length(record_id) > 0),
+          project_id TEXT NOT NULL CHECK(length(project_id) BETWEEN 1 AND 64),
+          origin TEXT NOT NULL CHECK(origin IN ('configured', 'client', 'proposed')),
+          status TEXT NOT NULL CHECK(status IN ('linked', 'proposed', 'rejected')),
+          reviewer TEXT,
+          reviewed_at TEXT,
+          PRIMARY KEY (record_kind, record_id, project_id, origin)
+        ) STRICT;
+        INSERT INTO project_associations (
+          record_kind, record_id, project_id, origin, status, reviewer, reviewed_at
+        )
+        SELECT record_kind, record_id, project_id, origin, status, NULL, NULL
+        FROM project_associations_old;
+        DROP TABLE project_associations_old;
+        CREATE INDEX project_associations_project
+          ON project_associations(project_id, status, record_kind, record_id);
+        CREATE INDEX project_associations_record
+          ON project_associations(record_kind, record_id);
+      `);
+    }
+    if (!proposalColumns.includes("status")) {
+      db.exec(`
+        DROP INDEX IF EXISTS project_proposals_record;
+        ALTER TABLE project_proposals RENAME TO project_proposals_old;
+        CREATE TABLE project_proposals (
+          id TEXT PRIMARY KEY NOT NULL CHECK(length(id) > 0),
+          record_kind TEXT NOT NULL CHECK(record_kind IN ('source', 'knowledge')),
+          record_id TEXT NOT NULL CHECK(length(record_id) > 0),
+          source_id TEXT NOT NULL CHECK(length(source_id) > 0),
+          suggested_name TEXT NOT NULL CHECK(length(suggested_name) BETWEEN 1 AND 128),
+          created_at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'approved', 'rejected')),
+          project_id TEXT,
+          reviewer TEXT,
+          reviewed_at TEXT,
+          UNIQUE (record_kind, record_id, suggested_name)
+        ) STRICT;
+        INSERT INTO project_proposals (
+          id, record_kind, record_id, source_id, suggested_name, created_at, status
+        )
+        SELECT id, record_kind, record_id, source_id, suggested_name, created_at, 'proposed'
+        FROM project_proposals_old;
+        DROP TABLE project_proposals_old;
+        CREATE INDEX project_proposals_record
+          ON project_proposals(record_kind, record_id);
+      `);
+    }
+  });
 }
 
 function write<T>(db: DatabaseSync, run: () => T): T {
@@ -496,7 +584,8 @@ export function associationsFor(
     db
       .prepare(
         `SELECT project_id, origin, status FROM project_associations
-         WHERE record_kind = ? AND record_id = ? ORDER BY project_id, origin`,
+         WHERE record_kind = ? AND record_id = ? AND status <> 'rejected'
+         ORDER BY project_id, origin`,
       )
       .all(kind, recordId) as Record<string, unknown>[]
   ).map((row) => {
@@ -510,7 +599,8 @@ export function associationsFor(
   const names = db
     .prepare(
       `SELECT suggested_name FROM project_proposals
-       WHERE record_kind = ? AND record_id = ? ORDER BY suggested_name, id`,
+       WHERE record_kind = ? AND record_id = ? AND status = 'proposed'
+       ORDER BY suggested_name, id`,
     )
     .all(kind, recordId) as { suggested_name: string }[];
   return [
@@ -591,7 +681,7 @@ export function proposeProjectLink(
       return;
     }
     const suggestedName = projectNameSchema.parse(input.suggestedName);
-    // Not a project id. remember and search reject it until a later approval slice.
+    // Not a project id. remember and search reject it until the owner assigns one.
     db.prepare(
       `INSERT OR IGNORE INTO project_proposals
         (id, record_kind, record_id, source_id, suggested_name, created_at)
@@ -689,9 +779,7 @@ function decisionsInForce(
     const row = db
       .prepare(
         `SELECT k.text AS text,
-          COALESCE((SELECT r.status FROM knowledge_reviews r
-            WHERE r.knowledge_id = k.id AND r.scope = k.scope
-            ORDER BY r.rowid DESC LIMIT 1), 'proposed') AS status
+          ${latestReviewStatusSql("k.id", "k.scope", "proposed")} AS status
          FROM knowledge_items k
          WHERE k.id = ? AND k.scope = ? AND k.kind = 'decision'`,
       )

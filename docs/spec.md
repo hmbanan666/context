@@ -136,9 +136,9 @@ are also possible through authorized agents via MCP.
 
 Accepted in ADRs 0010–0012. Caps and call limits live in those
 ADRs so this spec does not keep a second copy. Slices 4a (project catalog
-and association), 4b (nightly distillation), 4c (project search) and 4d
-(profile and weekly journal) are implemented and not deployed. Approval and
-task packs are not implemented.
+and association), 4b (nightly distillation), 4c (project search), 4d
+(profile and weekly journal) and 4e (owner approval) are implemented and not
+deployed. Task packs are not implemented.
 
 - A project is an understanding-layer entity with a stable id and one home
   area. It is not an area and not a permission. Association comes from an owner
@@ -147,9 +147,10 @@ task packs are not implemented.
   to lowercase `owner/repo`. `context project backfill` matches those forms,
   including already stored provenance, and does not rewrite source text.
   Association also comes from an optional `project` field on `remember`,
-  or from a processor proposal stored with no usable id until a later approval
-  slice. Unknown ids on `remember` are rejected. Proposals do not affect
-  retrieval. Association is not permission.
+  or from a processor proposal stored with no usable id until the owner
+  approves it and assigns one. Unknown ids on `remember` are rejected.
+  Proposals do not affect retrieval until that approval. Association is not
+  permission.
 - `search` and `timeline` take an optional `project` filter and otherwise stay
   area-wide. `search` with `listProjects: true` returns the bounded id-and-name
   catalog and does not search. `read` returns each association's project id,
@@ -183,8 +184,26 @@ task packs are not implemented.
   returns it only when `scope` is the home area. A pinned id must already be a
   decision linked to that project in the home area. The read result's `inForce`
   list is the pinned decisions that are approved and not superseded; a proposed
-  pin stays stored and is not in force. The owner CLI that approves or rejects
-  a proposal is a later slice.
+  pin stays stored and is not in force.
+- The owner approves or rejects a proposed fact, decision, processor project
+  proposal or proposed profile pin with `context project review`. There is no
+  fifth MCP tool; ADRs 0010 and 0012 keep approval on this CLI. `list` filters
+  by project, kind (`fact`, `decision`, `project`, `pin`) and date (`--since`
+  / `--until`, or `--week` in `TZ`). `approve` and `reject` take an id list or
+  a project plus ISO week. Each decision appends `knowledge_reviews` when the
+  record is a knowledge item: reviewer `owner`, the time, and evidence `[]`
+  for the item itself. A project-proposal audit uses the same table with
+  evidence subject `project`, so it does not change that item's status.
+  `knowledge_reviews` references knowledge items, so a proposal stored only on
+  a source records the same reviewer and time on its row. Approving a link to
+  an existing project marks that association linked. Approving a suggested
+  name creates the project with `--assign` (home defaults to the record's area
+  when that area is configured) or links an existing id, then links the
+  record. Rejection does not create a project. Approval never writes a
+  supersedes relation. `search`, `read`, the next journal refresh and profile
+  `inForce` use the latest item review: a proposed decision is not in force,
+  and an approved decision that has not been superseded is. The journal
+  paragraph itself changes on the next tidy refresh.
 - For each project and ISO week in the instance timezone (`TZ`), tidy stores
   one replaceable paragraph of at most 800 characters in the home area. It is
   built only from that week's non-rejected distilled facts and decisions in
@@ -329,10 +348,10 @@ calls; exact source retrieval remains usable while its index rebuilds.
 
 Deduplication, explicit supersession and history, guarded inbox sorting and
 nightly evaluation are already merged. Slices 4a (project catalog and
-association), 4b (nightly distillation), 4c (project search) and 4d (profile
-and weekly journal) are implemented and not deployed. Still to build: approval,
-task packs and people through the pluggable processor, plus hard delete with
-tombstones.
+association), 4b (nightly distillation), 4c (project search), 4d (profile
+and weekly journal) and 4e (owner approval) are implemented and not deployed.
+Still to build: task packs and people through the pluggable processor, plus
+hard delete with tombstones.
 Automatic supersession is not part of this stage. Uncertain inbox items still
 await an owner decision.
 
@@ -351,9 +370,9 @@ items await owner decisions. Hard delete removes the record and derivations from
 reads, search, history and pending processing; only the tombstone remains. Test
 that restore reconciliation prevents silent resurrection, with an explicit
 backup-retention contract. Private and synthetic nightly evals report failures
-without exposing private questions or results publicly. Slices 4a–4d are the catalog, association, proposed distillation,
-project-search ranking, the owner-written profile and the weekly journal.
-Approval and pack mode remain unmet. Area-wide search still omits distilled
+without exposing private questions or results publicly. Slices 4a–4e are the catalog, association, proposed distillation,
+project-search ranking, the owner-written profile, the weekly journal and
+owner approval. Pack mode remains unmet. Area-wide search still omits distilled
 sentences and journals. A project filter prefers the journal and those sentences.
 
 ### Stage 5 — Owner UI and more imports (planned)

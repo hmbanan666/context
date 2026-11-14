@@ -111,7 +111,8 @@ history fields are ignored. Project catalog, repository mappings and
 associations are implemented (ADR 0010 slice 4a): import and `context project
 backfill` write configured links, `remember` can attach client links, and
 `search` / `timeline` can filter by project. Processor proposals are stored
-without a usable id; approval is not implemented. Distillation (ADR 0011) writes
+without a usable id until `context project review` approves one and assigns
+it. Distillation (ADR 0011) writes
 one proposed `fact` or `decision` per source revision that does not already have
 one, copying configured and client project links and storing any other model
 project string as a proposal. Calls are capped separately from inbox sorting.
@@ -134,8 +135,10 @@ UTF-8 bytes) edited only by `context project profile`, and a deterministic
 weekly journal. Tidy refreshes the current and previous ISO weeks in `TZ`
 from that project's distilled items in the home area, without a processor
 call. Search with a project id ranks those journal paragraphs with the
-distilled items. Approval and task packs are accepted in ADR 0012 and are
-not implemented.
+distilled items. Slice 4e records owner approval in `knowledge_reviews`
+and, for a suggested project name, creates or links the project. Approval
+does not write supersedes. Task packs are accepted in ADR 0012 and are not
+implemented.
 Hard delete remains a later slice. None of that is complete stage 4 acceptance.
 
 Inbox moves are transactional metadata changes. FTS/stemmed rows retain their

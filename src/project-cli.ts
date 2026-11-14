@@ -1,11 +1,13 @@
 import { parseArgs } from "node:util";
 import { ZodError } from "zod";
 import { scopeSchema } from "./contracts.js";
+import { KnowledgeStore } from "./knowledge.js";
 import { normalizeRepositoryName } from "./projects.js";
+import type { ReviewKind } from "./review.js";
 import { SourceStore } from "./store.js";
 
 const usage =
-  "Usage: context project create --id <id> --name <name> --home <area> | rename --id <id> --name <name> | list | map --repo <owner/repo> --project <id> | unmap --repo <owner/repo> | backfill | profile show --id <id> | profile set --id <id> --purpose <text> --rules <text> [--pin <decision-id> ...] | profile clear --id <id>";
+  "Usage: context project create --id <id> --name <name> --home <area> | rename --id <id> --name <name> | list | map --repo <owner/repo> --project <id> | unmap --repo <owner/repo> | backfill | profile show --id <id> | profile set --id <id> --purpose <text> --rules <text> [--pin <decision-id> ...] | profile clear --id <id> | review list [--project <id>] [--kind fact|decision|project|pin] [--since <iso>] [--until <iso>] [--week <YYYY-Www>] | review approve (--id <id> ... | --project <id> --week <YYYY-Www> [--kind fact|decision|project|pin]) [--assign <project-id> [--name <name>] [--home <area>]] | review reject (--id <id> ... | --project <id> --week <YYYY-Www> [--kind fact|decision|project|pin])";
 
 function text(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -45,6 +47,110 @@ function databasePath(env: NodeJS.ProcessEnv): string {
 function emit(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
+function reviewKind(value: string | undefined): ReviewKind | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "fact" ||
+    value === "decision" ||
+    value === "project" ||
+    value === "pin"
+  )
+    return value;
+  throw new Error(usage);
+}
+function timeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+function runReview(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  areas: readonly string[],
+): void {
+  const action = args[0];
+  const rest = args.slice(1);
+  if (!action || !["list", "approve", "reject"].includes(action))
+    throw new Error(usage);
+  if (action === "list") {
+    const values = flags(rest, {
+      project: { type: "string" },
+      kind: { type: "string" },
+      since: { type: "string" },
+      until: { type: "string" },
+      week: { type: "string" },
+    });
+    const project = text(values.project);
+    const since = text(values.since);
+    const until = text(values.until);
+    const week = text(values.week);
+    const kind = reviewKind(text(values.kind));
+    const sources = new SourceStore(databasePath(env));
+    const knowledge = new KnowledgeStore(databasePath(env));
+    try {
+      emit(
+        knowledge.listProposals({
+          ...(project ? { projectId: project } : {}),
+          ...(kind ? { kind } : {}),
+          ...(since ? { since } : {}),
+          ...(until ? { until } : {}),
+          ...(week ? { week, timeZone: timeZone() } : {}),
+        }),
+      );
+    } finally {
+      knowledge.close();
+      sources.close();
+    }
+    return;
+  }
+  const values = flags(rest, {
+    id: { type: "string", multiple: true },
+    project: { type: "string" },
+    week: { type: "string" },
+    kind: { type: "string" },
+    assign: { type: "string" },
+    name: { type: "string" },
+    home: { type: "string" },
+  });
+  const ids = values.id;
+  const project = text(values.project);
+  const week = text(values.week);
+  const assign = text(values.assign);
+  const name = text(values.name);
+  const home = text(values.home);
+  if ((name || home) && !assign) throw new Error(usage);
+  if (action === "reject" && (assign || name || home)) throw new Error(usage);
+  if (Array.isArray(ids) && (project || week || values.kind))
+    throw new Error(usage);
+  if (!Array.isArray(ids) && !(project && week)) throw new Error(usage);
+  if (home && !areas.includes(home)) throw new Error("Unknown area");
+  const kind = reviewKind(text(values.kind));
+  const sources = new SourceStore(databasePath(env));
+  const knowledge = new KnowledgeStore(databasePath(env));
+  try {
+    emit(
+      knowledge.decideProposals({
+        action: action === "approve" ? "approved" : "rejected",
+        areas,
+        timeZone: timeZone(),
+        ...(Array.isArray(ids) ? { ids } : {}),
+        ...(project ? { projectId: project } : {}),
+        ...(week ? { week } : {}),
+        ...(kind ? { kind } : {}),
+        ...(assign
+          ? {
+              assign: {
+                id: assign,
+                ...(name ? { name } : {}),
+                ...(home ? { home } : {}),
+              },
+            }
+          : {}),
+      }),
+    );
+  } finally {
+    knowledge.close();
+    sources.close();
+  }
+}
 
 export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
   try {
@@ -60,10 +166,15 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
         "unmap",
         "backfill",
         "profile",
+        "review",
       ].includes(action)
     )
       throw new Error(usage);
     const configured = areas(env);
+    if (action === "review") {
+      runReview(rest, env, configured);
+      return;
+    }
     const run = (store: SourceStore) => {
       if (action === "create") {
         const values = flags(rest, {
