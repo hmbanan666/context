@@ -78,7 +78,8 @@ the requested dates and omits raw sources they already cite. The owner writes
 each project's profile with `context project profile`; tidy writes the journal
 ([ADR 0012](docs/adr/0012-project-profile-journal-and-task-pack.md)).
 The owner approves or rejects proposals with `context project review`.
-Task packs are not implemented. Hard delete
+`context search --mode pack --project <id> --scope <area> --query "<task>" --budget-bytes <n>`
+returns one task pack for that project. Hard delete
 remains [planned](docs/roadmap.md).
 Run `context tidy` once to distill a capped batch, or `context tidy --dry-run`
 to preview it. See [Nightly tidy](docs/deployment.md#nightly-tidy).
@@ -108,7 +109,7 @@ Only these four tools appear in `tools/list`:
 
 | Tool | Purpose |
 | --- | --- |
-| `search` | Find source-grounded context with `query`, optional `scope`, `project`, `k` (1–20), `since`, `until` and `budgetBytes` (2048–65536, default 8192). A project filter ranks that project's weekly journal and distilled facts and decisions ahead of raw sources and omits sources those items cite. `listProjects: true` returns up to 64 project ids and names and does not search. |
+| `search` | Find source-grounded context with `query`, optional `scope`, `project`, `k` (1–20), `since`, `until` and `budgetBytes` (2048–65536, default 8192). A project filter ranks that project's weekly journal and distilled facts and decisions ahead of raw sources and omits sources those items cite. `mode: "pack"` with a project and task query returns one budgeted pack (profile, decisions in force, facts, then uncited sources; `budgetBytes` 512–65536, default 8192) and does not add a tool. `listProjects: true` returns up to 64 project ids and names and does not search. |
 | `remember` | Save `text` or `file` with optional metadata, optional `project` ids and authenticated-client provenance; supply an `idempotencyKey`. Files use `filename`, `mediaType` and canonical `contentBase64` (UTF-8 `.txt`/`.md`, at most 16 KiB). |
 | `read` | Read a source, knowledge item, weekly journal or project profile by `id` and `scope`, including file bytes, project associations and up to 50 existing relations; reports truncation. A journal includes `citations` with the summarized item ids. A profile id is `profile:<project id>` and is readable only in the project's home area. |
 | `timeline` | List recent original source records, newest first, with optional `scope`, `project`, `since`, `until` and `limit` (1–20). |

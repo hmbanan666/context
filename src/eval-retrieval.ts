@@ -122,6 +122,7 @@ export async function retrieveForEval(
                 ...(question.until === undefined
                   ? {}
                   : { until: question.until }),
+                ...(question.mode === undefined ? {} : { mode: question.mode }),
                 ...(question.budget_bytes === undefined
                   ? {}
                   : { budgetBytes: question.budget_bytes }),
@@ -164,8 +165,16 @@ export async function retrieveForEval(
         // Audit every returned card and reference, even beyond the metric's top k.
         for (const source of result.sources)
           check("source", source.id, sourceInfo.get(source.id));
+        const profileInfo = metadata.prepare(
+          `SELECT p.home_area AS scope FROM project_profiles f
+           JOIN projects p ON p.id = f.project_id
+           WHERE 'profile:' || f.project_id = ?`,
+        );
         for (const item of result.items) {
-          check("item", item.id, itemInfo.get(item.id));
+          const info = item.id.startsWith("profile:")
+            ? (itemInfo.get(item.id) ?? profileInfo.get(item.id))
+            : itemInfo.get(item.id);
+          check("item", item.id, info);
           for (const id of item.sourceIds)
             check("source", id, sourceInfo.get(id));
         }

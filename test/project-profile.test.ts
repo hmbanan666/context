@@ -415,7 +415,8 @@ test("read returns the profile by id only in the home area", async () => {
     );
     const fields = search?.inputSchema.properties as Record<string, unknown>;
     assert.equal(fields.purpose, undefined);
-    assert.equal(fields.mode, undefined);
+    const mode = fields.mode as { description?: string } | undefined;
+    assert.match(mode?.description ?? "", /pack/);
     const allowed = await client.callTool({
       name: "read",
       arguments: { scope, id: "profile:observatory" },

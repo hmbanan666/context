@@ -213,7 +213,7 @@ CLI against [`example.yaml`](../fixtures/evals/example.yaml) and
 [`project-memory.yaml`](../fixtures/evals/project-memory.yaml), checks exact
 RU/EN retrieval, the October project question and isolation, and prints only
 numeric results and question IDs. It removes the temporary databases and
-history afterward. Pack questions in the project-memory file are skipped. The frozen inflection and
+history afterward. Pack questions in the project-memory file are scored. The frozen inflection and
 paraphrase cases record known lexical misses; improvements are allowed without
 rewriting expectations. On `example.yaml`, hit@1, hit@10 and MRR are 0.75 on
 both the primary and lexical-control paths, with zero isolation violations.
@@ -222,8 +222,7 @@ and the October corpus still has no journal row.
 Exact RU/EN, both inflection questions, the current-fact question and the
 duplicate-only question pass; both paraphrases remain misses.
 The isolation-only question passes and the placeholder is skipped.
-`october_on_project` scores 1 on its own corpus; the two pack questions are
-skipped.
+`october_on_project` scores 1 on its own corpus; the two pack questions pass.
 
 Execution is sequential, with one bounded question file per run, bounded MCP
 packages and no corpus copy or worker pool. CLI runs use one local model per process; nightly
@@ -245,9 +244,8 @@ ADRs 0010–0012 accept three public questions.
 [`example.yaml`](../fixtures/evals/example.yaml) and
 [`project-memory.yaml`](../fixtures/evals/project-memory.yaml). The harness
 accepts `project`, `since`, `until`, `budget_bytes`, `forbidden_substrings`
-and `expect_truncated`. `mode: pack` is accepted and skipped until slice 4f,
-so the two pack questions do not fail this slice. `october_on_project` is
-scored. Private questions, including any real "what happened in October on
+and `expect_truncated`. `mode: pack` selects task-pack retrieval and is scored.
+`october_on_project` is scored. Private questions, including any real "what happened in October on
 project X" query, stay outside Git.
 
 A question with `project` calls `search` and passes the project, dates and
@@ -285,7 +283,7 @@ question.
 | --- | --- |
 | `project` | Project id. Required for these cases. |
 | `since`, `until` | Inclusive / exclusive ISO timestamps, passed through to search. |
-| `mode` | `pack` selects task-pack retrieval and is skipped until slice 4f. Omitted means evidence search. |
+| `mode` | `pack` selects task-pack retrieval. Omitted means evidence search. |
 | `budget_bytes` | Caller byte budget. Pack mode allows 512–65536. Evidence search passes it as `budgetBytes` (2048–65536). |
 | `forbidden_substrings` | Literal case-sensitive phrases that must not appear in the returned package. |
 | `expect_truncated` | When set, the run must report that truncation value. |
@@ -298,9 +296,8 @@ is the observatory distilled sentence. `renamed its index` and
 `pack_for_task` asks `Add a shutter interlock to the dome` with
 `budget_bytes: 4096`. The purpose, the pinned shutter decision and the sensor
 fact are required. `raw shutter wiring dump` and `notebook project pins its
-index` are forbidden. The harness skips this case until slice 4f.
+index` are forbidden.
 
 `pack_budget` uses the same task and project with `budget_bytes: 512`. The
 purpose is required, truncation is required, and the pinned decision sentence
-and `raw shutter wiring dump` are forbidden. The harness skips this case until
-slice 4f.
+and `raw shutter wiring dump` are forbidden.

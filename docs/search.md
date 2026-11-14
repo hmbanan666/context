@@ -295,4 +295,10 @@ or fact excerpt starts at a sentence boundary and is trimmed only at the end,
 on a whole sentence when one fits, so a card after a journal does not open
 mid-sentence. Source excerpts stay anchored on the match.
 The owner sets that status with `context project review`; distillation does
-not. Pack mode is not implemented.
+not. `search` with `mode: "pack"` returns one task pack for a project and a
+task query: the profile, other decisions in force ranked by that project
+search, approved facts newest first, then proposed facts newest first, then
+raw sources that are not already cited. Journals stay on dated project search.
+`budgetBytes` for a pack is 512–65536 and defaults to 8192. The pack trims
+whole items and whole profile sentences to stay inside that UTF-8 budget. A
+header names what was included or omitted. No processor runs at query time.

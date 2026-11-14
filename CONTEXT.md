@@ -54,7 +54,7 @@ it.
 _Avoid_: area, permission, repository (as a universal synonym), the removed `project_context` tool.
 
 **Project profile**: The small owner-written description of one project: purpose,
-rules and pinned decisions in force. It is loaded whenever that project is selected.
+rules and pinned decisions in force. A task pack loads it for that project.
 _Avoid_: area policy, inferred biography, raw archive.
 
 **Journal**: A replaceable weekly summary of one project's distilled items. It

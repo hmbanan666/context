@@ -140,7 +140,8 @@ and association), 4b (nightly distillation), 4c (project search), 4d
 (profile and weekly journal) and 4e (owner approval) are merged. Owner reports
 4a–4d and the footer/distill spread fix are deployed. Date-window recall,
 journal summaries, rejection counters and keeping footer-adjacent prose are
-the current follow-up and are not deployed. Task packs are not implemented.
+the current follow-up and are not deployed. Slice 4f task packs are
+implemented and not deployed.
 
 - A project is an understanding-layer entity with a stable id and one home
   area. It is not an area and not a permission. Association comes from an owner
@@ -251,10 +252,16 @@ the current follow-up and are not deployed. Task packs are not implemented.
   mid-sentence. A raw source cited by a returned item is omitted. Uncited sources
   appear only when the byte budget still has room. The public October fixture
   has no journal row, so that case still returns the distilled sentence.
-- A task pack is `search` with `mode: "pack"`, a project, a task query and a
-  caller-supplied byte budget. It returns the profile, relevant decisions in
-  force and recent facts, then raw excerpts only for sources not already cited.
-  The server does not measure tokens. No fifth discovered tool is added.
+- A task pack is `search` with `mode: "pack"`, a project and a task query.
+  Optional `budgetBytes` is 512–65536 and defaults to 8192. The pack returns
+  the profile, other decisions in force ranked by project search, approved
+  facts newest first, proposed facts newest first, then raw excerpts only for
+  sources not already cited. Pinned decisions are not repeated. Journals are
+  omitted. Whole items and whole profile sentences are kept; if the profile
+  alone exceeds the budget, the response is a prefix of the profile. A header
+  lists what was included or omitted. The server does not measure tokens and
+  does not call the processor. No fifth discovered tool is added.
+  `context search --mode pack` returns the same pack.
 - The removed `project_context` tool is not restored.
 
 ### Search and processing
@@ -382,8 +389,8 @@ association), 4b (nightly distillation), 4c (project search), 4d (profile
 and weekly journal) and 4e (owner approval) are merged. Owner reports 4a–4d
 and the footer/distill spread fix are deployed. The date-window, journal
 summary, rejection-counter and footer-prose follow-up is not deployed.
-Still to build: task packs and people through the pluggable processor, plus
-hard delete with tombstones.
+Still to build: people through the pluggable processor, plus hard delete
+with tombstones. Task packs are implemented and not deployed.
 Automatic supersession is not part of this stage. Uncertain inbox items still
 await an owner decision.
 
@@ -404,7 +411,7 @@ that restore reconciliation prevents silent resurrection, with an explicit
 backup-retention contract. Private and synthetic nightly evals report failures
 without exposing private questions or results publicly. Slices 4a–4e are the catalog, association, proposed distillation,
 project-search ranking, the owner-written profile, the weekly journal and
-owner approval. Pack mode remains unmet. Area-wide search still omits distilled
+owner approval. Pack mode is implemented and not deployed. Area-wide search still omits distilled
 sentences and journals. A project filter with dates prefers the journal, then
 decisions, then facts for that window, including rows the question does not match.
 
