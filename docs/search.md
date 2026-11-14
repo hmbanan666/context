@@ -272,7 +272,9 @@ are revisited after the cursor wraps. Sorting needs no vectors. Content-free
 history records processor, model, counts, duration and the last completed run's
 time; old supersession fields are ignored when reading history. Deterministic
 dedup always checks all selected sources and relation writes are idempotent.
-Project distillation is decided in ADRs 0011–0012 and is not implemented here.
-Catalog and association are: `search` and `timeline` accept an optional
-`project` id, and `search` with `listProjects: true` returns at most 64 ids
-and names without searching. See [ADR 0010](adr/0010-projects-in-the-understanding-layer.md).
+Catalog and association are implemented: `search` and `timeline` accept an
+optional `project` id, and `search` with `listProjects: true` returns at most
+64 ids and names without searching. See
+[ADR 0010](adr/0010-projects-in-the-understanding-layer.md). Nightly distillation
+stores proposed facts and decisions (ADR 0011) and does not change this ranking.
+`search` and `timeline` omit those sentences until project search prefers them.

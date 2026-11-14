@@ -6,6 +6,14 @@ import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { setImmediate as yieldLoop } from "node:timers/promises";
 import { z } from "zod";
+import {
+  DISTILL_BATCH_MAX,
+  DISTILL_CALL_MAX,
+  distillationCap,
+  distillSources,
+  type DistillStatus,
+  relocateDistilledItems,
+} from "./distill.js";
 import { E5_VERSION } from "./embedding-model.js";
 import { KnowledgeStore } from "./knowledge.js";
 import type { Llm } from "./llm.js";
@@ -35,6 +43,8 @@ export interface TidyOptions {
   dryRun?: boolean;
   llm?: Llm;
   embeddingModel?: string;
+  distillBatchSize?: number;
+  distillCallCap?: number;
 }
 export interface TidyRun {
   timestamp: string;
@@ -55,6 +65,12 @@ export interface TidyRun {
   failures: number;
   capped: boolean;
   inboxAfter: number | null;
+  distillCalls: number;
+  distilled: number;
+  distillRejected: number;
+  distillCapped: boolean;
+  distillAfter: number | null;
+  distillStatus: DistillStatus;
 }
 async function previousRun(
   path: string,
@@ -152,6 +168,14 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     .sort();
   if (!areas.length || (options.area && !options.areas.includes(options.area)))
     throw new Error("Unknown tidy area");
+  const distillBatchSize = distillationCap(
+    options.distillBatchSize,
+    DISTILL_BATCH_MAX,
+  );
+  const distillCallCap = distillationCap(
+    options.distillCallCap,
+    DISTILL_CALL_MAX,
+  );
   const directory = join(dirname(options.databasePath), "tidy");
   const history = join(directory, "history.jsonl");
   const model = options.llm?.model ?? null;
@@ -177,6 +201,14 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     skipped: 0,
     failures: 0,
     capped: false,
+    distillCalls: 0,
+    distilled: 0,
+    distillRejected: 0,
+    distillCapped: false,
+    distillAfter: previous?.distillCapped
+      ? (previous.distillAfter ?? null)
+      : null,
+    distillStatus: options.llm ? "completed" : "skipped_not_configured",
   };
   const unavailable = () => run.llm === "unavailable";
   const judgeBatch = async (instruction: string, data: unknown[]) => {
@@ -382,6 +414,28 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       }
     }
     if (!run.capped) run.inboxAfter = null;
+    if (!knowledge) throw new Error("Missing knowledge store");
+    const distilled = await distillSources({
+      db: connection,
+      knowledge,
+      areas,
+      dryRun: !!options.dryRun,
+      ...(options.llm ? { llm: options.llm } : {}),
+      unavailable: unavailable(),
+      batchSize: distillBatchSize,
+      callCap: distillCallCap,
+      resumeAfter: run.distillAfter,
+    });
+    run.distillCalls = distilled.calls;
+    run.distilled = distilled.distilled;
+    run.distillRejected = distilled.rejected;
+    run.distillCapped = distilled.capped;
+    run.distillAfter = distilled.after;
+    run.distillStatus = distilled.status;
+    if (distilled.becameUnavailable) {
+      run.failures++;
+      run.llm = "unavailable";
+    }
     if (run.capped || run.failures) run.outcome = "partial";
     else if (!options.dryRun) run.lastSuccessfulAt = timestamp;
   } catch {
@@ -405,7 +459,10 @@ function movable(db: DatabaseSync, id: string) {
   if (
     db
       .prepare(
-        "SELECT 1 FROM knowledge_items k,json_each(k.source_refs) ref WHERE json_extract(ref.value,'$.sourceId')=? LIMIT 1",
+        `SELECT 1 FROM knowledge_items k,json_each(k.source_refs) ref
+         WHERE json_extract(ref.value,'$.sourceId')=?
+           AND NOT (k.kind IN ('fact','decision') AND json_extract(k.creator,'$.name')='context-tidy')
+         LIMIT 1`,
       )
       .get(id)
   )
@@ -461,6 +518,7 @@ function moveInbox(db: DatabaseSync, id: string, area: string) {
     db.prepare(
       "UPDATE embedding_chunks SET scope=? WHERE kind='sources' AND record_id=?",
     ).run(area, id);
+    relocateDistilledItems(db, id, area);
     // Invalidate an active lease: its worker read the old area before this move.
     db.prepare(
       "UPDATE embedding_jobs SET scope=?,status='queued',lease=NULL,attempts=0,next_at=0,error=NULL WHERE kind='sources' AND record_id=?",

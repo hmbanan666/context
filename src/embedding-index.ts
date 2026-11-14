@@ -346,6 +346,8 @@ export class EmbeddingIndex {
       conditions.push(
         "COALESCE((SELECT status FROM knowledge_reviews v WHERE v.knowledge_id=r.id AND v.scope=r.scope ORDER BY v.rowid DESC LIMIT 1),'suggested')<>'rejected'",
       );
+      // Proposed distillations stay out of retrieval until slice 4c ranks them.
+      conditions.push("r.kind NOT IN ('fact', 'decision')");
       const invalid = ["s.id IS NULL"];
       for (const [bound, op] of [
         [input.from, "<"],

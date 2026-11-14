@@ -240,6 +240,28 @@ append counts (including `llmCalls`), processor, outcome, duration, model and
 last-success time to `/app/data/tidy/history.jsonl`. Preserve that file separately if needed; the SQLite
 snapshot contains relations/moved areas but not either JSONL history file.
 
+### Distillation
+
+When a processor is configured, the same tidy command distills source revisions
+(ADR 0011). Each call sends at most 8 sources. Each run makes at most 12
+distillation calls, counted apart from inbox sorting, and the next run resumes
+from a cursor. A revision that already has a distilled fact or decision is
+skipped. Run it once manually inside the container (or `pnpm run context tidy ...`):
+
+```sh
+context tidy --json
+context tidy --dry-run --json
+```
+
+`--dry-run` calls the processor and reports `distilled` without writing SQLite
+or tidy history. A normal run stores one proposed sentence per source revision
+it accepts. `distillStatus` is `completed`, `capped`, `skipped_not_configured`,
+or `skipped_unavailable`. `llm: "not_configured"` or `llm: "unavailable"`
+(including an expired Codex login) skips distillation; dedup and inbox sorting
+still run. Repeat `context tidy` to continue a capped backlog. Distillation
+never approves an item and never writes a supersedes link. There is no new
+environment variable; the batch and call maxima are fixed.
+
 The OpenAI-compatible API remains the default (`CONTEXT_PROCESSOR` unset or
 `openai`). Compose forwards the selector and these existing API settings:
 
@@ -296,6 +318,9 @@ no SSH or Docker socket is mounted. The CLI alone handles its auth files, includ
 refresh. [Codex CLI reference](https://developers.openai.com/codex/cli/reference).
 
 Both processors batch up to 25 inbox items per call, with a hard limit of 12
-calls per tidy run. Counts include failed calls. An inbox cursor retains leftover
-work for the next night; invalid entries are skipped and counted, then retried
-after the cursor wraps. Old supersession fields in history JSONL are ignored.
+calls per tidy run. Distillation uses a separate limit of 8 sources and 12
+calls. Counts include failed calls. An inbox cursor and a distillation cursor
+each retain leftover work for the next night; invalid entries are skipped and
+counted, then retried after that cursor wraps. A distillation backlog does not
+by itself withhold the last-success time. Old supersession fields in history
+JSONL are ignored.

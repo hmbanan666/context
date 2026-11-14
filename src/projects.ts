@@ -448,6 +448,26 @@ export function isLinkedToProject(
     )
     .get(kind, recordId, projectId);
 }
+export function copyLinkedAssociations(
+  db: DatabaseSync,
+  fromKind: ProjectRecordKind,
+  fromId: string,
+  toKind: ProjectRecordKind,
+  toId: string,
+): void {
+  const from = recordKindSchema.parse(fromKind);
+  const to = recordKindSchema.parse(toKind);
+  identifierSchema.parse(fromId);
+  identifierSchema.parse(toId);
+  db.prepare(
+    `INSERT OR IGNORE INTO project_associations
+      (record_kind, record_id, project_id, origin, status)
+     SELECT ?, ?, project_id, origin, 'linked'
+     FROM project_associations
+     WHERE record_kind = ? AND record_id = ?
+       AND origin IN ('configured', 'client') AND status = 'linked'`,
+  ).run(to, toId, from, fromId);
+}
 export function proposeProjectLink(
   db: DatabaseSync,
   input: {

@@ -9,7 +9,14 @@ import {
 import type { PackageSelection } from "./package-query.js";
 import { redactFields } from "./redaction.js";
 import { retrievalRelations } from "./retrieval-relations.js";
-import { installProjects, linkedProjectSql } from "./projects.js";
+import {
+  copyLinkedAssociations,
+  installProjects,
+  linkedProjectSql,
+  projectIdSchema,
+  projectNameSchema,
+  proposeProjectLink,
+} from "./projects.js";
 import { installSearchIndex, lexicalCandidates } from "./search-lexical.js";
 import { IdempotencyConflict } from "./store.js";
 
@@ -60,13 +67,26 @@ export const relateKnowledgeSchema = z
   .refine((input) => input.fromId !== input.toId, {
     message: "A relation needs two distinct items",
   });
+export const storedKindSchema = z.enum([
+  "idea",
+  "observation",
+  "decision_proposal",
+  "fact",
+  "decision",
+]);
+export type StoredKnowledgeKind = z.infer<typeof storedKindSchema>;
 export type AddKnowledgeInput = z.infer<typeof addKnowledgeSchema>;
 export type RelateKnowledgeInput = z.infer<typeof relateKnowledgeSchema>;
-type KnowledgeStatus = "suggested" | "reviewed" | "rejected" | "approved";
+type KnowledgeStatus =
+  | "suggested"
+  | "proposed"
+  | "reviewed"
+  | "rejected"
+  | "approved";
 export interface KnowledgeItem {
   readonly id: string;
   readonly scope: string;
-  readonly kind: AddKnowledgeInput["kind"];
+  readonly kind: StoredKnowledgeKind;
   readonly text: string;
   readonly sourceRefs: AddKnowledgeInput["sourceRefs"];
   readonly creator: AddKnowledgeInput["creator"];
@@ -87,16 +107,110 @@ export interface KnowledgeRelation {
 export class KnowledgeNotFound extends Error {}
 export class KnowledgeValidationError extends Error {}
 
+// SQLite cannot alter a CHECK. Copy rows into a new table and keep the name so
+// legacy foreign keys (reviews, work authorizations) still point at it.
+function migrateKnowledgeKinds(db: DatabaseSync) {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE name = 'knowledge_items'")
+    .get() as { sql?: unknown } | undefined;
+  const sql = String(row?.sql ?? "");
+  // Match the kind token. SQLite may reflow whitespace around the CHECK.
+  if (!sql || sql.includes("'fact'")) return;
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      DROP TRIGGER IF EXISTS knowledge_items_fts_insert;
+      DROP TRIGGER IF EXISTS knowledge_items_search_insert;
+      DROP TRIGGER IF EXISTS knowledge_items_search_delete;
+      DROP TABLE IF EXISTS knowledge_items_fts;
+      CREATE TABLE knowledge_items_new (
+        id TEXT PRIMARY KEY NOT NULL,
+        scope TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('idea', 'observation', 'decision_proposal', 'fact', 'decision')),
+        text TEXT NOT NULL,
+        source_refs TEXT NOT NULL,
+        creator TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO knowledge_items_new (
+        rowid, id, scope, kind, text, source_refs, creator, created_at
+      )
+      SELECT rowid, id, scope, kind, text, source_refs, creator, created_at
+      FROM knowledge_items;
+      DROP TABLE knowledge_items;
+      ALTER TABLE knowledge_items_new RENAME TO knowledge_items;
+      CREATE INDEX knowledge_items_scope ON knowledge_items(scope, created_at, id);
+      CREATE VIRTUAL TABLE knowledge_items_fts USING fts5(
+        text, content='knowledge_items', content_rowid='rowid'
+      );
+      CREATE TRIGGER knowledge_items_fts_insert AFTER INSERT ON knowledge_items BEGIN
+        INSERT INTO knowledge_items_fts(rowid, text) VALUES (new.rowid, new.text);
+      END;
+      INSERT INTO knowledge_items_fts(knowledge_items_fts) VALUES ('rebuild');
+    `);
+    if (
+      db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE name = 'knowledge_items_stemmed'",
+        )
+        .get()
+    ) {
+      db.exec(`
+        CREATE TRIGGER knowledge_items_search_insert AFTER INSERT ON knowledge_items BEGIN
+          INSERT INTO knowledge_items_stemmed(rowid, text)
+          VALUES (new.rowid, context_stem(new.text));
+          INSERT OR IGNORE INTO embedding_jobs(kind, record_id, scope)
+          VALUES ('knowledge_items', new.id, new.scope);
+        END;
+        CREATE TRIGGER knowledge_items_search_delete AFTER DELETE ON knowledge_items BEGIN
+          DELETE FROM knowledge_items_stemmed WHERE rowid = old.rowid;
+          DELETE FROM embedding_chunks
+          WHERE kind = 'knowledge_items' AND record_id = old.id;
+          DELETE FROM embedding_jobs
+          WHERE kind = 'knowledge_items' AND record_id = old.id;
+        END;
+      `);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
 const itemSchema = z.strictObject({
   id: identifier,
   scope: scopeSchema,
-  kind: addKnowledgeSchema.shape.kind,
+  kind: storedKindSchema,
   text: text(8192),
   sourceRefs: knowledgeSourceRefsSchema,
   creator: knowledgeCreatorSchema,
   createdAt: z.iso.datetime(),
-  status: z.enum(["suggested", "reviewed", "rejected", "approved"]),
+  status: z.enum(["suggested", "proposed", "reviewed", "rejected", "approved"]),
 });
+const distilledInputSchema = z
+  .strictObject({
+    scope: scopeSchema,
+    sourceId: identifier,
+    kind: z.enum(["fact", "decision"]),
+    text: text(400),
+    createdAt: z.iso.datetime(),
+    proposedProjectId: projectIdSchema.optional(),
+    suggestedProjectName: projectNameSchema.optional(),
+  })
+  .refine((input) => !/[\r\n]/u.test(input.text), {
+    message: "A distilled item is one sentence",
+  })
+  .refine(
+    (input) =>
+      input.proposedProjectId === undefined ||
+      input.suggestedProjectName === undefined,
+    { message: "Propose a project id or a suggested name" },
+  );
+export type DistilledKnowledgeInput = z.infer<typeof distilledInputSchema>;
 const relationSchema = z.strictObject({
   id: identifier,
   scope: scopeSchema,
@@ -108,11 +222,19 @@ const relationSchema = z.strictObject({
   createdAt: z.iso.datetime(),
   status: z.literal("suggested"),
 });
-// Preserve historical status without exposing review writes or receipts.
+// Distilled facts and decisions are proposed until a later approval slice.
+// Historical rows without a review stay suggested. Review writes stay closed.
 const itemSelection = `SELECT k.id, k.scope, k.kind, k.text,
   k.source_refs AS sourceRefs, k.creator, k.created_at AS createdAt,
-  COALESCE((SELECT r.status FROM knowledge_reviews r
-    WHERE r.knowledge_id = k.id AND r.scope = k.scope ORDER BY r.rowid DESC LIMIT 1), 'suggested') AS status
+  CASE WHEN k.kind IN ('fact', 'decision') THEN
+    COALESCE((SELECT r.status FROM knowledge_reviews r
+      WHERE r.knowledge_id = k.id AND r.scope = k.scope
+      ORDER BY r.rowid DESC LIMIT 1), 'proposed')
+  ELSE
+    COALESCE((SELECT r.status FROM knowledge_reviews r
+      WHERE r.knowledge_id = k.id AND r.scope = k.scope
+      ORDER BY r.rowid DESC LIMIT 1), 'suggested')
+  END AS status
   FROM knowledge_items k`;
 const relationSelection = `SELECT id, scope, kind, from_id AS fromId, to_id AS toId,
   source_refs AS sourceRefs, creator, created_at AS createdAt, 'suggested' AS status FROM knowledge_relations`;
@@ -183,7 +305,7 @@ export class KnowledgeStore {
         CREATE TABLE IF NOT EXISTS knowledge_items (
           id TEXT PRIMARY KEY NOT NULL,
           scope TEXT NOT NULL,
-          kind TEXT NOT NULL CHECK(kind IN ('idea', 'observation', 'decision_proposal')),
+          kind TEXT NOT NULL CHECK(kind IN ('idea', 'observation', 'decision_proposal', 'fact', 'decision')),
           text TEXT NOT NULL,
           source_refs TEXT NOT NULL,
           creator TEXT NOT NULL,
@@ -266,6 +388,7 @@ export class KnowledgeStore {
       }
       this.#database.exec("COMMIT;");
       installSearchIndex(this.#database, "knowledge_items");
+      migrateKnowledgeKinds(this.#database);
     } catch (error) {
       if (this.#database.isTransaction) this.#database.exec("ROLLBACK");
       this.#database.close();
@@ -370,6 +493,79 @@ export class KnowledgeStore {
     });
   }
 
+  // One proposed sentence for one source revision. Never approves or supersedes.
+  addDistilled(input: DistilledKnowledgeInput): {
+    item: KnowledgeItem;
+    duplicate: boolean;
+  } {
+    const request = distilledInputSchema.parse(input);
+    const idempotencyKey = `distill:${createHash("sha256").update(request.sourceId).digest("hex")}`;
+    identifier.parse(idempotencyKey);
+    const hash = fingerprint({
+      scope: request.scope,
+      sourceId: request.sourceId,
+      kind: request.kind,
+      text: request.text,
+      createdAt: request.createdAt,
+      proposedProjectId: request.proposedProjectId ?? null,
+      suggestedProjectName: request.suggestedProjectName ?? null,
+    });
+    return this.#transaction(() => {
+      const prior = this.#request(request.scope, idempotencyKey, "add", hash);
+      if (prior) {
+        const item = this.find(prior, request.scope);
+        if (!item) throw new Error("Missing knowledge request result");
+        return { item, duplicate: true };
+      }
+      this.#checkSources([{ sourceId: request.sourceId }], request.scope);
+      const id = randomUUID();
+      const creator = {
+        kind: "model",
+        name: "context-tidy",
+        version: "distill-v1",
+      };
+      this.#database
+        .prepare(
+          `INSERT INTO knowledge_items(id, scope, kind, text, source_refs, creator, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          request.scope,
+          request.kind,
+          request.text,
+          JSON.stringify([{ sourceId: request.sourceId }]),
+          JSON.stringify(creator),
+          request.createdAt,
+        );
+      this.#saveRequest(request.scope, idempotencyKey, "add", hash, id);
+      copyLinkedAssociations(
+        this.#database,
+        "source",
+        request.sourceId,
+        "knowledge",
+        id,
+      );
+      if (request.proposedProjectId)
+        proposeProjectLink(this.#database, {
+          recordKind: "knowledge",
+          recordId: id,
+          sourceId: request.sourceId,
+          projectId: request.proposedProjectId,
+        });
+      if (request.suggestedProjectName)
+        proposeProjectLink(this.#database, {
+          recordKind: "knowledge",
+          recordId: id,
+          sourceId: request.sourceId,
+          suggestedName: request.suggestedProjectName,
+        });
+      const item = this.find(id, request.scope);
+      if (!item) throw new Error("Missing inserted knowledge");
+      return { item, duplicate: false };
+    });
+  }
+
   find(id: string, scope: string): KnowledgeItem | undefined {
     validateLookup(id, scope);
     const row = this.#database
@@ -398,7 +594,12 @@ export class KnowledgeStore {
       throw new Error("Invalid candidate bound");
     if (!input.terms.length && !sourceIds.length)
       return { total: 0, items: [], matchOffsets: new Map<string, number>() };
-    const conditions = ["k.scope = ?", "status <> 'rejected'"];
+    // Slice 4c ranks distilled sentences. Until then they stay out of search.
+    const conditions = [
+      "k.scope = ?",
+      "status <> 'rejected'",
+      "k.kind NOT IN ('fact', 'decision')",
+    ];
     const params: (string | number)[] = [input.scope];
     const invalid = ["s.id IS NULL"];
     const date = "source_timestamp(COALESCE(m.created_at,s.captured_at))";

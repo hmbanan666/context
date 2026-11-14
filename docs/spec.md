@@ -135,11 +135,9 @@ are also possible through authorized agents via MCP.
 ### Projects and distilled memory
 
 Accepted in ADRs 0010–0012. Caps and call limits live in those
-ADRs so this spec does not keep a second copy. Slice 4a is implemented: the
-project catalog, repository mappings, import and backfill of configured
-associations, optional `project` on `remember`, `search` and `timeline`,
-association fields on `read`, and `search` with `listProjects: true`.
-Distillation, profiles, journals, approval and task packs are not implemented.
+ADRs so this spec does not keep a second copy. Slices 4a (project catalog
+and association) and 4b (nightly distillation) are implemented and not
+deployed. Profiles, journals, approval and task packs are not implemented.
 
 - A project is an understanding-layer entity with a stable id and one home
   area. It is not an area and not a permission. Association comes from an owner
@@ -155,9 +153,17 @@ Distillation, profiles, journals, approval and task packs are not implemented.
 - The configured processor distills a source revision into one proposed sentence
   (`fact` or `decision`) with its project, date and source link. GitHub pull
   requests remain archive evidence; the sentence states what was decided or
-  shipped. Nightly calls are batched and capped. Capture does not wait.
+  shipped. Nightly calls are batched and capped, separately from inbox sorting.
+  Capture does not wait. Slice 4b stores each sentence with status `proposed`.
+  `read` returns it by id. `search` and `timeline` do not return these sentences
+  yet, so area-wide retrieval keeps its current ranking; preferring them and
+  omitting cited raw sources is slice 4c. A missing or failed processor skips
+  distillation and still runs dedup and inbox sorting. `context tidy` distills
+  one capped pass; `context tidy --dry-run` calls the processor and writes
+  nothing.
 - Supersession stays explicit: `remember` with `supersedes`. Distillation must
-  not write a supersedes link or set `approved`.
+  not write a supersedes link or set `approved`. A claimed `approved` status
+  stays `proposed`.
 - Each project has a small owner-written profile (purpose, rules, pinned
   decisions in force) and a weekly journal built from distilled items. A missing
   journal is not an empty week.
@@ -291,10 +297,11 @@ calls; exact source retrieval remains usable while its index rebuilds.
 ### Stage 4 — Understanding, consolidation and nightly evals (partially merged)
 
 Deduplication, explicit supersession and history, guarded inbox sorting and
-nightly evaluation are already merged. Slice 4a (project catalog and
-association) is implemented and not deployed. Still to build: distillation,
-profiles, journals, approval, task packs and people through the pluggable
-processor, plus hard delete with tombstones.
+nightly evaluation are already merged. Slices 4a (project catalog and
+association) and 4b (nightly distillation of proposed facts and decisions)
+are implemented and not deployed. Still to build: profiles, journals,
+approval, task packs and people through the pluggable processor, plus hard
+delete with tombstones.
 Automatic supersession is not part of this stage. Uncertain inbox items still
 await an owner decision.
 
@@ -313,9 +320,9 @@ items await owner decisions. Hard delete removes the record and derivations from
 reads, search, history and pending processing; only the tombstone remains. Test
 that restore reconciliation prevents silent resurrection, with an explicit
 backup-retention contract. Private and synthetic nightly evals report failures
-without exposing private questions or results publicly. Slice 4a is only the
-catalog and association. Distillation, project-search ranking, profiles,
-journals, approval and pack mode remain unmet.
+without exposing private questions or results publicly. Slices 4a and 4b are the catalog, association and proposed distillation.
+Project-search ranking, profiles, journals, approval and pack mode remain unmet.
+Distilled sentences are stored and are not yet preferred in search.
 
 ### Stage 5 — Owner UI and more imports (planned)
 
