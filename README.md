@@ -110,7 +110,7 @@ Only these four tools appear in `tools/list`:
 | --- | --- |
 | `search` | Find source-grounded context with `query`, optional `scope`, `project`, `k` (1–20), `since`, `until` and `budgetBytes` (2048–65536, default 8192). A project filter ranks that project's weekly journal and distilled facts and decisions ahead of raw sources and omits sources those items cite. `listProjects: true` returns up to 64 project ids and names and does not search. |
 | `remember` | Save `text` or `file` with optional metadata, optional `project` ids and authenticated-client provenance; supply an `idempotencyKey`. Files use `filename`, `mediaType` and canonical `contentBase64` (UTF-8 `.txt`/`.md`, at most 16 KiB). |
-| `read` | Read a source, knowledge item, weekly journal or project profile by `id` and `scope`, including file bytes, project associations and up to 50 existing relations; reports truncation. A profile id is `profile:<project id>` and is readable only in the project's home area. |
+| `read` | Read a source, knowledge item, weekly journal or project profile by `id` and `scope`, including file bytes, project associations and up to 50 existing relations; reports truncation. A journal includes `citations` with the summarized item ids. A profile id is `profile:<project id>` and is readable only in the project's home area. |
 | `timeline` | List recent original source records, newest first, with optional `scope`, `project`, `since`, `until` and `limit` (1–20). |
 
 Dates are ISO timestamps with timezone: `since` is inclusive, `until` exclusive.

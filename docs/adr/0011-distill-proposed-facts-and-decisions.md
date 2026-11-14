@@ -24,13 +24,22 @@ For each source revision that has no distilled item yet, tidy derives items
 with:
 
 - kind `fact` or `decision`
-- one self-contained sentence of at most 400 characters, naming its project
-  when a configured or client association exists
+- one self-contained sentence of at most 400 characters. When the source
+  already has a configured or client project link, the item inherits that
+  link and the sentence does not have to contain the project id. Product
+  names such as "Unbored Companion" or "Kosarev Space" stay as the source
+  writes them. When the source has no such link and the model proposes a
+  project, the sentence must name that project; case and hyphens, spaces or
+  no separator do not matter. An unmapped source with no proposal stays
+  unlinked
 - associations copied from configured and client links; a model-supplied id of
   an existing project that is not already linked is stored as a proposed
   association. Any other project string is a proposed project with that
   suggested name and no usable id (ADR 0010)
-- date from the source authored time, otherwise the capture time
+- date from the source authored time, otherwise the capture time. A numeric
+  offset such as `+01:00` is accepted and the knowledge row stores that
+  instant in UTC with a `Z` suffix. The source metadata keeps the original
+  timestamp
 - a link to the immutable source id, and the source URL when one is stored
 - status `proposed`
 
@@ -46,7 +55,8 @@ URL, date, kind and at most 1500 characters of body. Capture does not wait for
 a call.
 
 GitHub pull requests stay stored as raw archive evidence. The stored sentence
-states what was decided or shipped and names the project when one is known.
+states what was decided or shipped. A mapped source keeps its project on the
+item even when the sentence uses the product name instead of the id.
 A sentence that copies a contiguous 80-character span of stored prose is
 rejected and the source stays pending. The span is measured after code spans,
 identifiers, ADR titles, URLs and markdown marks are removed and whitespace is

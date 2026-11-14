@@ -11,7 +11,9 @@ import { redactFields } from "./redaction.js";
 import { retrievalRelations } from "./retrieval-relations.js";
 import {
   knowledgeWindowSql,
+  readJournalCitations,
   refreshProjectJournals,
+  type JournalCitations,
   type JournalRefresh,
 } from "./journal.js";
 import {
@@ -741,6 +743,10 @@ export class KnowledgeStore {
     backfillLimit?: number;
   }): JournalRefresh {
     return refreshProjectJournals(this.#database, input);
+  }
+
+  journalCitations(id: string): JournalCitations | undefined {
+    return readJournalCitations(this.#database, id);
   }
 
   packageRelations(scope: string, ids: readonly string[]) {

@@ -275,8 +275,13 @@ test("rejection drops a decision from search and the next journal, and a project
       dryRun: false,
     });
     const journal = f.knowledge.find(`journal:observatory:${weekOf.id}`, scope);
-    assert.equal(journal?.text.includes(kept.id), true);
-    assert.equal(journal?.text.includes(dropped.id), true);
+    assert.equal(journal?.text.includes(kept.id), false);
+    assert.equal(journal?.text.includes(dropped.id), false);
+    assert.equal(journal?.text.includes("…"), false);
+    assert.deepEqual(
+      f.knowledge.journalCitations(journal?.id ?? "")?.citedIds,
+      [kept.id, dropped.id],
+    );
     const link = f.knowledge
       .listProposals({ kind: "project" })
       .proposals.find(
@@ -328,7 +333,12 @@ test("rejection drops a decision from search and the next journal, and a project
       scope,
     );
     assert.equal(refreshed?.text.includes(dropped.id), false);
-    assert.equal(refreshed?.text.includes(kept.id), true);
+    assert.equal(refreshed?.text.includes(kept.id), false);
+    assert.equal(refreshed?.text.includes("cobalt mirror mount"), true);
+    assert.deepEqual(
+      f.knowledge.journalCitations(refreshed?.id ?? "")?.citedIds,
+      [kept.id],
+    );
     assert.equal(supersedes(f.path), 0);
   } finally {
     await f.close();

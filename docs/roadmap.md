@@ -43,10 +43,12 @@ approval. ADRs 0010–0012 are the contract; these rows are the order.
 Follow-up after the 4a–4d deploy, not a new slice: project search with a project
 id and `since` or `until` includes that window's journals, decisions and facts
 even when the query shares no words, ranked journals then decisions then facts.
-A weekly journal is a short summary of that week's decisions then facts, at most
-800 characters, in the source language. `context tidy --journal-backfill` writes
-older weeks that have items, at most 24 per run (`--journal-backfill-limit`, max
-52), and a later run does not rewrite an unchanged week. Tidy JSON includes
+A weekly journal is up to eight complete sentences of that week's decisions
+then facts, at most 800 characters, in the source language. Item ids stay in
+metadata. `context tidy --journal-backfill` writes older weeks that have
+items, at most 24 per run (`--journal-backfill-limit`, max 52), rewrites a
+paragraph whose summary changed, and a later run does not rewrite an unchanged
+week. Tidy JSON includes
 `distillRejections`. A few redacted samples go to stderr, not tidy history.
 Search keeps prose before and after a Cursor pull-request footer and rebuilds
 the derived source index once.

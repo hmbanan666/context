@@ -115,7 +115,9 @@ without a usable id until `context project review` approves one and assigns
 it. Distillation (ADR 0011) writes
 one proposed `fact` or `decision` per source revision that does not already have
 one, copying configured and client project links and storing any other model
-project string as a proposal. Calls are capped separately from inbox sorting.
+project string as a proposal. A linked source does not need its id inside the
+sentence. A source date with a numeric offset is stored on the item as UTC.
+Calls are capped separately from inbox sorting.
 Each run spreads the cap across projects (round-robin, newest revision first
 inside a project, unlinked sources last) and resumes that pass from a cursor.
 The prompt asks for one self-contained sentence in the source's dominant
@@ -136,12 +138,14 @@ and omits a raw source cited by a returned item (ADR 0012 slice 4c). Optional
 `budgetBytes` overrides the package budget. Slice 4d adds an owner-written
 profile (purpose, rules and up to eight pinned decision ids, at most 2048
 UTF-8 bytes) edited only by `context project profile`, and a deterministic
-weekly journal. The paragraph groups that week's decisions before its facts,
-compresses them, cites ids, and stays within 800 characters in the source
-language. Nightly tidy refreshes the current and previous ISO weeks in `TZ`
-from that project's distilled items in the home area, without a processor
-call. `context tidy --journal-backfill` writes older weeks that have items,
-bounded per run, and skips an unchanged paragraph. Search with a project id
+weekly journal. The paragraph names the project and week, then up to eight
+complete sentences, decisions before facts, within 800 characters in the
+source language. Item ids stay in metadata (`citations` on read, `citedIds`
+on a search card). Nightly tidy refreshes the current and previous ISO weeks
+in `TZ` from that project's distilled items in the home area, without a
+processor call. `context tidy --journal-backfill` writes older weeks that
+have items, bounded per run, rewrites a paragraph whose summary changed, and
+skips an unchanged paragraph. Search with a project id
 and a date bound ranks journals, then decisions, then facts in that window
 even when the query does not match them, ahead of uncited raw sources.
 Slice 4e records owner approval in `knowledge_reviews`

@@ -9,7 +9,9 @@ import {
   copiesStoredBody,
   DISTILL_BODY_LIMIT,
   DISTILL_UNLINKED,
+  distillCreatedAt,
   distillInstruction,
+  mentionsProject,
   orderDistillSources,
   sourceBody,
 } from "../src/distill.js";
@@ -76,6 +78,52 @@ test("an 80 character body span is a copy and 79 characters is not", () => {
     clipText(`${"a".repeat(2000)}TAIL`, DISTILL_BODY_LIMIT).includes("TAIL"),
     false,
   );
+});
+
+test("distillation accepts offset datetimes and stores them as UTC", () => {
+  assert.equal(
+    distillCreatedAt("2026-09-29T12:00:00+01:00"),
+    "2026-09-29T11:00:00.000Z",
+  );
+  assert.equal(
+    distillCreatedAt("2026-09-29T12:00:00.123+01:00"),
+    "2026-09-29T11:00:00.123Z",
+  );
+  assert.equal(
+    distillCreatedAt("2026-10-04T00:00:00+00:00"),
+    "2026-10-04T00:00:00.000Z",
+  );
+  assert.equal(
+    distillCreatedAt("2026-10-04T00:00:00Z"),
+    "2026-10-04T00:00:00Z",
+  );
+  assert.equal(
+    distillCreatedAt("2026-10-04T00:00:00.000Z"),
+    "2026-10-04T00:00:00.000Z",
+  );
+  assert.equal(distillCreatedAt("2026-10-04T00:00:00"), undefined);
+  assert.equal(distillCreatedAt("2026-10-04"), undefined);
+  assert.equal(distillCreatedAt("not-a-date"), undefined);
+});
+
+test("a project mention ignores case and hyphen, space or no separator", () => {
+  assert.equal(
+    mentionsProject("Unbored Companion shipped the lantern.", "unbored"),
+    true,
+  );
+  assert.equal(
+    mentionsProject("Kosarev Space kept the index.", "kosarev-space"),
+    true,
+  );
+  assert.equal(
+    mentionsProject("kosarevplatform noted the deploy.", "kosarev-platform"),
+    true,
+  );
+  assert.equal(
+    mentionsProject("Lantern-Desk kept the queue.", "Lantern Desk"),
+    true,
+  );
+  assert.equal(mentionsProject("The workshop noted a gap.", "unbored"), false);
 });
 
 test("GitHub distillation stores one proposed sentence and rejects a body copy", async () => {
@@ -1003,7 +1051,7 @@ test("the fake processor receives a self-contained multilingual prompt and not t
       },
     });
     assert.equal(instruction, distillInstruction);
-    for (const phrase of [
+    for (const required of [
       "self-contained",
       "what changed",
       "why or the impact",
@@ -1012,8 +1060,14 @@ test("the fake processor receives a self-contained multilingual prompt and not t
       "Russian source",
       "400 characters",
       "80 or more contiguous",
+      "inherits those links",
+      "must name that project",
     ])
-      assert.equal(instruction.includes(phrase), true, phrase);
+      assert.equal(instruction.includes(required), true, required);
+    assert.equal(
+      instruction.includes("Include every id listed in projects"),
+      false,
+    );
     assert.equal(run.distilled, 1);
     assert.equal(f.knowledge.list("personal", 5)[0]?.text.includes(term), true);
     assert.equal(f.sources.find(source.id, "personal")?.text, text);
@@ -1150,6 +1204,151 @@ test("distillation counts rejection reasons and logs a redacted sample", async (
     assert.equal(saved.distillRejections["copy-80"], 1);
     assert.equal(history.includes(secret), false);
     assert.equal(history.includes("distill_rejection_sample"), false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("mapped sources inherit their project and offset dates are stored as UTC", async () => {
+  const f = await open("distill-offset-project");
+  try {
+    for (const id of ["unbored", "kosarev-space", "kosarev-platform"])
+      f.sources.createProject({
+        id,
+        name: id,
+        homeArea: "workshop",
+      });
+    const capture = (
+      key: string,
+      text: string,
+      createdAt: string,
+      project?: string,
+    ) => {
+      const source = f.sources.captureMaterial({
+        version: 1,
+        scope: "workshop",
+        origin: "fixture",
+        idempotencyKey: key,
+        text,
+        metadata: { title: key, createdAt },
+      }).material.source;
+      if (project)
+        f.sources.addClientAssociation("source", source.id, [project]);
+      return source;
+    };
+    const offset = capture(
+      "offset",
+      "Grokbot import without a literal project id.",
+      "2026-09-29T12:00:00+01:00",
+      "unbored",
+    );
+    const space = capture(
+      "space",
+      "A kosarev space note that never spells the id.",
+      "2026-09-29T12:00:00+00:00",
+      "kosarev-space",
+    );
+    const platform = capture(
+      "platform",
+      "A platform note.",
+      "2026-10-04T00:00:00Z",
+      "kosarev-platform",
+    );
+    capture(
+      "stray",
+      "An unmapped note that names nothing.",
+      "2026-10-04T00:00:00Z",
+    );
+    capture("loose", "An unmapped grokbot import.", "2026-10-04T00:00:00Z");
+    capture(
+      "named",
+      "An unmapped note with a suggested desk.",
+      "2026-10-04T00:00:00Z",
+    );
+    const dated = capture(
+      "dated",
+      "A note whose stored clock is not a datetime.",
+      "2026-10-04T00:00:00Z",
+    );
+    const db = new DatabaseSync(f.path);
+    db.prepare(
+      "UPDATE source_metadata SET created_at = ? WHERE source_id = ?",
+    ).run("not-a-date", dated.id);
+    db.close();
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["workshop"],
+      llm: {
+        model: "fake",
+        async ask(_instruction: string, data: unknown) {
+          return (data as { index: number; title: string | null }[]).map(
+            (source) => {
+              const answer = {
+                offset: "Unbored Companion shipped the lantern.",
+                space: "The public index stayed on the calendar.",
+                platform: "The platform deploy stayed on the calendar.",
+                stray: "The workshop noted a gap.",
+                loose: "A grokbot import recorded a synthetic note.",
+                named: "Lantern-Desk kept the queue.",
+                dated: "The broken clock still has a sentence.",
+              }[source.title ?? ""];
+              const project = {
+                offset: null,
+                space: null,
+                platform: null,
+                stray: "unbored",
+                loose: null,
+                named: "Lantern Desk",
+                dated: null,
+              }[source.title ?? ""];
+              return {
+                index: source.index,
+                kind: "fact" as const,
+                text: answer ?? "Missing fixture sentence.",
+                project,
+              };
+            },
+          );
+        },
+      },
+    });
+    assert.equal(run.distilled, 5);
+    assert.equal(run.distillRejected, 2);
+    assert.equal(run.distillRejections["invalid-date"], 1);
+    assert.equal(run.distillRejections["missing-project"], 1);
+    const items = f.knowledge.list("workshop", 20);
+    const byText = (needle: string) =>
+      items.find((item) => item.text.includes(needle));
+    const companion = byText("Unbored Companion");
+    assert.equal(companion?.createdAt, "2026-09-29T11:00:00.000Z");
+    assert.deepEqual(companion?.sourceRefs, [{ sourceId: offset.id }]);
+    assert.deepEqual(
+      f.sources.associationsFor("knowledge", companion?.id ?? ""),
+      [{ projectId: "unbored", origin: "client", status: "linked" }],
+    );
+    const index = byText("public index");
+    assert.equal(index?.createdAt, "2026-09-29T12:00:00.000Z");
+    assert.deepEqual(index?.sourceRefs, [{ sourceId: space.id }]);
+    assert.deepEqual(f.sources.associationsFor("knowledge", index?.id ?? ""), [
+      { projectId: "kosarev-space", origin: "client", status: "linked" },
+    ]);
+    const deploy = byText("platform deploy");
+    assert.deepEqual(deploy?.sourceRefs, [{ sourceId: platform.id }]);
+    assert.deepEqual(f.sources.associationsFor("knowledge", deploy?.id ?? ""), [
+      { projectId: "kosarev-platform", origin: "client", status: "linked" },
+    ]);
+    assert.equal(byText("noted a gap"), undefined);
+    assert.equal(byText("broken clock"), undefined);
+    const grokbot = byText("grokbot import");
+    assert.equal(grokbot?.createdAt, "2026-10-04T00:00:00Z");
+    assert.deepEqual(
+      f.sources.associationsFor("knowledge", grokbot?.id ?? ""),
+      [],
+    );
+    const desk = byText("Lantern-Desk");
+    assert.deepEqual(f.sources.associationsFor("knowledge", desk?.id ?? ""), [
+      { origin: "proposed", status: "proposed", suggestedName: "Lantern Desk" },
+    ]);
   } finally {
     await f.close();
   }

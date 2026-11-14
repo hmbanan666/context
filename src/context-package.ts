@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { SemanticHits } from "./embedding-index.js";
+import { journalExcerpt } from "./journal.js";
 import type {
   KnowledgeItem,
   KnowledgeRelation,
@@ -50,6 +51,7 @@ function itemCard(
   matchOffset = 0,
   supersededBy?: string,
   sourceLinks?: { id: string; url?: string }[],
+  citedIds?: readonly string[],
 ) {
   return {
     id: k.id,
@@ -58,9 +60,13 @@ function itemCard(
     status: k.status,
     createdAt: k.createdAt,
     creator: k.creator,
-    excerpt: excerpt(k.text, matchOffset, 480),
+    excerpt:
+      k.kind === "journal"
+        ? journalExcerpt(k.text)
+        : excerpt(k.text, matchOffset, 480),
     sourceIds: k.sourceRefs.map((r) => r.sourceId),
     ...(sourceLinks ? { sourceLinks } : {}),
+    ...(citedIds?.length ? { citedIds: [...citedIds] } : {}),
   };
 }
 function relationCard(r: KnowledgeRelation) {
@@ -273,6 +279,9 @@ export function buildContextPackage(
                   const url = material(ref.sourceId)?.metadata.sourceUri;
                   return url ? { id: ref.sourceId, url } : { id: ref.sourceId };
                 })
+              : undefined,
+            k.kind === "journal"
+              ? knowledge.journalCitations(k.id)?.citedIds
               : undefined,
           ),
         ),

@@ -289,6 +289,7 @@ even when the query shares no words with them. Each item is labelled with its
 stored status, `proposed` or `approved`, and carries the source id and URL. A
 raw source cited by a returned item is omitted. `budgetBytes` (2048–65536)
 overrides the 8192-byte package budget. Journal paragraphs are the week's
-summary for weeks that overlap the requested dates; area-wide search omits them.
+summary in complete sentences for weeks that overlap the requested dates.
+`citedIds` lists the item ids. Area-wide search omits journals.
 The owner sets that status with `context project review`; distillation does
 not. Pack mode is not implemented.

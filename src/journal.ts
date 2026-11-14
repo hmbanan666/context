@@ -2,10 +2,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { latestReviewStatusSql } from "./review-status.js";
 
 // ADR 0012. One replaceable paragraph per project and ISO week. Tidy writes a
-// short summary from distilled items only; the processor is not called and
-// cannot approve it. Nightly tidy refreshes the current and previous weeks.
-// An explicit backfill writes older weeks, bounded per run.
+// short summary from distilled items only: complete sentences, decisions
+// first, item ids kept in metadata. The processor is not called and cannot
+// approve it. Nightly tidy refreshes the current and previous weeks. An
+// explicit backfill writes older weeks, bounded per run, and rewrites a
+// paragraph when the summary changes.
 export const journalCharacterLimit = 800;
+export const journalSentenceLimit = 8;
 export const journalBackfillDefault = 24;
 export const journalBackfillMax = 52;
 const journalCreator = {
@@ -184,8 +187,8 @@ function characters(value: string): number {
   return Array.from(value).length;
 }
 
-function compressItem(text: string, max: number): string {
-  const plain = text
+function prose(text: string): string {
+  return text
     .replace(/```[\s\S]*?```/gu, (block) => block.replace(/```/gu, " "))
     .replace(/`([^`]*)`/gu, "$1")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, "$1")
@@ -193,41 +196,18 @@ function compressItem(text: string, max: number): string {
     .replace(/[*_~]+/gu, "")
     .replace(/\s+/gu, " ")
     .trim();
-  const chars = Array.from(plain);
-  if (chars.length <= max) return plain;
-  const slice = chars.slice(0, max).join("");
-  const space = slice.lastIndexOf(" ");
-  const clipped =
-    space >= Math.floor(max * 0.6) ? slice.slice(0, space) : slice;
-  return `${clipped.replace(/[;,:\s]+$/u, "")}…`;
 }
 
-function assembleJournal(
-  header: string,
-  items: readonly { id: string; kind: "fact" | "decision"; text: string }[],
-  cap: number,
-): { text: string; citedIds: string[] } {
-  let body = "";
-  const citedIds: string[] = [];
-  let previousKind = "";
-  for (const item of items) {
-    const sentence = compressItem(item.text, cap);
-    if (!sentence) continue;
-    const separator = !citedIds.length
-      ? ""
-      : item.kind !== previousKind
-        ? ". "
-        : "; ";
-    const piece = `${separator}${sentence} (${item.id})`;
-    if (characters(header + body + piece) > journalCharacterLimit) break;
-    body += piece;
-    citedIds.push(item.id);
-    previousKind = item.kind;
-  }
-  return { text: header + body, citedIds };
+function completeSentence(text: string): string {
+  const plain = prose(text);
+  if (!plain) return "";
+  return /[.!?…。！？]$/u.test(plain) ? plain : `${plain}.`;
 }
 
-/** Decisions, then facts. Compresses so several items fit, and cites them. */
+/**
+ * Decisions, then facts, as whole sentences in the source language. Item ids
+ * stay in `citedIds`. A sentence that does not fit is omitted, not cut.
+ */
 export function journalParagraph(
   projectId: string,
   weekId: string,
@@ -247,13 +227,92 @@ export function journalParagraph(
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
   const header = `${projectId} ${weekId}: `;
-  const caps = [400, 220, 140, 96, 64, 42, 28];
-  let best = assembleJournal(header, ordered, caps[0] ?? 400);
-  for (const cap of caps.slice(1)) {
-    const built = assembleJournal(header, ordered, cap);
-    if (built.citedIds.length > best.citedIds.length) best = built;
+  let body = "";
+  const citedIds: string[] = [];
+  for (const item of ordered) {
+    if (citedIds.length >= journalSentenceLimit) break;
+    const sentence = completeSentence(item.text);
+    if (!sentence) continue;
+    const piece = citedIds.length ? ` ${sentence}` : sentence;
+    if (characters(header + body + piece) > journalCharacterLimit) continue;
+    body += piece;
+    citedIds.push(item.id);
   }
-  return best;
+  return { text: header + body, citedIds };
+}
+
+export interface JournalCitations {
+  readonly projectId: string;
+  readonly week: string;
+  readonly itemIds: readonly string[];
+  readonly citedIds: readonly string[];
+}
+
+function stringList(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((item) => typeof item !== "string")
+    )
+      return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function readJournalCitations(
+  db: DatabaseSync,
+  knowledgeId: string,
+): JournalCitations | undefined {
+  if (!journalMetaReady(db)) return undefined;
+  const row = db
+    .prepare(
+      `SELECT project_id AS projectId, iso_week AS week,
+         item_ids AS itemIds, cited_ids AS citedIds
+       FROM project_journal_meta WHERE knowledge_id = ?`,
+    )
+    .get(knowledgeId) as
+    | { projectId: string; week: string; itemIds: string; citedIds: string }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    projectId: row.projectId,
+    week: row.week,
+    itemIds: stringList(row.itemIds),
+    citedIds: stringList(row.citedIds),
+  };
+}
+
+/** Search cards show whole sentences. They do not cut a journal mid-sentence. */
+export function journalExcerpt(text: string, maximum = 480) {
+  if (text.length <= maximum)
+    return { text, start: 0, end: text.length, truncated: false as const };
+  const slice = text.slice(0, maximum);
+  if (/[.!?…。！？]$/u.test(slice))
+    return {
+      text: slice,
+      start: 0,
+      end: slice.length,
+      truncated: true as const,
+    };
+  let end = -1;
+  for (const mark of [". ", "! ", "? "]) {
+    const at = slice.lastIndexOf(mark);
+    if (at > end) end = at + 1;
+  }
+  for (const mark of ["。", "！", "？"]) {
+    const at = slice.lastIndexOf(mark);
+    if (at >= 0 && at + mark.length > end) end = at + mark.length;
+  }
+  const clipped = end > 0 ? text.slice(0, end) : slice;
+  return {
+    text: clipped,
+    start: 0,
+    end: clipped.length,
+    truncated: true as const,
+  };
 }
 
 function citedRefs(items: readonly WeekItem[], citedIds: readonly string[]) {
