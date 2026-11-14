@@ -13,7 +13,7 @@ import {
   projectNameSchema,
   UnknownProject,
 } from "./projects.js";
-import { redactFields } from "./redaction.js";
+import { redact, redactFields } from "./redaction.js";
 import { visibleSourceText } from "./source-text.js";
 import { IdempotencyConflict } from "./store.js";
 
@@ -47,10 +47,40 @@ export interface DistillFrontier {
   readonly row: number;
 }
 export type DistillFrontiers = Readonly<Record<string, DistillFrontier>>;
+export const DISTILL_REJECTION_REASONS = [
+  "parse-error",
+  "empty",
+  "too-long",
+  "newline",
+  "invalid-date",
+  "missing-project",
+  "copy-80",
+  "invalid-project",
+  "save-error",
+] as const;
+export type DistillRejectionReason = (typeof DISTILL_REJECTION_REASONS)[number];
+export type DistillRejections = Record<DistillRejectionReason, number>;
+const DISTILL_SAMPLE_CAP = 8;
+
+export function emptyDistillRejections(): DistillRejections {
+  return {
+    "parse-error": 0,
+    empty: 0,
+    "too-long": 0,
+    newline: 0,
+    "invalid-date": 0,
+    "missing-project": 0,
+    "copy-80": 0,
+    "invalid-project": 0,
+    "save-error": 0,
+  };
+}
+
 export interface DistillResult {
   calls: number;
   distilled: number;
   rejected: number;
+  rejections: DistillRejections;
   capped: boolean;
   after: number | null;
   frontiers: DistillFrontiers | null;
@@ -92,10 +122,34 @@ export function clipText(text: string, max: number) {
     end--;
   return text.slice(0, end);
 }
+// Prose for the 80-character copy check. Code spans, identifiers, ADR titles,
+// URLs and markdown marks do not count. Whitespace is collapsed so a copy that
+// only differs by spacing still matches. ADR 0011 still rejects 80 characters
+// of contiguous prose.
+function comparableProse(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/gu, " ")
+    .replace(/`[^`\n]*`/gu, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, " $1 ")
+    .replace(/https?:\/\/\S+/gu, " ")
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu,
+      " ",
+    )
+    .replace(/\b[0-9a-f]{16,}\b/giu, " ")
+    .replace(/\bADR[-\s]?\d{3,4}(?:[-_][\p{L}\p{N}]+)*/giu, " ")
+    .replace(/(?:\b[\p{L}\p{N}_.-]+\/)+[\p{L}\p{N}_.-]+\b/gu, " ")
+    .replace(/[*_~#]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 export function copiesStoredBody(sentence: string, body: string) {
-  if (sentence.length < 80 || body.length < 80) return false;
-  for (let index = 0; index <= sentence.length - 80; index++) {
-    if (body.includes(sentence.slice(index, index + 80))) return true;
+  const left = comparableProse(sentence);
+  const right = comparableProse(body);
+  if (left.length < 80 || right.length < 80) return false;
+  for (let index = 0; index <= left.length - 80; index++) {
+    if (right.includes(left.slice(index, index + 80))) return true;
   }
   return false;
 }
@@ -307,6 +361,29 @@ function groupedAnswers(raw: unknown, count: number) {
   return answers;
 }
 
+function rejectionReason(input: {
+  answers: Map<number, z.infer<typeof answerSchema>> | undefined;
+  answer: z.infer<typeof answerSchema> | undefined;
+  text: string;
+  parsed: boolean;
+  dated: boolean;
+  projects: readonly string[];
+  copied: boolean;
+  proposal: boolean;
+}): DistillRejectionReason | undefined {
+  if (!input.answers || !input.answer) return "parse-error";
+  if (!input.text.trim()) return "empty";
+  if (input.text.length > 400) return "too-long";
+  if (!input.parsed) return "parse-error";
+  if (/[\r\n]/u.test(input.text)) return "newline";
+  if (!input.dated) return "invalid-date";
+  if (!input.projects.every((id) => input.text.includes(id)))
+    return "missing-project";
+  if (input.copied) return "copy-80";
+  if (!input.proposal) return "invalid-project";
+  return undefined;
+}
+
 export async function distillSources(input: {
   db: DatabaseSync;
   knowledge: KnowledgeStore;
@@ -323,11 +400,24 @@ export async function distillSources(input: {
     calls: 0,
     distilled: 0,
     rejected: 0,
+    rejections: emptyDistillRejections(),
     capped: false,
     after: null,
     frontiers: null,
     status: "completed",
     becameUnavailable: false,
+  };
+  let samples = 0;
+  const reject = (reason: DistillRejectionReason, sample: string) => {
+    result.rejections[reason]++;
+    result.rejected++;
+    if (samples >= DISTILL_SAMPLE_CAP) return;
+    samples++;
+    const text = redact(sample).replace(/\s+/gu, " ").trim().slice(0, 160);
+    // Counts stay in tidy JSON. Samples are redacted, capped, and not stored.
+    console.error(
+      JSON.stringify({ event: "distill_rejection_sample", reason, text }),
+    );
   };
   if (!input.llm) {
     result.status = "skipped_not_configured";
@@ -403,17 +493,24 @@ export async function distillSources(input: {
         ? proposalFor(input.db, answer.project, projects)
         : { ok: false as const };
       const body = sourceBody(source.text, source.title);
+      const reason = rejectionReason({
+        answers,
+        answer,
+        text,
+        parsed: parsed.success,
+        dated: dated.success,
+        projects,
+        copied: copiesStoredBody(text, body),
+        proposal: proposal.ok,
+      });
       if (
+        reason ||
         !answer ||
-        !answers ||
         !parsed.success ||
-        /[\r\n]/u.test(text) ||
         !dated.success ||
-        !projects.every((id) => text.includes(id)) ||
-        copiesStoredBody(text, body) ||
         !proposal.ok
       ) {
-        result.rejected++;
+        if (reason) reject(reason, text);
         continue;
       }
       if (input.dryRun) {
@@ -443,7 +540,7 @@ export async function distillSources(input: {
           error instanceof IdempotencyConflict ||
           error instanceof UnknownProject
         ) {
-          result.rejected++;
+          reject("save-error", text);
           continue;
         }
         throw error;

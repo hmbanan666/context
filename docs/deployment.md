@@ -266,13 +266,29 @@ environment variable; the batch and call maxima are fixed.
 
 After distillation, the same tidy run refreshes each project's journal for the
 current ISO week and the previous ISO week in `TZ` (ADR 0012). The paragraph
-is deterministic: it names the project id and the week and cites that week's
-distilled facts and decisions in the project's home area, up to 800 characters.
-It does not call the processor and does not spend the distillation or inbox
-call caps, so it still runs when no processor is configured. A week with no
-such items has no entry. An unchanged item set does not rewrite the paragraph.
-`--dry-run` does not write journals. The history field `journals` counts
-paragraphs written on that run.
+is a deterministic summary: it names the project id and the week, groups
+decisions before facts, compresses each item, cites the ids that fit, and stays
+within 800 characters in the source language. It does not call the processor
+and does not spend the distillation or inbox call caps, so it still runs when
+no processor is configured. A week with no such items has no entry. An unchanged
+summary does not rewrite the paragraph. `--dry-run` does not write journals.
+The history field `journals` counts paragraphs written on that run.
+
+To fill older weeks that already have distilled items:
+
+```sh
+context tidy --journal-backfill --json
+context tidy --journal-backfill --journal-backfill-limit 8 --json
+```
+
+The default bound is 24 writes per run and the maximum is 52. Newest older
+weeks are written first. A later run skips a week whose paragraph is unchanged.
+Nightly tidy does not pass this flag.
+
+`distillRejections` in the tidy JSON counts `copy-80`, `empty`,
+`invalid-project`, `parse-error`, and the other rejection checks. A few
+redacted samples are logged to stderr (`distill_rejection_sample`) and are not
+written to tidy history.
 
 ### Approval
 

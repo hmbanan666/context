@@ -88,8 +88,25 @@ const footerSource = `
   OR instr(text, 'Open in Cursor') > 0
   OR instr(text, 'Open in Web') > 0`;
 
+// Bump when visibleSourceText changes so an already-migrated database rebuilds
+// the derived source index once. Sources stay put.
+export const VISIBLE_TEXT_VERSION = "2";
+
+function storedVisibleTextVersion(db: DatabaseSync): string | null {
+  const table = db
+    .prepare(
+      "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'derived_index_meta'",
+    )
+    .get();
+  if (!table) return null;
+  const row = db
+    .prepare("SELECT value FROM derived_index_meta WHERE key = 'visible_text'")
+    .get() as { value?: string } | undefined;
+  return row?.value ?? null;
+}
+
 // Existing databases indexed the immutable source, including Cursor PR footers.
-// Rebuild the derived source index from the visible text once. Sources stay put.
+// Rebuild the derived source index from the visible text once per version.
 export function ensureVisibleSourceIndex(db: DatabaseSync): void {
   registerSearchFunctions(db);
   const schema = (name: string) =>
@@ -99,6 +116,7 @@ export function ensureVisibleSourceIndex(db: DatabaseSync): void {
     );
   const fts = schema("sources_fts");
   if (
+    storedVisibleTextVersion(db) === VISIBLE_TEXT_VERSION &&
     fts &&
     !/content\s*=/iu.test(fts) &&
     schema("sources_insert").includes("context_visible_text") &&
@@ -138,6 +156,13 @@ export function ensureVisibleSourceIndex(db: DatabaseSync): void {
         WHERE kind = 'sources' AND record_id IN (
           SELECT id FROM sources WHERE ${footerSource}
         );
+      CREATE TABLE IF NOT EXISTS derived_index_meta (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO derived_index_meta (key, value)
+        VALUES ('visible_text', '${VISIBLE_TEXT_VERSION}')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value;
     `);
     db.exec("COMMIT");
   } catch (error) {

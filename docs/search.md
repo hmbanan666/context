@@ -10,10 +10,11 @@ without record content and automatically falls back to exact plus stemmed search
 
 Ask through the existing `context_package` MCP tool. Its output fields, provenance,
 source excerpts, date semantics, entry/byte limits and one-hop relations stay the
-same. A stored source that ends in a Cursor pull-request footer
+same. A stored source that contains a Cursor pull-request footer
 (`CURSOR_AGENT_PR_BODY` markers and the Open in Web / Open in Cursor badge HTML)
 keeps that text for provenance. The derived FTS, stemmed index, embeddings and
-excerpts use the text with that footer removed. `recall` retains exact phrase/ID
+excerpts drop the markers and the badge and keep prose before and after them.
+A change to that rule rebuilds the derived source index once. `recall` retains exact phrase/ID
 lookup, and `memory_context` retains literal keyword filtering and paged timelines.
 Neither requires model availability.
 
@@ -282,11 +283,12 @@ optional `project` id, and `search` with `listProjects: true` returns at most
 [ADR 0010](adr/0010-projects-in-the-understanding-layer.md). Nightly distillation
 stores proposed facts and decisions (ADR 0011). Area-wide search still omits
 those sentences, and `timeline` stays a source list. With a project id, search
-ranks that project's distilled facts and decisions in the requested dates ahead
-of raw sources. Each item is labelled with its stored status, `proposed` or
-`approved`, and carries the source id and URL. A raw source cited by a returned
-item is omitted. `budgetBytes` (2048–65536) overrides the 8192-byte package
-budget. A project filter also ranks that project's weekly journal paragraphs
-for weeks that overlap the requested dates; area-wide search omits them.
+ranks that project's journals, then decisions, then facts in the requested dates
+ahead of raw sources. With `since` or `until`, those in-window rows are included
+even when the query shares no words with them. Each item is labelled with its
+stored status, `proposed` or `approved`, and carries the source id and URL. A
+raw source cited by a returned item is omitted. `budgetBytes` (2048–65536)
+overrides the 8192-byte package budget. Journal paragraphs are the week's
+summary for weeks that overlap the requested dates; area-wide search omits them.
 The owner sets that status with `context project review`; distillation does
 not. Pack mode is not implemented.

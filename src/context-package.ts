@@ -307,7 +307,7 @@ export function buildContextPackage(
     return true;
   };
   // Interleave the independently ranked lists; raw BM25 scores are not comparable across indexes.
-  // Project search puts journals and distilled items in tier 0, ahead of raw sources.
+  // Project search puts journals, then decisions, then facts ahead of raw sources.
   const candidates: Array<{
     source?: Material;
     item?: KnowledgeItem;

@@ -137,8 +137,10 @@ are also possible through authorized agents via MCP.
 Accepted in ADRs 0010–0012. Caps and call limits live in those
 ADRs so this spec does not keep a second copy. Slices 4a (project catalog
 and association), 4b (nightly distillation), 4c (project search), 4d
-(profile and weekly journal) and 4e (owner approval) are implemented and not
-deployed. Task packs are not implemented.
+(profile and weekly journal) and 4e (owner approval) are merged. Owner reports
+4a–4d and the footer/distill spread fix are deployed. Date-window recall,
+journal summaries, rejection counters and keeping footer-adjacent prose are
+the current follow-up and are not deployed. Task packs are not implemented.
 
 - A project is an understanding-layer entity with a stable id and one home
   area. It is not an area and not a permission. Association comes from an owner
@@ -165,14 +167,21 @@ deployed. Task packs are not implemented.
   Capture does not wait. Slice 4b stores each sentence with status `proposed`.
   `read` returns it by id. Area-wide `search` and `timeline` omit these
   sentences, so that mix of raw results stays as it is. With a `project`
-  filter, search ranks that project's weekly journal and distilled facts and
-  decisions in the requested dates ahead of raw sources and omits a raw source
-  cited by a returned item. Each distilled item keeps its stored status:
+  filter, search ranks that project's weekly journal, then decisions, then facts
+  in the requested dates ahead of raw sources and omits a raw source cited by a
+  returned item. When `project` and `since` or `until` are set, those in-window
+  rows are included even if the query does not match them. A match ranks ahead
+  of the other rows of the same kind. Each distilled item keeps its stored status:
   `proposed`, or `approved` when a review says so. Optional `budgetBytes`
   (2048–65536) overrides the package budget; the default stays 8192. A missing
   or failed processor skips distillation and still runs dedup, inbox sorting
   and the journal refresh. `context tidy` distills one capped pass; `context
   tidy --dry-run` calls the processor and writes nothing, including no journal.
+  Tidy JSON counts rejections by reason (`copy-80`, `empty`, `invalid-project`,
+  `parse-error`, and the other checks). A few redacted samples are written to
+  stderr and are not stored in tidy history. An 80-character copy is measured
+  on prose: code spans, identifiers, ADR titles, URLs and markdown marks do not
+  by themselves reject a short sentence.
 - Supersession stays explicit: `remember` with `supersedes`. Distillation must
   not write a supersedes link or set `approved`. A claimed `approved` status
   stays `proposed`. A journal cannot supersede a decision.
@@ -207,20 +216,26 @@ deployed. Task packs are not implemented.
 - For each project and ISO week in the instance timezone (`TZ`), tidy stores
   one replaceable paragraph of at most 800 characters in the home area. It is
   built only from that week's non-rejected distilled facts and decisions in
-  that area. The paragraph names the project id and the week (`YYYY-Www`) and
-  cites the item ids that fit. Tidy refreshes the current week and the previous
-  week, and rewrites a paragraph only when that week's item set changes. The
-  same items on the next run do not write. A week with no such items has no
-  journal entry. A missing journal is not an empty week of sources: tidy does
-  not backfill older weeks, and it does not copy items out of another area.
-  Generation does not call the processor and does not spend the distillation
-  or inbox call caps. `read` returns the paragraph by id. Search without
-  `project` stays area-wide and omits journals.
+  that area. The paragraph names the project id and the week (`YYYY-Www`),
+  groups decisions before facts, compresses each item, and cites the item ids
+  that fit. It keeps the source language. Tidy refreshes the current week and
+  the previous week, and rewrites a paragraph only when that week's item set or
+  summary changes. The same items on the next run do not write. A week with no
+  such items has no journal entry. A missing journal is not an empty week of
+  sources. Nightly tidy does not walk older weeks. `context tidy
+  --journal-backfill` writes older weeks that have items, at most 24 per run
+  unless `--journal-backfill-limit` sets another bound from 1 to 52, newest
+  older week first, and does not copy items out of another area. A second run
+  does not rewrite an unchanged paragraph. Generation does not call the
+  processor and does not spend the distillation or inbox call caps. `read`
+  returns the paragraph by id. Search without `project` stays area-wide and
+  omits journals.
 - Period questions use `search` with `project` and dates. The project's journal
-  entries whose week overlaps the range, then its distilled items for the
-  period, come before raw excerpts. A raw source cited by a returned item is
-  omitted. The public October fixture has no journal row, so that case still
-  returns the distilled sentence.
+  entries whose week overlaps the range, then its decisions, then its facts for
+  the period, come before raw excerpts even when the question shares no words
+  with them. A raw source cited by a returned item is omitted. Uncited sources
+  appear only when the byte budget still has room. The public October fixture
+  has no journal row, so that case still returns the distilled sentence.
 - A task pack is `search` with `mode: "pack"`, a project, a task query and a
   caller-supplied byte budget. It returns the profile, relevant decisions in
   force and recent facts, then raw excerpts only for sources not already cited.
@@ -349,7 +364,9 @@ calls; exact source retrieval remains usable while its index rebuilds.
 Deduplication, explicit supersession and history, guarded inbox sorting and
 nightly evaluation are already merged. Slices 4a (project catalog and
 association), 4b (nightly distillation), 4c (project search), 4d (profile
-and weekly journal) and 4e (owner approval) are implemented and not deployed.
+and weekly journal) and 4e (owner approval) are merged. Owner reports 4a–4d
+and the footer/distill spread fix are deployed. The date-window, journal
+summary, rejection-counter and footer-prose follow-up is not deployed.
 Still to build: task packs and people through the pluggable processor, plus
 hard delete with tombstones.
 Automatic supersession is not part of this stage. Uncertain inbox items still
@@ -373,7 +390,8 @@ backup-retention contract. Private and synthetic nightly evals report failures
 without exposing private questions or results publicly. Slices 4a–4e are the catalog, association, proposed distillation,
 project-search ranking, the owner-written profile, the weekly journal and
 owner approval. Pack mode remains unmet. Area-wide search still omits distilled
-sentences and journals. A project filter prefers the journal and those sentences.
+sentences and journals. A project filter with dates prefers the journal, then
+decisions, then facts for that window, including rows the question does not match.
 
 ### Stage 5 — Owner UI and more imports (planned)
 

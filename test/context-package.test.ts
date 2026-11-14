@@ -11,6 +11,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
 import { buildContextPackage, excerpt } from "../src/context-package.js";
+import { VISIBLE_TEXT_VERSION } from "../src/search-lexical.js";
 import { visibleSourceText } from "../src/source-text.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { SourceStore } from "../src/store.js";
@@ -421,15 +422,123 @@ test("derived FTS backfills existing knowledge and persists through capture, reo
 
 test("visible source text drops a Cursor pull-request footer and keeps prose", () => {
   const kept = "The lanternquartz hatch seals in the rain.";
+  const before = "Before the footer the cobalt mirror was packed.";
+  const after =
+    "After the footer the dome stayed closed. <div>the hatch notes remain</div>";
   const badge =
     '<div><a href="https://cursor.com/agents/bc-fictional/fictionalfooterxyz"><picture><img alt="Open in Web" src="https://cursor.com/assets/images/open-in-web-dark.png"></picture></a><a href="https://cursor.com/background-agent?bcId=bc-fictional"><picture><img alt="Open in Cursor" src="https://cursor.com/assets/images/open-in-cursor-dark.png"></picture></a></div>';
   const wrapped = `<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\n${kept}\n<!-- CURSOR_AGENT_PR_BODY_END -->\n${badge}`;
   assert.equal(visibleSourceText(wrapped), kept);
   assert.equal(visibleSourceText(`${kept}\n${badge}`), kept);
+  const around = `${before}\n<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\n${kept}\n<!-- CURSOR_AGENT_PR_BODY_END -->\n${badge}\n${after}`;
+  const visible = visibleSourceText(around);
+  assert.equal(visible.includes(before), true);
+  assert.equal(visible.includes(kept), true);
+  assert.equal(visible.includes(after), true);
+  assert.equal(visible.includes("CURSOR_AGENT_PR_BODY"), false);
+  assert.equal(visible.includes("fictionalfooterxyz"), false);
+  assert.equal(visible.includes("Open in Web"), false);
+  assert.equal(visible.includes("Open in Cursor"), false);
+  const greedy = `<picture><source src="https://cursor.com/assets/images/open-in-web-dark.png">${"keptword ".repeat(700)}</picture>`;
+  assert.equal(greedy.length > 4000, true);
+  assert.equal(visibleSourceText(greedy).includes("keptword"), true);
   const prose =
     "The notes say Open in Cursor when the badge is discussed, then continue with the lanternquartz result.";
   assert.equal(visibleSourceText(prose), prose);
   assert.equal(visibleSourceText(kept), kept);
+});
+
+test("a later visible-text fix reindexes body text after a footer once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-footer-version-"));
+  const path = join(directory, "db");
+  const before = "Before the footer the lanternquartz hatch was open.";
+  const after = "After the footer the cobaltpack mirror stayed closed.";
+  const badge =
+    '<div><a href="https://cursor.com/agents/bc-fictional/fictionalfooterxyz"><picture><img alt="Open in Web" src="https://cursor.com/assets/images/open-in-web-dark.png"></picture></a></div>';
+  const text = `${before}\n<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\nInside the markers.\n<!-- CURSOR_AGENT_PR_BODY_END -->\n${badge}\n${after}`;
+  const created = new SourceStore(path);
+  const saved = created.capture({
+    version: 1,
+    text,
+    origin: "import:github",
+    scope: "personal",
+    idempotencyKey: "footer-version",
+  }).source;
+  created.close();
+  const stale = new DatabaseSync(path);
+  stale.exec(`
+    DELETE FROM sources_fts;
+    INSERT INTO sources_fts(rowid, text) SELECT rowid, 'staleindex' FROM sources;
+    DELETE FROM sources_stemmed;
+    INSERT INTO sources_stemmed(rowid, text)
+      SELECT rowid, 'staleindex' FROM sources;
+    UPDATE derived_index_meta SET value = '1' WHERE key = 'visible_text';
+  `);
+  stale.close();
+  const sources = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  try {
+    const found = buildContextPackage(sources, knowledge, {
+      version: 1,
+      scope: "personal",
+      question: "cobaltpack",
+    });
+    assert.equal(found.sources[0]?.id, saved.id);
+    assert.equal(found.sources[0]?.excerpt.text.includes("cobaltpack"), true);
+    assert.equal(
+      buildContextPackage(sources, knowledge, {
+        version: 1,
+        scope: "personal",
+        question: "lanternquartz",
+      }).sources[0]?.id,
+      saved.id,
+    );
+    assert.equal(
+      found.sources[0]?.excerpt.text.includes("fictionalfooterxyz"),
+      false,
+    );
+    const version = new DatabaseSync(path, { readOnly: true });
+    assert.equal(
+      (
+        version
+          .prepare(
+            "SELECT value FROM derived_index_meta WHERE key = 'visible_text'",
+          )
+          .get() as { value: string }
+      ).value,
+      VISIBLE_TEXT_VERSION,
+    );
+    version.close();
+  } finally {
+    knowledge.close();
+    sources.close();
+  }
+  const stuck = new DatabaseSync(path);
+  stuck.exec(`
+    DELETE FROM sources_fts;
+    INSERT INTO sources_fts(rowid, text) SELECT rowid, 'staleindex' FROM sources;
+    DELETE FROM sources_stemmed;
+    INSERT INTO sources_stemmed(rowid, text)
+      SELECT rowid, 'staleindex' FROM sources;
+  `);
+  stuck.close();
+  const again = new SourceStore(path);
+  const knowledgeAgain = new KnowledgeStore(path);
+  try {
+    assert.equal(
+      buildContextPackage(again, knowledgeAgain, {
+        version: 1,
+        scope: "personal",
+        question: "cobaltpack",
+      }).sources.length,
+      0,
+    );
+    assert.equal(again.find(saved.id, "personal")?.text, text);
+  } finally {
+    knowledgeAgain.close();
+    again.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("search excerpts omit a stored Cursor pull-request footer", async () => {

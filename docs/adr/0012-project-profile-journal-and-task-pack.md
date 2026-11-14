@@ -29,17 +29,24 @@ claims `approved` is stored as `proposed` or rejected, never as in force.
 **Journal.** For each project and ISO week in the instance timezone (`TZ`),
 tidy stores one replaceable paragraph of at most 800 characters built only from
 that week's distilled facts and decisions. The paragraph names the project and
-the week and cites those item ids. Tidy refreshes the current week and the
-previous week when the cited set changes. Weeks with no distilled items have no
-journal entry. A journal entry does not claim the week is complete, is not a
-decision, and cannot supersede one.
+the week, groups decisions before facts, compresses each item, and cites the
+item ids that fit. It is a summary in the source language, not a verbatim copy
+of one item. The processor is not called. Nightly tidy refreshes the current
+week and the previous week when the cited set changes. An explicit bounded
+backfill writes older weeks that have items and does not rewrite an unchanged
+paragraph. Weeks with no distilled items have no journal entry. A journal entry
+does not claim the week is complete, is not a decision, and cannot supersede one.
 
 **Project search.** With a `project` filter, `search` ranks that project's
-journal entries and distilled items in the requested dates ahead of raw sources.
-A raw source cited by a returned distilled item is omitted. `since` and `until`
-keep today's meaning. Optional `budgetBytes` (2048–65536) overrides the package
-byte budget; the default stays 8192. Omitting `project` leaves area-wide search
-unchanged, including its mixed raw results.
+journal entries, then decisions, then facts in the requested dates ahead of raw
+sources. When `project` and `since` or `until` are set, those in-window rows
+are candidates even when the query shares no words with them; a lexical or
+semantic match ranks ahead of the other rows of the same kind, and the rest
+follow by date. A raw source cited by a returned distilled item is omitted.
+Raw sources are only uncited evidence that still fits the byte budget. `since`
+and `until` keep today's meaning. Optional `budgetBytes` (2048–65536) overrides
+the package byte budget; the default stays 8192. Omitting `project` leaves
+area-wide search unchanged, including its mixed raw results.
 
 **Task pack.** A pack is `search` with `mode: "pack"`, not a new tool. The mode
 requires `project` and `budgetBytes` (512–65536). `query` is the task

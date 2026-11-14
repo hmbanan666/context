@@ -251,8 +251,9 @@ scored. Private questions, including any real "what happened in October on
 project X" query, stay outside Git.
 
 A question with `project` calls `search` and passes the project, dates and
-byte budget. Hits are journal entries and distilled items first, then raw
-sources those items do not cite. The October fixture has no journal entry, so
+byte budget. Hits are journal entries, then decisions, then facts, including
+rows the question does not match when dates are set, then raw sources those
+items do not cite. The October fixture has no journal entry, so
 `october_on_project` still hits the observatory distilled sentence. Substring
 matching uses those excerpts. A forbidden substring
 anywhere in the returned package fails that question. `expect_truncated` must

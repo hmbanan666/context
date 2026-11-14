@@ -1,9 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 import { latestReviewStatusSql } from "./review-status.js";
 
-// ADR 0012. One replaceable paragraph per project and ISO week. Tidy writes it
-// from distilled items only; the processor is not called and cannot approve it.
+// ADR 0012. One replaceable paragraph per project and ISO week. Tidy writes a
+// short summary from distilled items only; the processor is not called and
+// cannot approve it. Nightly tidy refreshes the current and previous weeks.
+// An explicit backfill writes older weeks, bounded per run.
 export const journalCharacterLimit = 800;
+export const journalBackfillDefault = 24;
+export const journalBackfillMax = 52;
 const journalCreator = {
   kind: "user",
   name: "context-tidy",
@@ -30,7 +34,9 @@ interface ZonedParts {
 }
 interface WeekItem {
   id: string;
+  kind: "fact" | "decision";
   text: string;
+  createdAt: string;
   sourceRefs: string;
 }
 
@@ -178,23 +184,76 @@ function characters(value: string): number {
   return Array.from(value).length;
 }
 
-/** Names the project and week and cites only the items that fit. */
-export function journalParagraph(
-  projectId: string,
-  weekId: string,
-  items: readonly { id: string; text: string }[],
+function compressItem(text: string, max: number): string {
+  const plain = text
+    .replace(/```[\s\S]*?```/gu, (block) => block.replace(/```/gu, " "))
+    .replace(/`([^`]*)`/gu, "$1")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, "$1")
+    .replace(/^#{1,6}\s+/gmu, "")
+    .replace(/[*_~]+/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const chars = Array.from(plain);
+  if (chars.length <= max) return plain;
+  const slice = chars.slice(0, max).join("");
+  const space = slice.lastIndexOf(" ");
+  const clipped =
+    space >= Math.floor(max * 0.6) ? slice.slice(0, space) : slice;
+  return `${clipped.replace(/[;,:\s]+$/u, "")}…`;
+}
+
+function assembleJournal(
+  header: string,
+  items: readonly { id: string; kind: "fact" | "decision"; text: string }[],
+  cap: number,
 ): { text: string; citedIds: string[] } {
-  const header = `${projectId} ${weekId}: `;
   let body = "";
   const citedIds: string[] = [];
+  let previousKind = "";
   for (const item of items) {
-    const sentence = item.text.trim().replace(/\s+/gu, " ");
-    const piece = `${citedIds.length ? "; " : ""}${sentence} (${item.id})`;
+    const sentence = compressItem(item.text, cap);
+    if (!sentence) continue;
+    const separator = !citedIds.length
+      ? ""
+      : item.kind !== previousKind
+        ? ". "
+        : "; ";
+    const piece = `${separator}${sentence} (${item.id})`;
     if (characters(header + body + piece) > journalCharacterLimit) break;
     body += piece;
     citedIds.push(item.id);
+    previousKind = item.kind;
   }
   return { text: header + body, citedIds };
+}
+
+/** Decisions, then facts. Compresses so several items fit, and cites them. */
+export function journalParagraph(
+  projectId: string,
+  weekId: string,
+  items: readonly {
+    id: string;
+    kind: "fact" | "decision";
+    text: string;
+    createdAt?: string;
+  }[],
+): { text: string; citedIds: string[] } {
+  const ordered = [...items].sort((a, b) => {
+    const kind = Number(a.kind !== "decision") - Number(b.kind !== "decision");
+    if (kind) return kind;
+    const left = a.createdAt ?? "";
+    const right = b.createdAt ?? "";
+    if (left !== right) return left < right ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  const header = `${projectId} ${weekId}: `;
+  const caps = [400, 220, 140, 96, 64, 42, 28];
+  let best = assembleJournal(header, ordered, caps[0] ?? 400);
+  for (const cap of caps.slice(1)) {
+    const built = assembleJournal(header, ordered, cap);
+    if (built.citedIds.length > best.citedIds.length) best = built;
+  }
+  return best;
 }
 
 function citedRefs(items: readonly WeekItem[], citedIds: readonly string[]) {
@@ -219,7 +278,8 @@ function weekItems(
 ): WeekItem[] {
   return db
     .prepare(
-      `SELECT k.id, k.text, k.source_refs AS sourceRefs
+      `SELECT k.id, k.kind, k.text, k.created_at AS createdAt,
+         k.source_refs AS sourceRefs
        FROM knowledge_items k
        WHERE k.scope = ?
          AND k.kind IN ('fact', 'decision')
@@ -308,6 +368,49 @@ function writeJournal(
   );
 }
 
+function projectWeeks(
+  db: DatabaseSync,
+  projectId: string,
+  scope: string,
+  timeZone: string,
+): IsoWeek[] {
+  const byId = new Map<string, IsoWeek>();
+  const add = (week: IsoWeek) => {
+    if (!byId.has(week.id)) byId.set(week.id, week);
+  };
+  const rows = db
+    .prepare(
+      `SELECT k.created_at AS createdAt
+       FROM knowledge_items k
+       WHERE k.scope = ?
+         AND k.kind IN ('fact', 'decision')
+         AND ${latestReviewStatusSql("k.id", "k.scope", "proposed")} <> 'rejected'
+         AND EXISTS (
+           SELECT 1 FROM project_associations pa
+           WHERE pa.record_kind = 'knowledge' AND pa.record_id = k.id
+             AND pa.project_id = ? AND pa.status = 'linked'
+         )`,
+    )
+    .all(scope, projectId) as { createdAt: string }[];
+  for (const row of rows) {
+    const parsed = Date.parse(row.createdAt);
+    if (!Number.isFinite(parsed)) continue;
+    add(isoWeek(new Date(parsed), timeZone));
+  }
+  if (journalMetaReady(db)) {
+    const stored = db
+      .prepare(
+        `SELECT iso_week AS id, week_start AS start, week_end AS end
+         FROM project_journal_meta WHERE project_id = ?`,
+      )
+      .all(projectId) as unknown as IsoWeek[];
+    for (const week of stored) add(week);
+  }
+  return [...byId.values()].sort((a, b) =>
+    a.start < b.start ? 1 : a.start > b.start ? -1 : 0,
+  );
+}
+
 export function refreshProjectJournals(
   db: DatabaseSync,
   input: {
@@ -315,6 +418,7 @@ export function refreshProjectJournals(
     now: Date;
     timeZone: string;
     dryRun: boolean;
+    backfillLimit?: number;
   },
 ): JournalRefresh {
   if (!input.areas.length) return { written: 0, removed: 0, unchanged: 0 };
@@ -322,7 +426,7 @@ export function refreshProjectJournals(
   else if (!journalMetaReady(db))
     return { written: 0, removed: 0, unchanged: 0 };
   const current = isoWeek(input.now, input.timeZone);
-  const weeks = [current, previousIsoWeek(current, input.timeZone)];
+  const previous = previousIsoWeek(current, input.timeZone);
   const projects = db
     .prepare(
       `SELECT id, home_area AS homeArea FROM projects
@@ -333,20 +437,47 @@ export function refreshProjectJournals(
   let written = 0;
   let removed = 0;
   let unchanged = 0;
+  let backfillWrites = 0;
   const run = () => {
     for (const project of projects) {
+      const weeks = [current, previous];
+      if (input.backfillLimit !== undefined) {
+        const seen = new Set(weeks.map((week) => week.id));
+        for (const week of projectWeeks(
+          db,
+          project.id,
+          project.homeArea,
+          input.timeZone,
+        )) {
+          if (seen.has(week.id)) continue;
+          seen.add(week.id);
+          weeks.push(week);
+        }
+      }
       for (const week of weeks) {
+        const backfill = week.id !== current.id && week.id !== previous.id;
+        const capped =
+          backfill &&
+          input.backfillLimit !== undefined &&
+          backfillWrites >= input.backfillLimit;
         const id = journalId(project.id, week.id);
         const items = weekItems(db, project.id, project.homeArea, week);
         if (!items.length) {
-          if (input.dryRun) continue;
-          if (deleteJournal(db, id, project.homeArea)) removed++;
+          if (input.dryRun || capped) continue;
+          if (deleteJournal(db, id, project.homeArea)) {
+            removed++;
+            if (backfill) backfillWrites++;
+          }
           continue;
         }
+        if (capped) continue;
         const paragraph = journalParagraph(project.id, week.id, items);
         if (!paragraph.citedIds.length) {
-          if (!input.dryRun && deleteJournal(db, id, project.homeArea))
+          if (input.dryRun) continue;
+          if (deleteJournal(db, id, project.homeArea)) {
             removed++;
+            if (backfill) backfillWrites++;
+          }
           continue;
         }
         const refs = citedRefs(items, paragraph.citedIds);
@@ -391,6 +522,7 @@ export function refreshProjectJournals(
           replaceText: !sameText,
         });
         written++;
+        if (backfill) backfillWrites++;
       }
     }
   };

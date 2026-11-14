@@ -120,9 +120,13 @@ Each run spreads the cap across projects (round-robin, newest revision first
 inside a project, unlinked sources last) and resumes that pass from a cursor.
 The prompt asks for one self-contained sentence in the source's dominant
 language, naming the change and its impact when the source states it, and
-keeping product terms. Sentences that copy 80 contiguous characters of the stored
-body are rejected and stay pending. Search indexes and excerpts omit a trailing
-Cursor pull-request footer; the stored source text is unchanged. Repository
+keeping product terms. Sentences that copy 80 contiguous characters of stored
+prose are rejected and stay pending. Code spans, identifiers, ADR titles, URLs
+and markdown marks do not count toward that span. Tidy JSON reports rejection
+counts by reason; a few redacted samples go to stderr and not to tidy history.
+Search indexes and excerpts omit a Cursor pull-request footer and keep prose
+before and after it; the stored source text is unchanged. A visible-text version
+bump rebuilds the derived source index once. Repository
 mappings match a normalized `owner/repo`, including GitHub URL forms already
 stored on a source. Proposed sentences are readable by id.
 Area-wide `search` and `timeline` still omit them. `search` with a project id
@@ -132,10 +136,15 @@ and omits a raw source cited by a returned item (ADR 0012 slice 4c). Optional
 `budgetBytes` overrides the package budget. Slice 4d adds an owner-written
 profile (purpose, rules and up to eight pinned decision ids, at most 2048
 UTF-8 bytes) edited only by `context project profile`, and a deterministic
-weekly journal. Tidy refreshes the current and previous ISO weeks in `TZ`
+weekly journal. The paragraph groups that week's decisions before its facts,
+compresses them, cites ids, and stays within 800 characters in the source
+language. Nightly tidy refreshes the current and previous ISO weeks in `TZ`
 from that project's distilled items in the home area, without a processor
-call. Search with a project id ranks those journal paragraphs with the
-distilled items. Slice 4e records owner approval in `knowledge_reviews`
+call. `context tidy --journal-backfill` writes older weeks that have items,
+bounded per run, and skips an unchanged paragraph. Search with a project id
+and a date bound ranks journals, then decisions, then facts in that window
+even when the query does not match them, ahead of uncited raw sources.
+Slice 4e records owner approval in `knowledge_reviews`
 and, for a suggested project name, creates or links the project. Approval
 does not write supersedes. Task packs are accepted in ADR 0012 and are not
 implemented.

@@ -11,10 +11,13 @@ import {
   DISTILL_CALL_MAX,
   distillationCap,
   distillSources,
+  emptyDistillRejections,
   type DistillFrontiers,
+  type DistillRejections,
   type DistillStatus,
   relocateDistilledItems,
 } from "./distill.js";
+import { journalBackfillDefault, journalBackfillMax } from "./journal.js";
 import { E5_VERSION } from "./embedding-model.js";
 import { KnowledgeStore } from "./knowledge.js";
 import type { Llm } from "./llm.js";
@@ -48,6 +51,8 @@ export interface TidyOptions {
   distillCallCap?: number;
   now?: Date;
   timeZone?: string;
+  journalBackfill?: boolean;
+  journalBackfillLimit?: number;
 }
 export interface TidyRun {
   timestamp: string;
@@ -71,6 +76,7 @@ export interface TidyRun {
   distillCalls: number;
   distilled: number;
   distillRejected: number;
+  distillRejections: DistillRejections;
   distillCapped: boolean;
   distillAfter: number | null;
   distillFrontiers: DistillFrontiers | null;
@@ -181,6 +187,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     options.distillCallCap,
     DISTILL_CALL_MAX,
   );
+  const backfill = journalBackfillOptions(options);
   const directory = join(dirname(options.databasePath), "tidy");
   const history = join(directory, "history.jsonl");
   const model = options.llm?.model ?? null;
@@ -209,6 +216,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     distillCalls: 0,
     distilled: 0,
     distillRejected: 0,
+    distillRejections: emptyDistillRejections(),
     distillCapped: false,
     distillAfter: previous?.distillCapped
       ? (previous.distillAfter ?? null)
@@ -437,6 +445,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     run.distillCalls = distilled.calls;
     run.distilled = distilled.distilled;
     run.distillRejected = distilled.rejected;
+    run.distillRejections = distilled.rejections;
     run.distillCapped = distilled.capped;
     run.distillAfter = distilled.after;
     run.distillFrontiers = distilled.frontiers;
@@ -450,6 +459,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       now: options.now ?? new Date(),
       timeZone: options.timeZone ?? (process.env.TZ || "UTC"),
       dryRun: !!options.dryRun,
+      ...backfill,
     });
     run.journals = journals.written;
     if (run.capped || run.failures) run.outcome = "partial";
@@ -467,6 +477,16 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
     await appendFile(history, `${JSON.stringify(run)}\n`, { mode: 0o600 });
   }
   return run;
+}
+function journalBackfillOptions(options: TidyOptions): {
+  backfillLimit?: number;
+} {
+  if (!options.journalBackfill && options.journalBackfillLimit === undefined)
+    return {};
+  const limit = options.journalBackfillLimit ?? journalBackfillDefault;
+  if (!Number.isInteger(limit) || limit < 1 || limit > journalBackfillMax)
+    throw new Error("Invalid journal backfill limit");
+  return { backfillLimit: limit };
 }
 function resumeFrontiers(
   previous: TidyRun | undefined,
