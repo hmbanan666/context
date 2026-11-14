@@ -272,4 +272,4 @@ are revisited after the cursor wraps. Sorting needs no vectors. Content-free
 history records processor, model, counts, duration and the last completed run's
 time; old supersession fields are ignored when reading history. Deterministic
 dedup always checks all selected sources and relation writes are idempotent.
-Topic distillation is deferred.
+Project distillation is decided in ADRs 0010–0012 and is not implemented here.

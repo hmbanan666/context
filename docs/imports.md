@@ -140,7 +140,9 @@ IDs: `github:<owner>/<repo>:pr:<number>` and
 `github:<owner>/<repo>:file:<path>@<blob-sha>`. File blobs are fetched by SHA so
 content matches identity even if the branch moves. A changed blob gets a new
 external ID; an edited PR body becomes a revision under the same PR ID. Files have
-no invented authored timestamp. All output defaults to area `projects`.
+no invented authored timestamp. All output defaults to area `projects`. That
+area is an access boundary, not a project. Project association is an
+understanding-layer link ([ADR 0010](adr/0010-projects-in-the-understanding-layer.md)), not this default.
 
 Requests are sequential, bounded to an 8 MiB response and 30-second timeout.
 Directories hitting the GitHub contents API's 1000-entry cap report an error rather

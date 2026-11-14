@@ -68,7 +68,9 @@ Search combines exact text, Russian/English stemming and local semantic
 embeddings. The image includes the model; background indexing catches up after
 capture, with lexical fallback if the model is unavailable. [Search details](docs/search.md). Nightly tidy collapses near-identical sources and, when a processor is configured,
 sorts confident inbox items. Clients supersede explicitly through `remember`.
-Distillation and hard delete remain [planned](docs/roadmap.md).
+Project distillation, profiles and task packs are decided in
+[ADRs 0010–0012](docs/adr/0010-projects-in-the-understanding-layer.md) and are
+not implemented. Hard delete remains [planned](docs/roadmap.md).
 Capture and reading work without an inference provider.
 
 Every night at 03:30, Context verifies a SQLite snapshot and retains seven local
