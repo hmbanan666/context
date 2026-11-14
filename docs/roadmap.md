@@ -45,10 +45,12 @@ id and `since` or `until` includes that window's journals, decisions and facts
 even when the query shares no words, ranked journals then decisions then facts.
 A weekly journal is up to eight complete sentences of that week's decisions
 then facts, at most 800 characters, in the source language. Item ids stay in
-metadata. `context tidy --journal-backfill` writes older weeks that have
-items, at most 24 per run (`--journal-backfill-limit`, max 52), rewrites a
-paragraph whose summary changed, and a later run does not rewrite an unchanged
-week. Tidy JSON includes
+metadata. `context tidy --journal-backfill` does not distill. It writes
+older weeks that have items, at most 24 per run (`--journal-backfill-limit`,
+max 52), rewrites a paragraph whose summary changed, and a later run does not
+rewrite an unchanged week. Repeat until `journals` is 0 even if new sources
+are still undistilled; those items are picked up by the normal current and
+previous week rewrite or the next pass. Tidy JSON includes
 `distillRejections`. A few redacted samples go to stderr, not tidy history.
 Search keeps prose before and after a Cursor pull-request footer and rebuilds
 the derived source index once.

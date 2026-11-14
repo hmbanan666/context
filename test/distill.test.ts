@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "vite-plus/test";
 import { buildContextPackage } from "../src/context-package.js";
+import { LlmCallError } from "../src/llm-call.js";
 import {
   clipText,
   copiesStoredBody,
@@ -624,6 +625,7 @@ test("an unavailable processor skips distillation and still deduplicates", async
     const failed = await runTidy({
       databasePath: f.path,
       areas: ["personal"],
+      retryBackoffMs: [0, 0],
       llm: {
         model: "fake",
         async ask() {
@@ -631,9 +633,11 @@ test("an unavailable processor skips distillation and still deduplicates", async
         },
       },
     });
-    assert.equal(failed.distillCalls, 1);
-    assert.equal(failed.llm, "unavailable");
-    assert.equal(failed.distillStatus, "skipped_unavailable");
+    assert.equal(failed.distillCalls, 3);
+    assert.equal(failed.llm, "configured");
+    assert.equal(failed.distillStatus, "capped");
+    assert.equal(failed.llmFailures.at(-1)?.reason, "timeout");
+    assert.equal(failed.llmFailures.at(-1)?.abandoned, true);
     assert.equal(failed.duplicates, 0);
     assert.equal(failed.outcome, "partial");
     assert.equal(f.knowledge.list("personal", 20).length, 0);
@@ -645,6 +649,283 @@ test("an unavailable processor skips distillation and still deduplicates", async
     assert.equal(plain.distillCalls, 0);
     assert.equal(plain.outcome, "completed");
     assert.equal(plain.duplicates, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a transient failure is retried, then the remaining sources continue", async () => {
+  const f = await open("distill-retry");
+  const logs: string[] = [];
+  const original = console.error;
+  console.error = (line?: unknown) => {
+    logs.push(String(line ?? ""));
+  };
+  let newerAttempts = 0;
+  const secret = `sk-proj-${"a".repeat(24)}`;
+  try {
+    const capture = (key: string, text: string, createdAt: string) =>
+      f.sources.captureMaterial({
+        version: 1,
+        scope: "personal",
+        origin: "fixture",
+        idempotencyKey: key,
+        text,
+        metadata: { createdAt },
+      }).material.source;
+    const newer = capture(
+      "newer",
+      "NEWER-TOKEN synthetic note about the cobalt hatch.",
+      "2026-03-01T00:00:00.000Z",
+    );
+    const older = capture(
+      "older",
+      "OLDER-TOKEN synthetic note about the cobalt hatch.",
+      "2026-01-01T00:00:00.000Z",
+    );
+    const started = performance.now();
+    const first = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      distillBatchSize: 1,
+      distillCallCap: 8,
+      retryBackoffMs: [20, 20],
+      llm: {
+        model: "fake",
+        async ask(_instruction: string, data: unknown) {
+          const batch = data as { index: number; body: string }[];
+          if (batch.some((item) => item.body.includes("NEWER-TOKEN"))) {
+            newerAttempts++;
+            throw new LlmCallError("rate_limit", {
+              exitCode: 7,
+              stderrTail: `usage limit ${secret}`,
+            });
+          }
+          return batch.map((item) => ({
+            index: item.index,
+            kind: "fact",
+            text: "The personal record kept the older garden note.",
+            project: null,
+          }));
+        },
+      },
+    });
+    assert.ok(performance.now() - started >= 30);
+    assert.equal(newerAttempts, 3);
+    assert.equal(first.llm, "configured");
+    assert.equal(first.outcome, "partial");
+    assert.equal(first.distillStatus, "capped");
+    assert.equal(first.distilled, 1);
+    assert.equal(first.distillCalls, 4);
+    assert.equal(first.failures, 1);
+    assert.equal(first.llmFailures.at(-1)?.reason, "rate_limit");
+    assert.equal(first.llmFailures.at(-1)?.exitCode, 7);
+    assert.equal(first.llmFailures.at(-1)?.abandoned, true);
+    assert.match(first.llmFailures.at(-1)?.stderrTail ?? "", /\[REDACTED\]/);
+    assert.equal(JSON.stringify(first).includes(secret), false);
+    assert.equal(
+      f.knowledge
+        .list("personal", 10)
+        .some((item) => item.sourceRefs[0]?.sourceId === older.id),
+      true,
+    );
+    assert.equal(
+      f.knowledge
+        .list("personal", 10)
+        .some((item) => item.sourceRefs[0]?.sourceId === newer.id),
+      false,
+    );
+    assert.ok(logs.some((line) => line.includes('"event":"llm_failure"')));
+    assert.ok(logs.every((line) => !line.includes(secret)));
+    const second = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      distillBatchSize: 1,
+      distillCallCap: 4,
+      retryBackoffMs: [0, 0],
+      llm: {
+        model: "fake",
+        async ask(_instruction: string, data: unknown) {
+          const batch = data as { index: number; body: string }[];
+          assert.equal(
+            batch.some((item) => item.body.includes("OLDER-TOKEN")),
+            false,
+          );
+          return batch.map((item) => ({
+            index: item.index,
+            kind: "fact",
+            text: "The personal record kept the newer garden note.",
+            project: null,
+          }));
+        },
+      },
+    });
+    assert.equal(second.distilled, 1);
+    assert.equal(second.outcome, "completed");
+    assert.equal(second.llm, "configured");
+    assert.equal(
+      f.knowledge
+        .list("personal", 10)
+        .some((item) => item.sourceRefs[0]?.sourceId === newer.id),
+      true,
+    );
+  } finally {
+    console.error = original;
+    await f.close();
+  }
+});
+
+test("a recovered timeout does not mark the tidy run unavailable", async () => {
+  const f = await open("distill-recovered");
+  let attempts = 0;
+  try {
+    f.sources.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "fixture",
+      idempotencyKey: "only",
+      text: "Synthetic note waiting for a recovered processor call.",
+      metadata: { createdAt: "2026-04-01T00:00:00.000Z" },
+    });
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      retryBackoffMs: [0, 0],
+      llm: {
+        model: "fake",
+        async ask() {
+          attempts++;
+          if (attempts < 3) throw new LlmCallError("timeout");
+          return [
+            {
+              index: 0,
+              kind: "fact",
+              text: "The personal record kept the recovered note.",
+              project: null,
+            },
+          ];
+        },
+      },
+    });
+    assert.equal(attempts, 3);
+    assert.equal(run.distillCalls, 3);
+    assert.equal(run.distilled, 1);
+    assert.equal(run.llm, "configured");
+    assert.equal(run.outcome, "completed");
+    assert.equal(run.failures, 0);
+    assert.equal(run.llmFailures.length, 2);
+    assert.ok(run.llmFailures.every((failure) => !failure.abandoned));
+    assert.ok(run.llmFailures.every((failure) => failure.reason === "timeout"));
+  } finally {
+    await f.close();
+  }
+});
+
+test("retries stop when the distillation call cap is reached", async () => {
+  const f = await open("distill-cap-retry");
+  let attempts = 0;
+  try {
+    f.sources.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "fixture",
+      idempotencyKey: "capped",
+      text: "Synthetic note that exhausts the call cap.",
+      metadata: { createdAt: "2026-04-02T00:00:00.000Z" },
+    });
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      distillCallCap: 2,
+      retryBackoffMs: [0, 0],
+      llm: {
+        model: "fake",
+        async ask() {
+          attempts++;
+          throw new LlmCallError("timeout");
+        },
+      },
+    });
+    assert.equal(attempts, 2);
+    assert.equal(run.distillCalls, 2);
+    assert.equal(run.distilled, 0);
+    assert.equal(run.llm, "configured");
+    assert.equal(run.outcome, "partial");
+    assert.equal(run.llmFailures.at(-1)?.abandoned, true);
+  } finally {
+    await f.close();
+  }
+});
+
+test("journal backfill keeps a capped distillation cursor", async () => {
+  const f = await open("distill-backfill-cursor");
+  let calls = 0;
+  const llm = {
+    model: "fake",
+    async ask(_instruction: string, data: unknown) {
+      calls++;
+      const batch = data as { index: number; date: string }[];
+      if (batch.some((item) => item.date.startsWith("2026-02"))) return [];
+      return batch.map((item) => ({
+        index: item.index,
+        kind: "fact" as const,
+        text: `The personal record kept note ${item.date.slice(0, 10)}.`,
+        project: null,
+      }));
+    },
+  };
+  try {
+    const capture = (key: string, createdAt: string) =>
+      f.sources.captureMaterial({
+        version: 1,
+        scope: "personal",
+        origin: "fixture",
+        idempotencyKey: key,
+        text: `Synthetic ${key} source about the cobalt hatch and the logbook.`,
+        metadata: { createdAt },
+      }).material.source;
+    const newer = capture("newer", "2026-02-01T00:00:00.000Z");
+    const older = capture("older", "2026-01-01T00:00:00.000Z");
+    const capped = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      distillBatchSize: 1,
+      distillCallCap: 1,
+      llm,
+    });
+    assert.equal(capped.distilled, 0);
+    assert.equal(capped.distillCapped, true);
+    assert.equal(calls, 1);
+    const backfill = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      journalBackfill: true,
+      distillCallCap: 1,
+      llm,
+    });
+    assert.equal(calls, 1);
+    assert.equal(backfill.distillStatus, "skipped_backfill");
+    assert.equal(backfill.distillCalls, 0);
+    assert.equal(backfill.distillCapped, true);
+    assert.equal(backfill.journals, 0);
+    const resumed = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      distillBatchSize: 1,
+      distillCallCap: 1,
+      llm,
+    });
+    assert.equal(calls, 2);
+    assert.equal(resumed.distilled, 1);
+    const items = f.knowledge.list("personal", 10);
+    assert.equal(
+      items.some((item) => item.sourceRefs[0]?.sourceId === older.id),
+      true,
+    );
+    assert.equal(
+      items.some((item) => item.sourceRefs[0]?.sourceId === newer.id),
+      false,
+    );
   } finally {
     await f.close();
   }

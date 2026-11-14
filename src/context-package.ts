@@ -13,6 +13,76 @@ import type { SourceStore } from "./store.js";
 
 // Offsets are UTF-16 code units into the indexed text; avoid splitting emoji pairs.
 // Source excerpts use the visible text so a stored PR footer is not the excerpt.
+const sentenceGaps = [". ", "! ", "? ", "… "] as const;
+const sentenceMarks = ["。", "！", "？", "…"] as const;
+
+function boundaryAt(text: string, offset: number): number {
+  const at = Math.min(Math.max(0, offset), text.length);
+  const head = text.slice(0, at);
+  let start = 0;
+  const take = (index: number, length: number) => {
+    const next = index + length;
+    if (next > start && next <= at) start = next;
+  };
+  for (const mark of sentenceGaps) {
+    const index = head.lastIndexOf(mark);
+    if (index >= 0) take(index, mark.length);
+  }
+  for (const mark of sentenceMarks) {
+    const index = head.lastIndexOf(mark);
+    if (index >= 0) take(index, mark.length);
+  }
+  const line = head.lastIndexOf("\n");
+  if (line >= 0) take(line, 1);
+  while (start < at && /[ \t]/u.test(text[start] ?? "")) start++;
+  if (start > 0 && /[\uDC00-\uDFFF]/u.test(text[start] ?? "")) start--;
+  return start;
+}
+
+function endOnSentence(
+  text: string,
+  start: number,
+  hardEnd: number,
+  offset: number,
+): number {
+  if (hardEnd >= text.length) return text.length;
+  const window = text.slice(start, hardEnd);
+  let cut = -1;
+  for (const mark of sentenceGaps) {
+    const index = window.lastIndexOf(mark);
+    if (index >= 0 && index + 1 > cut) cut = index + 1;
+  }
+  for (const mark of sentenceMarks) {
+    const index = window.lastIndexOf(mark);
+    if (index >= 0 && index + mark.length > cut) cut = index + mark.length;
+  }
+  if (cut > 0 && start + cut > offset) return start + cut;
+  let end = hardEnd;
+  if (end < text.length && /[\uDC00-\uDFFF]/u.test(text[end] ?? "")) end--;
+  return end;
+}
+
+/**
+ * Knowledge cards open on a sentence or item boundary and lose text only at
+ * the end, on a whole sentence when one fits in the budget.
+ */
+export function knowledgeExcerpt(text: string, matchOffset = 0, maximum = 480) {
+  const visible = visibleSourceText(text);
+  const offset =
+    visible === text
+      ? Math.min(Math.max(0, matchOffset), visible.length)
+      : Math.min(Math.max(0, matchOffset), visible.length);
+  const start = boundaryAt(visible, offset);
+  const hardEnd = Math.min(visible.length, start + maximum);
+  const end = endOnSentence(visible, start, hardEnd, offset);
+  return {
+    text: visible.slice(start, end),
+    start,
+    end,
+    truncated: start > 0 || end < visible.length,
+  };
+}
+
 export function excerpt(text: string, matchOffset = 0, maximum = 360) {
   const visible = visibleSourceText(text);
   const offset =
@@ -63,7 +133,7 @@ function itemCard(
     excerpt:
       k.kind === "journal"
         ? journalExcerpt(k.text)
-        : excerpt(k.text, matchOffset, 480),
+        : knowledgeExcerpt(k.text, matchOffset, 480),
     sourceIds: k.sourceRefs.map((r) => r.sourceId),
     ...(sourceLinks ? { sourceLinks } : {}),
     ...(citedIds?.length ? { citedIds: [...citedIds] } : {}),

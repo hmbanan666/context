@@ -32,8 +32,14 @@ export async function tidyCommand(args: string[], env: NodeJS.ProcessEnv) {
     ...(journalBackfill ? { journalBackfill } : {}),
     ...(journalBackfillLimit !== undefined ? { journalBackfillLimit } : {}),
   });
+  const abandoned = [...run.llmFailures]
+    .reverse()
+    .find((failure) => failure.abandoned);
+  const llmDetail = abandoned
+    ? ` (${abandoned.reason}${abandoned.exitCode !== null ? ` exit ${abandoned.exitCode}` : ""})`
+    : "";
   process.stdout.write(
-    `${json ? JSON.stringify(run) : `${run.dryRun ? "Dry run" : "Tidy"}: ${run.outcome}; duplicates ${run.duplicates}, moved ${run.moved}, uncertain ${run.uncertain}, failures ${run.failures}; llm ${run.llm}; distillation ${run.distillStatus} (${run.distilled}, rejected ${run.distillRejected}); journals ${run.journals}`}\n`,
+    `${json ? JSON.stringify(run) : `${run.dryRun ? "Dry run" : "Tidy"}: ${run.outcome}; duplicates ${run.duplicates}, moved ${run.moved}, uncertain ${run.uncertain}, failures ${run.failures}; llm ${run.llm}${llmDetail}; distillation ${run.distillStatus} (${run.distilled}, rejected ${run.distillRejected}); journals ${run.journals}`}\n`,
   );
   if (run.outcome !== "completed") process.exitCode = 1;
 }

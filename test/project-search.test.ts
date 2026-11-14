@@ -387,6 +387,69 @@ test("a vague Russian period query recalls in-window items with no lexical hit",
   }
 });
 
+test("project search starts a decision excerpt on a sentence boundary after journals", async () => {
+  const mcp = await open();
+  try {
+    const source = mcp.sources.captureMaterial(
+      {
+        version: 1,
+        scope,
+        origin: "synthetic:project-search",
+        idempotencyKey: "violetlatch",
+        text: "Observatory notes for the violetlatch decision.",
+        metadata: { createdAt: "2026-10-15T00:00:00.000Z" },
+      },
+      undefined,
+      ["observatory"],
+    ).material.source;
+    const text =
+      "The observatory project noted the weekly staffing rota. The observatory project kept the cobalt mirror and closed the violetlatch after the storm.";
+    mcp.knowledge.addDistilled({
+      scope,
+      sourceId: source.id,
+      kind: "decision",
+      text,
+      createdAt: "2026-10-15T00:00:00.000Z",
+    });
+    mcp.knowledge.refreshJournals({
+      areas: [scope],
+      now: new Date("2026-10-15T12:00:00.000Z"),
+      timeZone: "UTC",
+      dryRun: false,
+    });
+    const result = card.parse(
+      (
+        await mcp.call("search", {
+          query: "violetlatch",
+          project: "observatory",
+          budgetBytes: 16384,
+          ...october,
+        })
+      ).structuredContent,
+    );
+    const decisionIndex = result.items.findIndex(
+      (item) =>
+        item.kind === "decision" && item.excerpt.text.includes("violetlatch"),
+    );
+    const journalIndex = result.items.findIndex(
+      (item) => item.kind === "journal",
+    );
+    assert.ok(journalIndex >= 0);
+    assert.ok(decisionIndex > journalIndex);
+    const decision = result.items[decisionIndex];
+    assert.equal(
+      decision?.excerpt.text.startsWith(
+        "The observatory project kept the cobalt mirror",
+      ),
+      true,
+    );
+    assert.equal(decision?.excerpt.text.includes("staffing rota"), false);
+    assert.equal(decision?.excerpt.text.endsWith("."), true);
+  } finally {
+    await mcp.close();
+  }
+});
+
 test("the public October project question passes and pack cases stay skipped", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-project-eval-"));
   const path = join(directory, "context.db");

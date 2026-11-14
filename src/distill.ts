@@ -7,6 +7,7 @@ import {
   KnowledgeValidationError,
 } from "./knowledge.js";
 import type { Llm } from "./llm.js";
+import { askLlm, LlmCallError } from "./llm-call.js";
 import {
   hasProject,
   projectIdSchema,
@@ -42,7 +43,8 @@ export type DistillStatus =
   | "completed"
   | "capped"
   | "skipped_not_configured"
-  | "skipped_unavailable";
+  | "skipped_unavailable"
+  | "skipped_backfill";
 export interface DistillFrontier {
   readonly date: string;
   readonly row: number;
@@ -291,13 +293,34 @@ function scheduled(
         row.project_id == null ? DISTILL_UNLINKED : String(row.project_id),
     }));
 }
+function rewindFrontiers(
+  original: DistillFrontiers | null,
+  visited: Record<string, DistillFrontier>,
+  deferred: readonly { projectKey: string; date: string; row: number }[],
+): DistillFrontiers | null {
+  const frontiers: Record<string, DistillFrontier> = { ...visited };
+  for (const source of deferred) {
+    const current = frontiers[source.projectKey];
+    // A frontier at or behind this source would skip it on the next run.
+    if (!current || olderThan(source, current)) continue;
+    const previous = original?.[source.projectKey];
+    if (previous && olderThan(source, previous))
+      frontiers[source.projectKey] = { date: previous.date, row: previous.row };
+    else delete frontiers[source.projectKey];
+  }
+  return Object.keys(frontiers).length ? frontiers : null;
+}
 function takeSources(
   db: DatabaseSync,
   areas: readonly string[],
   frontiers: DistillFrontiers,
   limit: number,
+  blocked?: ReadonlySet<string>,
 ): DistillSource[] {
-  const chosen = orderDistillSources(scheduled(db, areas), frontiers, limit);
+  const pending = scheduled(db, areas).filter(
+    (source) => !blocked?.has(source.id),
+  );
+  const chosen = orderDistillSources(pending, frontiers, limit);
   if (!chosen.length) return [];
   const marks = chosen.map(() => "?").join(", ");
   const loaded = new Map(
@@ -429,6 +452,12 @@ export async function distillSources(input: {
   callCap: number;
   resumeAfter: number | null;
   frontiers: DistillFrontiers | null;
+  onLlmFailure?: (
+    failure: LlmCallError,
+    attempt: number,
+    abandoned: boolean,
+  ) => void;
+  backoffMs?: readonly number[];
 }): Promise<DistillResult> {
   const result: DistillResult = {
     calls: 0,
@@ -467,6 +496,8 @@ export async function distillSources(input: {
   const frontiers: Record<string, DistillFrontier> = {
     ...input.frontiers,
   };
+  const blocked = new Set<string>();
+  const deferred: DistillSource[] = [];
   const sentence = nonblankText(400);
   const publish = (failed: boolean) => {
     if (failed) {
@@ -491,12 +522,13 @@ export async function distillSources(input: {
       input.areas,
       frontiers,
       input.batchSize,
+      blocked,
     );
     if (!batch.length) break;
-    result.calls++;
     let raw: unknown;
     try {
-      raw = await input.llm.ask(
+      raw = await askLlm(
+        input.llm,
         distillInstruction,
         redactFields(
           batch.map((source, index) => ({
@@ -512,9 +544,26 @@ export async function distillSources(input: {
             ),
           })),
         ),
+        {
+          canAttempt: () => result.calls < input.callCap,
+          onAttempt: () => {
+            result.calls++;
+          },
+          onFailure: (failure, attempt, abandoned) => {
+            input.onLlmFailure?.(failure, attempt, abandoned);
+          },
+          ...(input.backoffMs ? { backoffMs: input.backoffMs } : {}),
+        },
       );
-    } catch {
-      return publish(true);
+    } catch (error) {
+      if (!(error instanceof LlmCallError)) throw error;
+      // A dead processor stops the run. One transient or parse failure does not.
+      if (error.reason === "unavailable") return publish(true);
+      for (const source of batch) {
+        blocked.add(source.id);
+        deferred.push(source);
+      }
+      continue;
     }
     const answers = groupedAnswers(raw, batch.length);
     for (const [index, source] of batch.entries()) {
@@ -589,6 +638,15 @@ export async function distillSources(input: {
       }
     }
     for (const source of batch) noteVisited(frontiers, source);
+  }
+  if (deferred.length) {
+    const restored = rewindFrontiers(input.frontiers, frontiers, deferred);
+    result.becameUnavailable = false;
+    result.capped = true;
+    result.frontiers = restored;
+    result.after = restored ? oldestRow(restored) : null;
+    result.status = "capped";
+    return result;
   }
   return publish(false);
 }

@@ -256,7 +256,9 @@ context tidy --dry-run --json
 `--dry-run` calls the processor and reports `distilled` without writing SQLite
 or tidy history. A normal run stores one proposed sentence per source revision
 it accepts. `distillStatus` is `completed`, `capped`, `skipped_not_configured`,
-or `skipped_unavailable`. `llm: "not_configured"` or `llm: "unavailable"`
+or `skipped_unavailable`. A backfill pass reports `skipped_backfill` and
+does not spend distillation calls; a capped distill cursor is left in place
+for the next normal tidy. `llm: "not_configured"` or `llm: "unavailable"`
 (including an expired Codex login) skips distillation; dedup and inbox sorting
 still run. Repeat `context tidy` to continue a capped backlog. Distillation
 never approves an item and never writes a supersedes link. There is no new
@@ -286,9 +288,17 @@ context tidy --journal-backfill --journal-backfill-limit 8 --json
 ```
 
 The default bound is 24 older-week writes per run and the maximum is 52.
-Newest older weeks are written first. Repeat until `journals` is 0. A later
-run skips a week whose paragraph is unchanged. Nightly tidy does not pass
-this flag, so it refreshes only the current and previous weeks. An offset
+Newest older weeks are written first. This command is a backfill-only pass:
+it does not call the processor, so it does not distill and does not sort the
+inbox. Distillation during the pass was reopening weeks that had just been
+written, and `journals` never reached 0. Repeat the command until `journals`
+is 0. That can happen while new sources are still waiting to be distilled.
+A normal `context tidy` (without this flag) rewrites the current and previous
+weeks when their items change. Items that land in an older week are written
+on the next backfill pass, which again ends at `journals` 0 once those
+paragraphs are stable. A later run skips a week whose paragraph is unchanged.
+Nightly tidy does not pass this flag, so it refreshes only the current and
+previous weeks. An offset
 on a source date, such as `2026-09-29T12:00:00+01:00`, is accepted and the
 distilled item stores that instant in UTC. A source that is already linked
 to a project does not need the project id spelled in the sentence.
@@ -352,12 +362,21 @@ Set `CONTEXT_PROCESSOR=codex` to use the CLI's ChatGPT login for tidy and
 working directory, a read-only sandbox, ephemeral sessions and disabled tools,
 MCP, user config, rules and skills instructions. Output is bounded to 128 KiB and
 the process group is killed after 180 seconds. No CLI version is pinned; unsupported
-flags, missing login/binary and failed calls report `llm: "unavailable"` and leave
-tidy doing dedup only. Subscription/model availability and login refresh after
+flags or a missing login/binary report `llm: "unavailable"` and leave tidy
+doing dedup only. A failed call records `llmFailures` on the tidy JSON and an
+`llm_failure` line on stderr: `reason` is `timeout`, `rate_limit`,
+`nonzero_exit`, `parse` or `unavailable`, plus `exitCode`, `attempt` and a
+`stderrTail` of at most 240 characters with tokens and passwords removed.
+Timeout, rate limit and a non-zero exit are retried up to three times (500ms,
+then 1.5s). Each attempt counts toward that phase's cap of 12. One abandoned
+transient or parse failure does not set `llm` to `unavailable` and does not
+skip the remaining sources; the run is `partial`, and the next tidy retries
+the batch. Subscription/model availability and login refresh after
 inactivity still need a live check; synthetic tests do not establish them.
-Each tidy run first checks `codex login status` once, with a five-second timeout
-and discarded output. A failed check skips model steps with `llmCalls: 0`;
-dedup still runs and the last-success time does not advance.
+Each tidy run first checks `codex login status` once, with a five-second timeout.
+Stdout from that check is discarded. A failed check records the same failure
+fields, skips model steps with `llmCalls: 0`, and still runs dedup. The
+last-success time does not advance.
 
 On the host, install a static Codex executable compatible with the container's
 Linux architecture (not the npm launcher). Set `CONTEXT_CODEX_BIN` to its absolute

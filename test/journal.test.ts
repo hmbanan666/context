@@ -895,3 +895,117 @@ test("journal backfill regenerates an older paragraph and nightly tidy leaves it
     await f.close();
   }
 });
+
+test("journal backfill finishes without distilling and the next pass picks up new items", async () => {
+  const f = await open("journal-backfill-pass");
+  let asks = 0;
+  const blocking = {
+    model: "fake",
+    async preflight() {
+      asks++;
+      throw new Error("login");
+    },
+    async ask() {
+      asks++;
+      throw new Error("should not distill during backfill");
+    },
+  };
+  try {
+    const existingSource = capture(
+      f.sources,
+      "older-existing",
+      "Archive of the older week.",
+      "2026-10-28T00:00:00.000Z",
+    );
+    const existing = f.knowledge.addDistilled({
+      scope,
+      sourceId: existingSource.id,
+      kind: "fact",
+      text: "The observatory project stored the older week lantern.",
+      createdAt: "2026-10-28T00:00:00.000Z",
+    }).item;
+    capture(
+      f.sources,
+      "older-pending",
+      "Archive pending lantern source for the older week.",
+      "2026-10-27T00:00:00.000Z",
+    );
+    capture(
+      f.sources,
+      "current-pending",
+      "Archive pending lantern source for the current week.",
+      "2026-11-11T00:00:00.000Z",
+    );
+    const options = {
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      journalBackfill: true,
+      llm: blocking,
+    };
+    const first = await runTidy(options);
+    assert.equal(asks, 0);
+    assert.equal(first.distillStatus, "skipped_backfill");
+    assert.equal(first.distillCalls, 0);
+    assert.equal(first.journals, 1);
+    assert.equal(first.outcome, "completed");
+    const weekId = journalId("observatory", "2026-W44");
+    assert.equal(
+      f.knowledge.find(weekId, scope)?.text.includes("older week lantern"),
+      true,
+    );
+    const second = await runTidy(options);
+    assert.equal(asks, 0);
+    assert.equal(second.journals, 0);
+    assert.equal(second.outcome, "completed");
+    const distilled = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      llm: {
+        model: "fake",
+        async ask(_instruction: string, data: unknown) {
+          asks++;
+          const batch = data as { index: number; date: string }[];
+          return batch.map((item) => ({
+            index: item.index,
+            kind: "fact",
+            text: item.date.startsWith("2026-11")
+              ? "The observatory project logged a current week lantern."
+              : "The observatory project logged a late lantern in the older week.",
+            project: null,
+          }));
+        },
+      },
+    });
+    assert.equal(asks, 1);
+    assert.equal(distilled.distilled, 2);
+    assert.equal(
+      f.knowledge.find(weekId, scope)?.text.includes("late lantern"),
+      false,
+    );
+    assert.equal(
+      f.knowledge
+        .find(journalId("observatory", "2026-W46"), scope)
+        ?.text.includes("current week lantern"),
+      true,
+    );
+    const caughtUp = await runTidy(options);
+    assert.equal(asks, 1);
+    assert.equal(caughtUp.journals, 1);
+    assert.equal(
+      f.knowledge.find(weekId, scope)?.text.includes("late lantern"),
+      true,
+    );
+    assert.ok(
+      f.knowledge.journalCitations(weekId)?.citedIds.includes(existing.id),
+    );
+    const done = await runTidy(options);
+    assert.equal(done.journals, 0);
+    assert.equal(asks, 1);
+  } finally {
+    await f.close();
+  }
+});

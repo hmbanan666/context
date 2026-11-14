@@ -38,9 +38,13 @@ model pass would spend a call cap to rewrite them and could leave the source
 language. If a later change does call the processor, that call has to use the
 existing processor, its own cap, and this sentence list as the fallback.
 Nightly tidy refreshes the current week and the previous week when the summary
-changes. `context tidy --journal-backfill` writes older weeks that have items,
-at most 24 per run, and rewrites a paragraph whose text changed. That is how
-to regenerate journals left by the older concatenated formatter. An unchanged
+changes. `context tidy --journal-backfill` does not distill or sort the
+inbox. It writes older weeks that already have items, at most 24 per run, and
+rewrites a paragraph whose text changed. That is how to regenerate journals
+left by the older concatenated formatter. Repeat it until `journals` is 0.
+The pass can finish while new sources are still undistilled. A normal tidy
+rewrites the current and previous weeks when their items change; items that
+land in an older week wait for the next backfill pass. An unchanged
 paragraph is not rewritten. Weeks with no distilled items have no journal
 entry. A journal entry does not claim the week is complete, is not a decision,
 and cannot supersede one.
@@ -50,7 +54,9 @@ journal entries, then decisions, then facts in the requested dates ahead of raw
 sources. When `project` and `since` or `until` are set, those in-window rows
 are candidates even when the query shares no words with them; a lexical or
 semantic match ranks ahead of the other rows of the same kind, and the rest
-follow by date. A raw source cited by a returned distilled item is omitted.
+follow by date. A decision or fact excerpt starts at a sentence boundary and
+is trimmed at the end, on a whole sentence when one fits. A raw source cited
+by a returned distilled item is omitted.
 Raw sources are only uncited evidence that still fits the byte budget. `since`
 and `until` keep today's meaning. Optional `budgetBytes` (2048–65536) overrides
 the package byte budget; the default stays 8192. Omitting `project` leaves

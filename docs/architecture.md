@@ -127,7 +127,9 @@ prose are rejected and stay pending. Code spans, identifiers, ADR titles, URLs
 and markdown marks do not count toward that span. Tidy JSON reports rejection
 counts by reason; a few redacted samples go to stderr and not to tidy history.
 Search indexes and excerpts omit a Cursor pull-request footer and keep prose
-before and after it; the stored source text is unchanged. A visible-text version
+before and after it; the stored source text is unchanged. Knowledge-item
+excerpts start at a sentence or item boundary and are trimmed at the end, on
+a whole sentence when one fits. A visible-text version
 bump rebuilds the derived source index once. Repository
 mappings match a normalized `owner/repo`, including GitHub URL forms already
 stored on a source. Proposed sentences are readable by id.
@@ -143,9 +145,15 @@ complete sentences, decisions before facts, within 800 characters in the
 source language. Item ids stay in metadata (`citations` on read, `citedIds`
 on a search card). Nightly tidy refreshes the current and previous ISO weeks
 in `TZ` from that project's distilled items in the home area, without a
-processor call. `context tidy --journal-backfill` writes older weeks that
-have items, bounded per run, rewrites a paragraph whose summary changed, and
-skips an unchanged paragraph. Search with a project id
+processor call. `context tidy --journal-backfill` does not distill or sort
+the inbox. It writes older weeks that already have items, bounded per run,
+rewrites a paragraph whose summary changed, and skips an unchanged paragraph.
+Repeat it until `journals` is 0; new items wait for the normal current and
+previous week rewrite or the next pass. A failed processor call is logged
+with its class (`timeout`, `rate_limit`, `nonzero_exit`, `parse`,
+`unavailable`), exit code and a redacted stderr tail. Timeout, rate limit and
+non-zero exit are retried within the call cap. One such failure does not mark
+the run `unavailable`. Search with a project id
 and a date bound ranks journals, then decisions, then facts in that window
 even when the query does not match them, ahead of uncited raw sources.
 Slice 4e records owner approval in `knowledge_reviews`
