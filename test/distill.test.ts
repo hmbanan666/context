@@ -43,6 +43,29 @@ test("an 80 character body span is a copy and 79 characters is not", () => {
   assert.equal(copiesStoredBody(body, body), true);
   assert.equal(copiesStoredBody(body.slice(0, 79), body), false);
   assert.equal(copiesStoredBody(`note ${body} end`, `xx${body}yy`), true);
+  const prose =
+    "the observatory shipped the cobalt mirror during the documented october window today";
+  assert.equal(prose.length >= 80, true);
+  assert.equal(copiesStoredBody(prose, `note\n\n${prose}\n`), true);
+  assert.equal(copiesStoredBody(`**${prose}**`, prose), true);
+  const marks = `#### ${"*".repeat(90)}`;
+  assert.equal(copiesStoredBody(marks, marks), false);
+  const adr =
+    "ADR 0011-distill-proposed-facts-and-decisions-kept-verbatim-in-the-sentence-extra";
+  assert.equal(adr.length >= 80, true);
+  const code = "copiesStoredBody";
+  const path = "src/distill.ts";
+  const titled = `See ${adr} and \`${code}\` in ${path}. The hatch stays closed.`;
+  const sentence = `The observatory project accepted ${adr} via \`${code}\` in ${path}.`;
+  assert.equal(copiesStoredBody(sentence, titled), false);
+  const token = "a".repeat(80);
+  assert.equal(
+    copiesStoredBody(
+      `The observatory project ran \`${token}\` once.`,
+      `Run \`${token}\` once and record the result in the logbook today.`,
+    ),
+    false,
+  );
   const title = "T".repeat(90);
   assert.equal(sourceBody(`${title}\n\n${body}`, title), body);
   assert.equal(
@@ -198,6 +221,8 @@ test("GitHub distillation stores one proposed sentence and rejects a body copy",
     const dry = await runTidy({ ...options, dryRun: true });
     assert.equal(dry.distilled, 3);
     assert.equal(dry.distillRejected, 2);
+    assert.equal(dry.distillRejections["copy-80"], 1);
+    assert.equal(dry.distillRejections["parse-error"], 1);
     assert.equal(dry.dryRun, true);
     assert.equal(f.knowledge.list("workshop", 20).length, 0);
     await assert.rejects(readFile(join(f.directory, "tidy/history.jsonl")));
@@ -996,6 +1021,135 @@ test("the fake processor receives a self-contained multilingual prompt and not t
       f.sources.find(source.id, "personal")?.checksum,
       source.checksum,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("distillation counts rejection reasons and logs a redacted sample", async () => {
+  const f = await open("distill-reasons");
+  const adr =
+    "ADR 0011-distill-proposed-facts-and-decisions-kept-verbatim-in-the-sentence-extra";
+  const copied =
+    "the observatory shipped the cobalt mirror during the documented october window today";
+  const secret = `ghp_${"a".repeat(20)}`;
+  try {
+    f.sources.createProject({
+      id: "observatory",
+      name: "Observatory",
+      homeArea: "workshop",
+    });
+    const capture = (key: string, text: string, project = false) => {
+      const source = f.sources.captureMaterial({
+        version: 1,
+        scope: "workshop",
+        origin: "fixture",
+        idempotencyKey: key,
+        text,
+        metadata: { title: key, createdAt: "2026-10-04T00:00:00.000Z" },
+      }).material.source;
+      if (project)
+        f.sources.addClientAssociation("source", source.id, ["observatory"]);
+      return source;
+    };
+    capture(
+      "kept",
+      `See ${adr} and \`copiesStoredBody\` in src/distill.ts. The hatch stays closed.`,
+      true,
+    );
+    capture("copied", `Notes\n\n${copied}\n`);
+    capture("blank", "A fictional card with no sentence.");
+    capture("broken", "A fictional card with a broken answer.");
+    capture(
+      "named",
+      "A fictional card with a project string that is too long.",
+    );
+    capture("wrapped", "A fictional card whose sentence breaks the line.");
+    const lines: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    };
+    let run: Awaited<ReturnType<typeof runTidy>> | undefined;
+    try {
+      run = await runTidy({
+        databasePath: f.path,
+        areas: ["workshop"],
+        llm: {
+          model: "fake",
+          async ask(_instruction: string, data: unknown) {
+            return (data as { index: number; title: string | null }[]).map(
+              (source) => {
+                if (source.title === "kept")
+                  return {
+                    index: source.index,
+                    kind: "fact" as const,
+                    text: `The observatory project accepted ${adr} via \`copiesStoredBody\` in src/distill.ts.`,
+                    project: null,
+                  };
+                if (source.title === "copied")
+                  return {
+                    index: source.index,
+                    kind: "fact" as const,
+                    text: `${copied} ${secret}`,
+                    project: null,
+                  };
+                if (source.title === "blank")
+                  return {
+                    index: source.index,
+                    kind: "fact" as const,
+                    text: "   ",
+                    project: null,
+                  };
+                if (source.title === "broken")
+                  return { index: source.index, text: "missing kind" };
+                if (source.title === "named")
+                  return {
+                    index: source.index,
+                    kind: "fact" as const,
+                    text: "The workshop noted a gap in the fictional card.",
+                    project: "x".repeat(200),
+                  };
+                return {
+                  index: source.index,
+                  kind: "fact" as const,
+                  text: "The workshop sentence\nbreaks the line.",
+                  project: null,
+                };
+              },
+            );
+          },
+        },
+      });
+    } finally {
+      console.error = error;
+    }
+    assert.ok(run);
+    assert.equal(run.distilled, 1);
+    assert.equal(run.distillRejected, 5);
+    assert.equal(run.distillRejections["copy-80"], 1);
+    assert.equal(run.distillRejections.empty, 1);
+    assert.equal(run.distillRejections["parse-error"], 1);
+    assert.equal(run.distillRejections["invalid-project"], 1);
+    assert.equal(run.distillRejections.newline, 1);
+    assert.equal(
+      f.knowledge.list("workshop", 10).some((item) => item.text.includes(adr)),
+      true,
+    );
+    const sample = lines.find((line) => line.includes('"reason":"copy-80"'));
+    assert.ok(sample);
+    assert.equal(sample.includes(secret), false);
+    assert.equal(sample.includes("[REDACTED]"), true);
+    const history = await readFile(
+      join(f.directory, "tidy/history.jsonl"),
+      "utf8",
+    );
+    const saved = JSON.parse(history.trim().split("\n").at(-1) ?? "") as {
+      distillRejections: { "copy-80": number };
+    };
+    assert.equal(saved.distillRejections["copy-80"], 1);
+    assert.equal(history.includes(secret), false);
+    assert.equal(history.includes("distill_rejection_sample"), false);
   } finally {
     await f.close();
   }

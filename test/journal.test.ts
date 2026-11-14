@@ -8,7 +8,12 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { isoWeek, journalCharacterLimit, journalId } from "../src/journal.js";
+import {
+  isoWeek,
+  journalCharacterLimit,
+  journalId,
+  journalParagraph,
+} from "../src/journal.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
@@ -65,6 +70,42 @@ function capture(
     [project],
   ).material.source;
 }
+
+test("a journal paragraph summarizes decisions before facts in the source language", () => {
+  const paragraph = journalParagraph("expi", "2026-W42", [
+    {
+      id: "fact-late",
+      kind: "fact",
+      text: "Факт: починили вход в Matrix и оставили название как в источнике.",
+      createdAt: "2026-10-18T00:00:00.000Z",
+    },
+    {
+      id: "decision-early",
+      kind: "decision",
+      text: "Решение: оставить журнал коротким и на языке источника.",
+      createdAt: "2026-10-14T00:00:00.000Z",
+    },
+    {
+      id: "fact-early",
+      kind: "fact",
+      text: "Факт: записали зеркало до решения о входе.",
+      createdAt: "2026-10-12T00:00:00.000Z",
+    },
+  ]);
+  assert.equal(paragraph.text.startsWith("expi 2026-W42: "), true);
+  assert.equal([...paragraph.text].length <= journalCharacterLimit, true);
+  assert.deepEqual(paragraph.citedIds, [
+    "decision-early",
+    "fact-early",
+    "fact-late",
+  ]);
+  const decisionAt = paragraph.text.indexOf("decision-early");
+  const factAt = paragraph.text.indexOf("fact-early");
+  assert.ok(decisionAt > 0 && decisionAt < factAt);
+  assert.equal(paragraph.text.includes("Решение: оставить журнал"), true);
+  assert.equal(paragraph.text.includes("починили вход в Matrix"), true);
+  assert.equal(/\bcomplete\b/i.test(paragraph.text), false);
+});
 
 test("ISO weeks follow the instance timezone, including a DST boundary", () => {
   assert.equal(isoWeek(now, "UTC").id, "2026-W46");
@@ -354,27 +395,21 @@ test("a journal paragraph stays within 800 characters and does not spend distill
     );
     assert.ok(journal);
     assert.equal([...journal.text].length <= journalCharacterLimit, true);
-    assert.equal(journal.text.includes(ids[0] ?? ""), true);
-    assert.equal(journal.text.includes("beta"), false);
-    assert.equal(journal.text.includes(ids[1] ?? ""), false);
+    assert.equal(journal.text.includes("m".repeat(200)), false);
+    for (const id of ids) assert.equal(journal.text.includes(id), true);
     const extra = capture(
       f.sources,
       "extra",
       "Extra archive.",
       "2026-11-13T00:00:00.000Z",
     );
-    f.knowledge.addDistilled({
+    const delta = f.knowledge.addDistilled({
       scope,
       sourceId: extra.id,
       kind: "fact",
       text: `delta ${"d".repeat(394)}`,
       createdAt: "2026-11-13T00:00:00.000Z",
-    });
-    const before = new DatabaseSync(f.path, { readOnly: true });
-    const row = before
-      .prepare("SELECT rowid, text FROM knowledge_items WHERE id = ?")
-      .get(journal.id) as { rowid: number; text: string };
-    before.close();
+    }).item;
     const refreshed = f.knowledge.refreshJournals({
       areas: [scope],
       now,
@@ -382,13 +417,15 @@ test("a journal paragraph stays within 800 characters and does not spend distill
       dryRun: false,
     });
     assert.equal(refreshed.written, 1);
+    const updated = f.knowledge.find(journal.id, scope);
+    assert.ok(updated);
+    assert.equal([...updated.text].length <= journalCharacterLimit, true);
+    assert.equal(updated.text.includes(delta.id), true);
     const kept = new DatabaseSync(f.path, { readOnly: true });
-    const after = kept
-      .prepare("SELECT rowid, text FROM knowledge_items WHERE id = ?")
-      .get(journal.id) as { rowid: number; text: string };
+    const row = kept
+      .prepare("SELECT rowid FROM knowledge_items WHERE id = ?")
+      .get(journal.id) as { rowid: number };
     kept.close();
-    assert.equal(after.rowid, row.rowid);
-    assert.equal(after.text, row.text);
     assert.equal(
       f.knowledge.refreshJournals({
         areas: [scope],
@@ -398,6 +435,16 @@ test("a journal paragraph stays within 800 characters and does not spend distill
       }).written,
       0,
     );
+    const reread = new DatabaseSync(f.path, { readOnly: true });
+    assert.equal(
+      (
+        reread
+          .prepare("SELECT rowid FROM knowledge_items WHERE id = ?")
+          .get(journal.id) as { rowid: number }
+      ).rowid,
+      row.rowid,
+    );
+    reread.close();
   } finally {
     await f.close();
   }
@@ -515,6 +562,157 @@ test("project search reads the journal by id and keeps area-wide results unchang
   } finally {
     await client.close();
     await mcp.close();
+    await f.close();
+  }
+});
+
+test("journal backfill summarizes older weeks and does not rewrite them", async () => {
+  const f = await open("journal-backfill");
+  try {
+    const add = (
+      key: string,
+      kind: "fact" | "decision",
+      text: string,
+      createdAt: string,
+    ) => {
+      const source = capture(f.sources, key, `Archive ${key}.`, createdAt);
+      return f.knowledge.addDistilled({
+        scope,
+        sourceId: source.id,
+        kind,
+        text,
+        createdAt,
+      }).item;
+    };
+    add(
+      "current",
+      "fact",
+      "In November the observatory project logged the current week.",
+      "2026-11-11T00:00:00.000Z",
+    );
+    add(
+      "previous",
+      "fact",
+      "In November the observatory project logged the previous week.",
+      "2026-11-04T00:00:00.000Z",
+    );
+    const decision = add(
+      "older-decision",
+      "decision",
+      "Решение: оставить журнал на языке источника.",
+      "2026-10-28T00:00:00.000Z",
+    );
+    const fact = add(
+      "older-fact",
+      "fact",
+      "Факт: починили вход в Matrix в ту же неделю.",
+      "2026-10-27T00:00:00.000Z",
+    );
+    const earlier = add(
+      "older-earlier",
+      "fact",
+      "Факт: записали зеркало в начале недели.",
+      "2026-10-26T00:00:00.000Z",
+    );
+    const ancient = add(
+      "ancient",
+      "fact",
+      "The observatory project stored an older lantern.",
+      "2026-10-19T00:00:00.000Z",
+    );
+    let calls = 0;
+    const nightly = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      llm: {
+        model: "fake",
+        async ask() {
+          calls++;
+          return [];
+        },
+      },
+    });
+    assert.equal(calls, 0);
+    assert.equal(nightly.journals, 2);
+    assert.equal(
+      f.knowledge.find(journalId("observatory", "2026-W44"), scope),
+      undefined,
+    );
+    const first = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      journalBackfill: true,
+      journalBackfillLimit: 1,
+    });
+    assert.equal(first.journals, 1);
+    const week = f.knowledge.find(journalId("observatory", "2026-W44"), scope);
+    assert.ok(week);
+    assert.equal([...week.text].length <= journalCharacterLimit, true);
+    assert.equal(week.text.includes(decision.id), true);
+    assert.equal(week.text.includes(fact.id), true);
+    assert.equal(week.text.includes(earlier.id), true);
+    assert.equal(
+      week.text.indexOf(decision.id) < week.text.indexOf(fact.id),
+      true,
+    );
+    assert.equal(week.text.includes("Решение: оставить журнал"), true);
+    assert.equal(week.text.includes("починили вход в Matrix"), true);
+    assert.equal(
+      f.knowledge.find(journalId("observatory", "2026-W43"), scope),
+      undefined,
+    );
+    const second = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      journalBackfill: true,
+      journalBackfillLimit: 1,
+    });
+    assert.equal(second.journals, 1);
+    assert.equal(
+      f.knowledge
+        .find(journalId("observatory", "2026-W43"), scope)
+        ?.text.includes(ancient.id),
+      true,
+    );
+    const rowDb = new DatabaseSync(f.path, { readOnly: true });
+    const row = rowDb
+      .prepare("SELECT rowid, text FROM knowledge_items WHERE id = ?")
+      .get(week.id) as { rowid: number; text: string };
+    rowDb.close();
+    const third = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      journalBackfill: true,
+      journalBackfillLimit: 1,
+    });
+    assert.equal(third.journals, 0);
+    const kept = new DatabaseSync(f.path, { readOnly: true });
+    const after = kept
+      .prepare("SELECT rowid, text FROM knowledge_items WHERE id = ?")
+      .get(week.id) as { rowid: number; text: string };
+    kept.close();
+    assert.equal(after.rowid, row.rowid);
+    assert.equal(after.text, row.text);
+    await assert.rejects(
+      () =>
+        runTidy({
+          databasePath: f.path,
+          areas: [scope],
+          now,
+          timeZone: "UTC",
+          journalBackfillLimit: 0,
+        }),
+      /Invalid journal backfill limit/,
+    );
+  } finally {
     await f.close();
   }
 });

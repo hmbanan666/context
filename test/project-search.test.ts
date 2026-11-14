@@ -245,6 +245,7 @@ test("project search ranks distilled items, filters dates, omits cited sources a
         await mcp.call("search", {
           query: "What happened in October on the observatory project?",
           project: "observatory",
+          budgetBytes: 16384,
           ...october,
         })
       ).structuredContent,
@@ -329,6 +330,58 @@ test("project search ranks distilled items, filters dates, omits cited sources a
       "observatory",
     );
     assert.ok(Buffer.byteLength(JSON.stringify(bounded), "utf8") <= 2048);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("a vague Russian period query recalls in-window items with no lexical hit", async () => {
+  const mcp = await open();
+  try {
+    mcp.knowledge.refreshJournals({
+      areas: [scope],
+      now: new Date("2026-11-14T00:00:00.000Z"),
+      timeZone: "UTC",
+      dryRun: false,
+      backfillLimit: 8,
+    });
+    const vague = card.parse(
+      (
+        await mcp.call("search", {
+          query: "что было сделано в октябре",
+          project: "observatory",
+          budgetBytes: 32768,
+          ...october,
+        })
+      ).structuredContent,
+    );
+    assert.equal(vague.items[0]?.kind, "journal");
+    const kinds = vague.items.map((item) => item.kind);
+    const firstFact = kinds.indexOf("fact");
+    const lastDecision = kinds.lastIndexOf("decision");
+    assert.ok(lastDecision >= 0 && firstFact > lastDecision);
+    const text = vague.items.map((item) => item.excerpt.text).join("\n");
+    assert.match(text, /cobalt mirror/);
+    assert.match(text, /shutter interlock/);
+    assert.equal(text.includes("stored a lantern"), false);
+    assert.equal(text.includes("opened the dome"), false);
+    assert.equal(text.includes("rejected the spare dome"), false);
+    assert.equal(text.includes("renamed its index"), false);
+    assert.equal(JSON.stringify(vague).includes("diff hunk discussion"), false);
+    const undated = card.parse(
+      (
+        await mcp.call("search", {
+          query: "cobalt mirror",
+          project: "observatory",
+        })
+      ).structuredContent,
+    );
+    assert.equal(
+      undated.items.some((item) =>
+        item.excerpt.text.includes("shutter interlock"),
+      ),
+      false,
+    );
   } finally {
     await mcp.close();
   }

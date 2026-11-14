@@ -47,8 +47,11 @@ a call.
 
 GitHub pull requests stay stored as raw archive evidence. The stored sentence
 states what was decided or shipped and names the project when one is known.
-A sentence that copies a contiguous 80-character span of the stored body is
-rejected and the source stays pending. Invalid model output skips that source
+A sentence that copies a contiguous 80-character span of stored prose is
+rejected and the source stays pending. The span is measured after code spans,
+identifiers, ADR titles, URLs and markdown marks are removed and whitespace is
+collapsed, so those tokens do not by themselves reject a short sentence. A
+real 80-character prose copy is still rejected. Invalid model output skips that source
 and does not write a partial item. Requests send redacted stored text only and
 keep the timeouts and skip-on-failure behavior in ADR 0005.
 

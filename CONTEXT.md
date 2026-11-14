@@ -57,9 +57,9 @@ _Avoid_: area, permission, repository (as a universal synonym), the removed `pro
 rules and pinned decisions in force. It is loaded whenever that project is selected.
 _Avoid_: area policy, inferred biography, raw archive.
 
-**Journal**: A replaceable weekly rollup of one project's distilled items. It
-names the project and the week and cites those items. It is not a decision, and
-it is not the deletion journal that holds tombstones.
+**Journal**: A replaceable weekly summary of one project's distilled items. It
+names the project and the week, groups decisions before facts, and cites those
+items. It is not a decision, and it is not the deletion journal that holds tombstones.
 _Avoid_: source, owner approval, a claim that the week is complete, deletion tombstone.
 
 **Task pack**: A budgeted `search` result for one project and a task: the profile,

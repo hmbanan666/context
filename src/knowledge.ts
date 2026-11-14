@@ -658,21 +658,55 @@ export class KnowledgeStore {
         const found = matches("");
         return materialize(found.ids, found.total, found.matchOffsets);
       }
-      // Journals, then distilled rows, stay inside the cap ahead of other notes.
+      // Journals, then decisions, then facts, ahead of other notes.
+      // A project plus a date bound also keeps in-window rows that share no
+      // terms with the query. Matches stay ahead of those rows.
       const journals = matches("k.kind = 'journal'");
-      const distilled = matches("k.kind IN ('fact', 'decision')");
+      const decisions = matches("k.kind = 'decision'");
+      const facts = matches("k.kind = 'fact'");
       const rest = matches("k.kind NOT IN ('fact', 'decision', 'journal')");
-      const ids = [...journals.ids];
-      for (const id of distilled.ids) if (!ids.includes(id)) ids.push(id);
+      const recall = input.from !== undefined || input.until !== undefined;
+      const dated = (kindSql: string) => {
+        const where = [...conditions, kindSql].filter(Boolean).join(" AND ");
+        const total = Number(
+          this.#database
+            .prepare(`SELECT count(*) n FROM (${itemSelection} WHERE ${where})`)
+            .get(...params)?.n,
+        );
+        const ids = (
+          this.#database
+            .prepare(
+              `SELECT id FROM (${itemSelection} WHERE ${where}) ORDER BY createdAt DESC, id LIMIT ?`,
+            )
+            .all(...params, input.limit) as { id: string }[]
+        ).map((row) => row.id);
+        return { total, ids };
+      };
+      const prefer = (matched: readonly string[], extra: readonly string[]) => {
+        const ids = [...matched];
+        for (const id of extra) if (!ids.includes(id)) ids.push(id);
+        return ids;
+      };
+      const journalWindow = recall ? dated("k.kind = 'journal'") : undefined;
+      const decisionWindow = recall ? dated("k.kind = 'decision'") : undefined;
+      const factWindow = recall ? dated("k.kind = 'fact'") : undefined;
+      const ids = [
+        ...prefer(journals.ids, journalWindow?.ids ?? []),
+        ...prefer(decisions.ids, decisionWindow?.ids ?? []),
+        ...prefer(facts.ids, factWindow?.ids ?? []),
+      ];
       for (const id of rest.ids) if (!ids.includes(id)) ids.push(id);
       const matchOffsets = new Map(rest.matchOffsets);
-      for (const [id, offset] of distilled.matchOffsets)
-        matchOffsets.set(id, offset);
-      for (const [id, offset] of journals.matchOffsets)
-        matchOffsets.set(id, offset);
+      for (const group of [facts, decisions, journals]) {
+        for (const [id, offset] of group.matchOffsets)
+          matchOffsets.set(id, offset);
+      }
       return materialize(
         ids.slice(0, input.limit),
-        journals.total + distilled.total + rest.total,
+        (journalWindow?.total ?? journals.total) +
+          (decisionWindow?.total ?? decisions.total) +
+          (factWindow?.total ?? facts.total) +
+          rest.total,
         matchOffsets,
       );
     }
@@ -688,7 +722,7 @@ export class KnowledgeStore {
     );
     const items = this.#database
       .prepare(
-        `${itemSelection} WHERE ${where} ORDER BY ${input.projectId ? "CASE WHEN k.kind = 'journal' THEN 0 WHEN k.kind IN ('fact', 'decision') THEN 1 ELSE 2 END, k.created_at DESC, k.id" : "k.created_at DESC, k.id"} LIMIT ?`,
+        `${itemSelection} WHERE ${where} ORDER BY ${input.projectId ? "CASE WHEN k.kind = 'journal' THEN 0 WHEN k.kind = 'decision' THEN 1 WHEN k.kind = 'fact' THEN 2 ELSE 3 END, k.created_at DESC, k.id" : "k.created_at DESC, k.id"} LIMIT ?`,
       )
       .all(...params, input.limit)
       .map(decodeItem);
@@ -704,6 +738,7 @@ export class KnowledgeStore {
     now: Date;
     timeZone: string;
     dryRun: boolean;
+    backfillLimit?: number;
   }): JournalRefresh {
     return refreshProjectJournals(this.#database, input);
   }
