@@ -35,16 +35,33 @@ including facts, decisions, projects and people.
 _Avoid_: raw archive, unquestionable truth, approval ledger.
 
 **Fact**: A source-grounded claim about the owner or their world, with its status
-and history; it can be corrected or superseded.
+and history; it can be corrected or superseded. A distilled fact is one
+self-contained sentence linked to its source, proposed until the owner approves it.
 _Avoid_: source, immutable truth, approval.
 
 **Decision**: A source-grounded choice whose status distinguishes a proposal
-from an owner-approved choice.
-_Avoid_: suggestion (for an approved choice), inferred authorization.
+from an owner-approved choice. A distilled decision is one self-contained
+sentence; inference does not approve it or supersede another item.
+_Avoid_: suggestion (for an approved choice), inferred authorization, automatic supersession.
 
-**Project**: An undertaking represented in the understanding layer, potentially
-associated with multiple sources.
-_Avoid_: area, permission, repository (as a universal synonym).
+**Project**: An owner-defined undertaking in the understanding layer, with a
+stable id. Sources and derived items may associate with several projects. A
+project is independent of area: the area controls access, the project says which
+undertaking the record belongs to.
+_Avoid_: area, permission, repository (as a universal synonym), the removed `project_context` tool.
+
+**Project profile**: The small owner-written description of one project: purpose,
+rules and pinned decisions in force. It is loaded whenever that project is selected.
+_Avoid_: area policy, inferred biography, raw archive.
+
+**Journal**: A replaceable weekly rollup of one project's distilled items. It
+names the project and the week and cites those items. It is not a decision, and
+it is not the deletion journal that holds tombstones.
+_Avoid_: source, owner approval, a claim that the week is complete, deletion tombstone.
+
+**Task pack**: A budgeted `search` result for one project and a task: the profile,
+relevant decisions in force and recent facts, preferring distilled items over raw sources.
+_Avoid_: a separate tool, an unfiltered recent dump, a generated answer.
 
 **Person**: Someone represented in the owner's context, with source-grounded
 attributes and relationships.
@@ -59,10 +76,10 @@ evolved, subject to owner hard delete.
 _Avoid_: current truth, undeletable archive.
 
 **Hard delete**: Owner-directed removal of a record and all its derived items,
-leaving only a deletion tombstone in the journal.
+leaving only a deletion tombstone in the deletion journal.
 _Avoid_: hide, archive, supersede, soft delete.
 
-**Tombstone**: A minimal journal marker saying "deleted by owner", without the
+**Tombstone**: A minimal deletion-journal marker saying "deleted by owner", without the
 deleted content or its derived knowledge.
 _Avoid_: retained copy, summary of deleted content, undo record.
 

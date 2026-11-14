@@ -1,0 +1,47 @@
+# Accepted synthetic cases for ADRs 0010–0012.
+# Fictional data only. Today's eval schema rejects these fields.
+# Do not pass this file to `context eval run` or `pnpm run eval:retrieval`
+# until the project-memory harness slice lands. Corpus layout: docs/evals.md.
+questions:
+  - id: october_on_project
+    question: What happened in October on the observatory project?
+    areas: [workshop]
+    read_areas: [workshop]
+    project: observatory
+    since: 2026-10-01T00:00:00Z
+    until: 2026-11-01T00:00:00Z
+    expected:
+      - substring: shipped the cobalt mirror mount
+    forbidden_substrings:
+      - renamed its index
+      - diff hunk discussion
+    tags: [project, month]
+  - id: pack_for_task
+    question: Add a shutter interlock to the dome
+    areas: [workshop]
+    read_areas: [workshop]
+    mode: pack
+    project: observatory
+    budget_bytes: 4096
+    expected:
+      - substring: Track the fictional observatory dome
+      - substring: shutter is confirmed closed
+      - substring: reports open or closed
+    forbidden_substrings:
+      - raw shutter wiring dump
+      - notebook project pins its index
+    tags: [project, pack]
+  - id: pack_budget
+    question: Add a shutter interlock to the dome
+    areas: [workshop]
+    read_areas: [workshop]
+    mode: pack
+    project: observatory
+    budget_bytes: 512
+    expected:
+      - substring: Track the fictional observatory dome
+    forbidden_substrings:
+      - shutter is confirmed closed
+      - raw shutter wiring dump
+    expect_truncated: true
+    tags: [project, pack, budget]

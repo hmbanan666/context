@@ -14,9 +14,12 @@ describe the current implementation and operational limits.
 
 Personal context is scattered across conversations, coding sessions and project
 records. Changing an AI client loses continuity; literal archive search misses
-meaning, and manual tagging, repeated login and per-record signing make memory
-cost more effort than it saves. The owner needs trustworthy answers grounded in
-preserved sources, with control over what each agent can read or change.
+meaning, and an area that holds many projects returns the wrong undertaking.
+Manual tagging, repeated login and per-record signing make memory cost more
+effort than it saves. The owner needs trustworthy answers grounded in preserved
+sources, with control over what each agent can read or change. An architect
+client is one such client: Context supplies its project memory and does not
+run the agent.
 
 ## Solution and users
 
@@ -63,14 +66,18 @@ are also possible through authorized agents via MCP.
    A routing decision uses my area policy, not an inferred topic as permission.
    Agents can perform the authorized decision through MCP before the full UI ships.
 8. As the owner, I want to hard delete a record, so that it and all derived items
-   disappear from retrieval, history and processing. The journal retains only a
-   "deleted by owner" tombstone, not the content or a summary of it.
+   disappear from retrieval, history and processing. The deletion journal retains
+   only a "deleted by owner" tombstone, not the content or a summary of it.
 9. As the owner, I want to inspect clients and revoke a client or token, so that
    it loses access without deleting my memory or affecting unrelated clients.
 10. As the owner, I want to restore from an off-host backup after losing the host,
     so that sources, provenance and access policy survive. Recovery validates the
     copy and requires no inference provider to read saved sources; it must account
     for subsequent owner deletions and revoked credentials before reopening access.
+11. As the owner, I want an architect client to ask what happened on one project
+    in a month, and to load a pack for a task, so that it receives that project's
+    profile, decisions in force and recent facts. Raw pull-request bodies from
+    other projects in the same area stay in the archive.
 
 ## Requirements and implementation decisions
 
@@ -113,15 +120,44 @@ are also possible through authorized agents via MCP.
   and status. Clients consult this understanding layer first, then raw evidence;
   before it is available they can retrieve originals and report that limitation.
 - Deduplicate derived knowledge without destroying distinct source provenance.
-  Superseding changes the current fact and retains older facts in history; it
-  never rewrites the raw source or promotes a proposal to owner approval.
+  Explicit superseding, through `remember` with `supersedes`, changes the current
+  fact and retains older facts in history. It never rewrites the raw source, and
+  a proposal does not become owner approval by inference. Automatic supersession
+  stays removed.
 - Hard delete removes the selected record and all derived items, including
   history, search representations and queued/cached processing outputs that could
-  recreate it. Leave only the minimal deletion tombstone in the journal. Define
+  recreate it. Leave only the minimal deletion tombstone in the deletion journal. Define
   backup retention and restore reconciliation before claiming complete deletion;
   an old copy must not silently reintroduce deleted content into active memory.
 - Begin ingestion with Grok Bot, Codex sessions and GitHub PR imports alongside
   agent MCP writes. A PR is source material, not a signed work-evidence workflow.
+
+### Projects and distilled memory
+
+Accepted in ADRs 0010–0012. Not implemented. Caps and call limits live in those
+ADRs so this spec does not keep a second copy.
+
+- A project is an understanding-layer entity with a stable id, independent of
+  area. Association comes from an owner repository→project mapping, from an
+  optional `project` field on `remember`, or from a processor proposal. Unknown
+  ids on `remember` are rejected. Proposals do not affect default retrieval
+  until the owner approves them. Association is not permission.
+- The configured processor distills a source revision into one proposed sentence
+  (`fact` or `decision`) with its project, date and source link. GitHub pull
+  requests remain archive evidence; the sentence states what was decided or
+  shipped. Nightly calls are batched and capped. Capture does not wait.
+- Supersession stays explicit: `remember` with `supersedes`. Distillation must
+  not write a supersedes link or set `approved`.
+- Each project has a small owner-written profile (purpose, rules, pinned
+  decisions in force) and a weekly journal built from distilled items. A missing
+  journal is not an empty week.
+- Period questions use `search` with `project` and dates. That search prefers
+  distilled items and journal entries and omits a raw source those items cite.
+- A task pack is `search` with `mode: "pack"`, a project, a task query and a
+  caller-supplied byte budget. It returns the profile, relevant decisions in
+  force and recent facts, then raw excerpts only for sources not already cited.
+  The server does not measure tokens. No fifth discovered tool is added.
+- The removed `project_context` tool is not restored.
 
 ### Search and processing
 
@@ -240,24 +276,33 @@ the stage 2 baseline, with citations and no cross-area disclosure. Report qualit
 regressions, latency and resource use. Embedding generation makes no paid API
 calls; exact source retrieval remains usable while its index rebuilds.
 
-### Stage 4 — Understanding, consolidation and nightly evals (planned)
+### Stage 4 — Understanding, consolidation and nightly evals (partially merged)
 
-Build facts, decisions, projects and people from saved sources through the
-pluggable processor. Add deduplication, superseding/history, hard delete with
-tombstones, daily inbox sorting and uncertain-item decisions via MCP. Automate
-nightly evaluation as well as the existing after-change runs.
+Deduplication, explicit supersession and history, guarded inbox sorting and
+nightly evaluation are already merged. Still to build: facts, decisions,
+projects and people through the pluggable processor, including the
+project-memory slices in the roadmap, plus hard delete with tombstones.
+Automatic supersession is not part of this stage. Uncertain inbox items still
+await an owner decision.
 
 Acceptance: answers start with derived knowledge and verify against accessible
 sources; evals show grounded benefit over the retrieval baseline. Changing or
 failing the processor leaves sources intact and retries safe. Demonstrate a
 supported compatible API path and local LLM option; mark any unavailable path
-unverified. A new fact supersedes the old current fact without losing history;
-proposals never become owner approval by inference. Daily sorting respects area
-policy and ambiguous items await owner decisions. Hard delete removes the record
-and derivations from reads, search, history and pending processing; only the
-tombstone remains. Test that restore reconciliation prevents silent resurrection,
-with an explicit backup-retention contract. Private and synthetic nightly evals
-report failures without exposing private questions or results publicly.
+unverified. Supersession is explicit through `remember` with `supersedes`;
+automatic supersession stays removed. Proposals never become owner approval by
+inference. A project-scoped month question returns that project's distilled
+sentences and does not return other projects' raw pull-request bodies inside
+the budget. A task pack returns the profile, relevant decisions in force and
+recent facts within the caller's byte budget. Public synthetic cases cover both;
+private questions stay private. Daily sorting respects area policy and ambiguous
+items await owner decisions. Hard delete removes the record and derivations from
+reads, search, history and pending processing; only the tombstone remains. Test
+that restore reconciliation prevents silent resurrection, with an explicit
+backup-retention contract. Private and synthetic nightly evals report failures
+without exposing private questions or results publicly. The project-memory
+slices in the roadmap are the remaining path to this acceptance; they are not
+met by the current deployment.
 
 ### Stage 5 — Owner UI and more imports (planned)
 
@@ -275,7 +320,9 @@ synthetic evidence and safe aggregate outcomes.
 Multi-tenancy, a general messenger, an agent launcher/orchestrator, task dispatch
 or deployment automation, signed work-evidence tracking, a separate identity
 platform, a graph visualization product, and paid embedding APIs are outside
-this direction. A public real-memory dataset is never a deliverable. The owner
+this direction. Context does not run or schedule the architect client. Restoring
+`project_context` and reintroducing automatic supersession are outside this
+direction. A public real-memory dataset is never a deliverable. The owner
 UI and optional paid processor API are in scope; they are not legacy exclusions.
 
 ## Further notes

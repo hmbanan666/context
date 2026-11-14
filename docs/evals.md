@@ -230,3 +230,62 @@ retrieval evaluation, not answer-generation grading or proof of HTTP OAuth,
 refresh/revocation, real-client inactivity, hosted performance or private quality.
 Those remain separate acceptance checks. Concurrent capture changes the live
 corpus, so record corpus changes when interpreting history deltas.
+
+## Project memory cases
+
+ADRs 0010–0012 accept three public questions for two journeys the current
+harness does not score.
+`context eval run` and `pnpm run eval:retrieval` read
+[`example.yaml`](../fixtures/evals/example.yaml) only. The question schema is a
+strict object, so the fields below are rejected today. The accepted questions
+live in [`project-memory.yaml`](../fixtures/evals/project-memory.yaml). Do not
+point the current CLI or CI at that file. A later slice extends the harness,
+then CI runs the file. Private questions, including any real "what happened in
+October on project X" query, stay outside Git.
+
+Today's harness calls `context_package` with the question, area, k and a 64 KiB
+budget. It does not pass a project, dates, pack mode or a caller byte budget,
+and it has no forbidden-substring check. Substring matching against source or
+knowledge excerpts stays as defined above once the harness grows.
+
+The fictional corpus uses area `workshop` and projects `observatory` and
+`notebook`. The October slice is three records in that area:
+
+| Record | Project | What retrieval may return |
+| --- | --- | --- |
+| Distilled fact | observatory | `In October 2026 the observatory project shipped the cobalt mirror mount.` It cites the observatory pull request. |
+| Observatory pull request | observatory | Archive body containing the distinctive phrase `diff hunk discussion`. Project search and a pack that already cites this source omit the body. |
+| Distilled fact | notebook | `In October 2026 the notebook project renamed its index.` |
+
+The loaded observatory profile section is purpose, then rules, then the text of
+pinned decisions, 1400 bytes in all. The purpose `Track the fictional
+observatory dome.` is inside the first 200 bytes. The pinned decision sentence
+`Dome motors stay disabled until the shutter is confirmed closed.` begins after
+byte 512. A recent approved fact says `The shutter sensor reports open or
+closed.` and cites a long source whose excerpt contains `raw shutter wiring
+dump`. A notebook decision says `The notebook project pins its index.` Those
+pack records are dated outside October 2026, so they stay out of the month
+question.
+
+| Field | Accepted meaning |
+| --- | --- |
+| `project` | Project id. Required for these cases. |
+| `since`, `until` | Inclusive / exclusive ISO timestamps, passed through to search. |
+| `mode` | `pack` selects task-pack retrieval. Omitted means evidence search. |
+| `budget_bytes` | Caller byte budget for pack mode. |
+| `forbidden_substrings` | Literal case-sensitive phrases that must not appear in the returned package. |
+| `expect_truncated` | The run must report truncation. |
+
+`october_on_project` asks what happened in October on the observatory project,
+with `since` `2026-10-01T00:00:00Z` and `until` `2026-11-01T00:00:00Z`. The hit
+is the observatory distilled sentence. `renamed its index` and
+`diff hunk discussion` are forbidden.
+
+`pack_for_task` asks `Add a shutter interlock to the dome` with
+`budget_bytes: 4096`. The purpose, the pinned shutter decision and the sensor
+fact are required. `raw shutter wiring dump` and `notebook project pins its
+index` are forbidden.
+
+`pack_budget` uses the same task and project with `budget_bytes: 512`. The
+purpose is required, truncation is required, and the pinned decision sentence
+and `raw shutter wiring dump` are forbidden.
