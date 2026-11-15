@@ -287,6 +287,12 @@ export function readJournalCitations(
 
 /** A dated project search keeps this much of a journal card. */
 export const datedJournalExcerpt = 480;
+/**
+ * When every overlapping week does not fit at {@link datedJournalExcerpt},
+ * dated search shortens each card to the same cap and stops here while the
+ * month still fits. The cut stays on a sentence boundary.
+ */
+export const datedJournalExcerptFloor = 200;
 /** An undated project search keeps a shorter journal card. */
 export const undatedJournalExcerpt = 240;
 

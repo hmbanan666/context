@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type { SemanticHits } from "./embedding-index.js";
 import {
   datedJournalExcerpt,
+  datedJournalExcerptFloor,
   journalExcerpt,
   undatedJournalExcerpt,
 } from "./journal.js";
@@ -144,6 +145,54 @@ function itemCard(
     ...(citedIds?.length ? { citedIds: [...citedIds] } : {}),
   };
 }
+// Worst-case coverage strings reserved before a bundle is accepted, so adding
+// a reason later cannot push the package over maxBytes.
+const budgetReasonList = [
+  "candidate_limit",
+  "knowledge_limited_to_source_candidates",
+  "invalid_provenance",
+  "outside_period",
+  "entry_limit",
+  "byte_limit",
+  "relation_limit",
+  "embeddings_pending",
+  "embeddings_unavailable",
+  "vector_scan_limit",
+] as const;
+
+function budgetReasons(journalsTruncated: boolean): string[] {
+  return journalsTruncated
+    ? [...budgetReasonList, "journals_truncated"]
+    : [...budgetReasonList];
+}
+
+/**
+ * Largest shared excerpt cap at which every reserved journal still fits.
+ * Full cards win. Otherwise the cap stays at or above the floor when that
+ * still fits, and only then drops further so a week is not replaced by a
+ * later shorter row.
+ */
+function chooseDatedJournalMaximum(
+  fits: (maximum: number, journalsTruncated: boolean) => boolean,
+): number {
+  if (fits(datedJournalExcerpt, false)) return datedJournalExcerpt;
+  const search = (low: number, high: number) => {
+    let best = -1;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      if (fits(mid, true)) {
+        best = mid;
+        low = mid + 1;
+      } else high = mid - 1;
+    }
+    return best;
+  };
+  const aboveFloor = search(datedJournalExcerptFloor, datedJournalExcerpt - 1);
+  if (aboveFloor !== -1) return aboveFloor;
+  const belowFloor = search(1, datedJournalExcerptFloor - 1);
+  return belowFloor === -1 ? datedJournalExcerptFloor : belowFloor;
+}
+
 function relationCard(r: KnowledgeRelation) {
   return {
     id: r.id,
@@ -286,6 +335,23 @@ export function buildContextPackage(
     linked("knowledge", item.id);
   // Sources cited by a distilled item that was actually returned.
   const citedSources = new Set<string>();
+  let journalMaximum = dated ? datedJournalExcerpt : undatedJournalExcerpt;
+  const knowledgeCard = (k: KnowledgeItem, maximum = journalMaximum) =>
+    itemCard(
+      k,
+      derived.matchOffsets.get(k.id),
+      state.superseded.get(k.id),
+      projectId !== undefined && leadingKind(k.kind)
+        ? k.sourceRefs.map((ref) => {
+            const url = material(ref.sourceId)?.metadata.sourceUri;
+            return url ? { id: ref.sourceId, url } : { id: ref.sourceId };
+          })
+        : undefined,
+      k.kind === "journal"
+        ? knowledge.journalCitations(k.id)?.citedIds
+        : undefined,
+      maximum,
+    );
   const add = (
     ms: Material[],
     ks: KnowledgeItem[] = [],
@@ -345,26 +411,7 @@ export function buildContextPackage(
           ),
         ),
       ],
-      items: [
-        ...result.items,
-        ...newItems.map((k) =>
-          itemCard(
-            k,
-            derived.matchOffsets.get(k.id),
-            state.superseded.get(k.id),
-            projectId !== undefined && leadingKind(k.kind)
-              ? k.sourceRefs.map((ref) => {
-                  const url = material(ref.sourceId)?.metadata.sourceUri;
-                  return url ? { id: ref.sourceId, url } : { id: ref.sourceId };
-                })
-              : undefined,
-            k.kind === "journal"
-              ? knowledge.journalCitations(k.id)?.citedIds
-              : undefined,
-            dated ? datedJournalExcerpt : undatedJournalExcerpt,
-          ),
-        ),
-      ],
+      items: [...result.items, ...newItems.map((k) => knowledgeCard(k))],
       relations: [...result.relations, ...rs.map(relationCard)],
     };
     // Reserve space for every bounded coverage reason before accepting a bundle.
@@ -373,18 +420,7 @@ export function buildContextPackage(
       truncated: true,
       coverage: {
         ...candidate.coverage,
-        reasons: [
-          "candidate_limit",
-          "knowledge_limited_to_source_candidates",
-          "invalid_provenance",
-          "outside_period",
-          "entry_limit",
-          "byte_limit",
-          "relation_limit",
-          "embeddings_pending",
-          "embeddings_unavailable",
-          "vector_scan_limit",
-        ],
+        reasons: budgetReasons(reasons.has("journals_truncated")),
       },
     };
     if (Buffer.byteLength(JSON.stringify(reserve), "utf8") > request.maxBytes) {
@@ -397,8 +433,8 @@ export function buildContextPackage(
   // Interleave the independently ranked lists; raw BM25 scores are not comparable across indexes.
   // Project search order is already applied: one hybrid list without dates.
   // With since or until, journals are chronological and uncapped, then
-  // decisions, then facts. A dated journal card stays at 480 characters.
-  // Raw sources follow those rows.
+  // decisions, then facts. Dated journals are reserved first and shortened
+  // together when the full cards do not fit. Raw sources follow those rows.
   const candidates: Array<{
     source?: Material;
     item?: KnowledgeItem;
@@ -446,10 +482,65 @@ export function buildContextPackage(
       state.superseded.has(c.source?.source.id ?? c.item?.id ?? "") ||
         !!c.item?.sourceRefs.some((r) => state.superseded.has(r.sourceId)),
     );
-  for (const candidate of candidates.sort(
+  const ordered = candidates.sort(
     (a, b) =>
       historical(a) - historical(b) || a.tier - b.tier || a.rank - b.rank,
-  )) {
+  );
+  const placedJournals = new Set<string>();
+  // A dated journal that does not fit must not leave its bytes to a later
+  // shorter decision, fact, or week.
+  let holdForJournals = false;
+  if (dated && projectId !== undefined && request.mode === "search") {
+    const leading: { item: KnowledgeItem; refs: Material[] }[] = [];
+    for (const candidate of ordered) {
+      const item = candidate.item;
+      if (!item || item.kind !== "journal") break;
+      if (!validItem(item)) continue;
+      const refs = references(item.sourceRefs, false);
+      if (!refs) continue;
+      leading.push({ item, refs });
+    }
+    const reserved = leading.slice(0, request.limit);
+    if (reserved.length > 0) {
+      const fits = (maximum: number, journalsTruncated: boolean) => {
+        const probe = {
+          ...result,
+          items: [
+            ...result.items,
+            ...reserved.map(({ item }) => knowledgeCard(item, maximum)),
+          ],
+          truncated: true,
+          coverage: {
+            ...result.coverage,
+            reasons: budgetReasons(journalsTruncated),
+          },
+        };
+        return (
+          Buffer.byteLength(JSON.stringify(probe), "utf8") <= request.maxBytes
+        );
+      };
+      const maximum = chooseDatedJournalMaximum(fits);
+      journalMaximum = maximum;
+      const shortened = reserved.some(({ item }) => {
+        const full = journalExcerpt(item.text, datedJournalExcerpt).text;
+        return journalExcerpt(item.text, maximum).text.length < full.length;
+      });
+      if (shortened) reasons.add("journals_truncated");
+      for (const { item, refs } of reserved) {
+        if (!add([], [item])) {
+          holdForJournals = true;
+          break;
+        }
+        placedJournals.add(item.id);
+        for (const source of refs) citedSources.add(source.source.id);
+      }
+      if (reserved.some(({ item }) => !placedJournals.has(item.id)))
+        holdForJournals = true;
+    }
+  }
+  for (const candidate of ordered) {
+    if (holdForJournals) break;
+    if (candidate.item && placedJournals.has(candidate.item.id)) continue;
     if (candidate.source) {
       if (citedSources.has(candidate.source.source.id)) continue;
       if (eligible(candidate.source)) add([candidate.source]);
@@ -488,7 +579,7 @@ export function buildContextPackage(
       ...endpointItems.flatMap((k) => k.sourceRefs),
       ...link.sourceRefs,
     ]);
-    if (refs && endpointSources.every(eligible))
+    if (refs && endpointSources.every(eligible) && !holdForJournals)
       add([...refs, ...endpointSources], endpointItems, [link]);
   }
   result.sources.sort(

@@ -38,11 +38,12 @@ that list. Raw sources cited by a returned item stay omitted.
 **Dates.** When `since` or `until` is set, every weekly journal whose ISO week
 overlaps `[since, until)` comes first, oldest week first. The two-journal cap
 and the 240-character journal card apply only when both dates are omitted. A
-week that starts before `since` and ends after it is included. Decisions, then
-facts, follow. In-window decision and fact rows that share no words with the
-query are still candidates, and a lexical or semantic match still ranks ahead
-of the other rows of that kind. Period questions keep using dates, not pack
-mode.
+week that starts before `since` and ends after it is included. Those journals
+are reserved together before any decision or fact. Decisions, then facts,
+follow, and only in the bytes those weeks left over. In-window decision and
+fact rows that share no words with the query are still candidates, and a
+lexical or semantic match still ranks ahead of the other rows of that kind.
+Period questions keep using dates, not pack mode.
 
 **Concepts.** `expandQueryTerms` returns each synonym with the query-word
 indexes it came from. A phrase covers every word in the match. When the query
@@ -59,7 +60,12 @@ token, and the pack then drops a row below half the top hybrid score. The
 floor does not empty a short query.
 
 **Excerpts.** An undated journal card is at most 240 characters, still cut on
-a sentence boundary when one fits. A dated journal card stays at most 480.
+a sentence boundary when one fits. A dated journal card is at most 480.
+When the overlapping weeks do not all fit at that size, each card is shortened
+by the same cap, still on a sentence boundary, and not below about 200
+characters, before a decision or fact is added. Coverage then includes
+`journals_truncated`. A later shorter row does not take the bytes of a week
+that was left out. A month of up to six weeks fits in the default 8192 bytes.
 Decision and fact excerpts are unchanged.
 
 **Eval.** A question may set `expected_any`, a list of acceptable ids. The
@@ -73,7 +79,8 @@ with `expected_any` counting as one.
 
 Undated project search no longer spends the budget on every matching journal
 before the decision or fact the query actually covers. A dated overview lists
-every overlapping week, oldest first, then decisions and facts. Callers still
-convert a token budget to bytes.
+every overlapping week, oldest first, then decisions and facts. When the full
+journal cards do not fit, they are shortened together instead of dropping the
+last week. Callers still convert a token budget to bytes.
 Omitting `project` leaves area-wide search unchanged apart from the shared
 concept score. Private questions stay private (ADR 0006).

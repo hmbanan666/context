@@ -162,7 +162,11 @@ one hybrid list and keeps at most two journals (ADR 0016). A journal card is
 then at most 240 characters. With a date bound, every weekly journal whose
 week overlaps the window comes first, oldest week first and without that cap,
 then decisions, then facts, even when the query does not match them, ahead of
-uncited raw sources. A journal card stays up to 480 characters.
+uncited raw sources. A journal card stays up to 480 characters. When those
+cards do not all fit, each overlapping journal is shortened by the same cap
+on a sentence boundary, down to about 200 characters, and coverage reports
+`journals_truncated`. Decisions and facts use only the remaining bytes. A
+month of up to six weeks fits in the default 8192 bytes.
 Slice 4e records owner approval in `knowledge_reviews`
 and, for a suggested project name, creates or links the project. Approval
 does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012, amended by ADR 0013 and ADR 0015):
