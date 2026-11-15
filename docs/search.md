@@ -55,9 +55,11 @@ when the project has no entry for that stem. Expanded synonyms use FTS weight
 score adds one for each query word matched by that word or by a synonym of it.
 Two synonyms of one word count once. An exact original word only breaks ties.
 A query that matches no glossary entry keeps reciprocal-rank fusion, so a
-vector hit can still outrank one lexical token. In a pack, a row that
-matches neither the caller's own words nor two query concepts is omitted once a
-two-concept hit exists. The embedding string is not expanded.
+vector hit can still outrank one lexical token. In a pack, a row more than
+one concept below the best coverage, or below half the query concepts, is
+omitted when a stronger row exists. Without a glossary hit, a row below half
+the top hybrid score is omitted. A short query is not emptied. The embedding
+string is not expanded.
 Timeline is not expanded.
 
 Phrases the previous one-token check rejected are set again, with the phrase
@@ -336,9 +338,10 @@ stores proposed facts and decisions (ADR 0011). Area-wide search still omits
 those sentences, and `timeline` stays a source list. With a project id and no
 dates, search ranks that project's journals, decisions and facts as one hybrid
 list and returns at most two journals. A journal card is then at most 240
-characters. With `since` or `until`, journals, then decisions, then facts in
-that window come first, including rows the query does not match, and a journal
-card stays up to 480 characters. Each item is labelled with its
+characters. With `since` or `until`, every weekly journal whose week
+overlaps that window comes first, oldest week first and without the
+two-journal cap, then decisions, then facts, including rows the query does not
+match, and a journal card stays up to 480 characters. Each item is labelled with its
 stored status, `proposed` or `approved`, and carries the source id and URL. A
 raw source cited by a returned item is omitted. `budgetBytes` (2048–65536)
 overrides the 8192-byte package budget. Journal paragraphs are the week's
@@ -352,9 +355,11 @@ not. `search` with `mode: "pack"` returns one task pack for a project and a
 task query (ADR 0013, amended by ADR 0015). Decisions and facts, proposed and
 approved, are ranked by that project's hybrid search. An approved row is
 boosted by 1.25. Recency breaks ties. Superseded and rejected rows stay out,
-and a row with no hybrid hit is not added to fill the budget. When a
-two-concept glossary hit exists, a row that matches neither the caller's words
-nor two concepts is left out. The rendered profile is at most 20% of
+and a row with no hybrid hit is not added to fill the budget. When the query
+hits the glossary, a row more than one concept below the best coverage, or
+below half the query concepts, is left out if a stronger row exists. Otherwise
+a row below half the top hybrid score is left out. A short query is not
+emptied. The rendered profile is at most 20% of
 `budgetBytes` (purpose, rules, pinned sentences that fit, then a trimmed
 project glossary). The stored profile is what `read` returns for
 `profile:<id>`. About 25% of `budgetBytes` is held for at most two raw sources

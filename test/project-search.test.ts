@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 import { buildContextPackage } from "../src/context-package.js";
 import { evaluate } from "../src/eval-runner.js";
+import { isoWeek } from "../src/journal.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
@@ -610,6 +611,167 @@ test("undated search keeps a full-query fact in the top 3 and period recall stay
     assert.ok(factIndex > firstDecision);
     const periodJournal = period.items.find((item) => item.kind === "journal");
     assert.ok((periodJournal?.excerpt.text.length ?? 0) > 240);
+  } finally {
+    knowledge.close();
+    sources.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a dated search keeps every week that overlaps the month, oldest first", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-period-overlap-"));
+  const path = join(directory, "context.db");
+  const sources = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  const area = "lab";
+  const zone = "Europe/Berlin";
+  const since = "2026-10-01T00:00:00.000Z";
+  const until = "2026-11-01T00:00:00.000Z";
+  try {
+    sources.createProject({
+      id: "expi",
+      name: "Expi",
+      homeArea: area,
+    });
+    const sentence = (token: string, lantern: boolean) => {
+      const lead = lantern
+        ? `The fictional lantern ${token} note records one synthetic hall check.`
+        : `The fictional ${token} note records one synthetic hall check.`;
+      return `${lead} ${"Keep the cobalt lamp steady. ".repeat(8)}`.trim();
+    };
+    const stamps = [
+      {
+        at: "2026-09-20T10:00:00.000Z",
+        token: "septemberonly",
+        inRange: false,
+      },
+      {
+        at: "2026-09-30T10:00:00.000Z",
+        token: "boundaryshutter",
+        inRange: true,
+      },
+      { at: "2026-10-07T10:00:00.000Z", token: "weekfortyone", inRange: true },
+      { at: "2026-10-14T10:00:00.000Z", token: "weekfortytwo", inRange: true },
+      {
+        at: "2026-10-21T10:00:00.000Z",
+        token: "weekfortythree",
+        inRange: true,
+      },
+      { at: "2026-10-28T11:00:00.000Z", token: "weekfortyfour", inRange: true },
+      { at: "2026-11-04T11:00:00.000Z", token: "novemberonly", inRange: false },
+    ];
+    stamps.forEach((stamp, index) => {
+      const text = sentence(stamp.token, stamp.inRange && index !== 1);
+      const source = sources.captureMaterial(
+        {
+          version: 1,
+          scope: area,
+          origin: "synthetic:period-overlap",
+          idempotencyKey: `overlap-${index}`,
+          text,
+          metadata: { createdAt: stamp.at },
+        },
+        undefined,
+        ["expi"],
+      ).material.source;
+      knowledge.addDistilled({
+        scope: area,
+        sourceId: source.id,
+        kind: "decision",
+        text,
+        createdAt: stamp.at,
+      });
+    });
+    knowledge.refreshJournals({
+      areas: [area],
+      now: new Date("2026-11-15T12:00:00.000Z"),
+      timeZone: zone,
+      dryRun: false,
+      backfillLimit: 24,
+    });
+    const expectedWeeks = stamps
+      .filter((stamp) => stamp.inRange)
+      .map((stamp) => isoWeek(new Date(stamp.at), zone).id);
+    assert.deepEqual(
+      expectedWeeks[0],
+      isoWeek(new Date("2026-09-28T12:00:00+02:00"), zone).id,
+    );
+    const search = (question: string, maxBytes = 8192) =>
+      buildContextPackage(
+        sources,
+        knowledge,
+        {
+          version: 1,
+          scope: area,
+          question,
+          from: since,
+          until,
+          limit: 20,
+          maxBytes,
+        },
+        undefined,
+        "expi",
+      );
+    const period = search("что делали в октябре");
+    const weeks = period.items
+      .filter((item) => item.kind === "journal")
+      .map((item) => item.excerpt.text.match(/2026-W\d{2}/u)?.[0]);
+    assert.deepEqual(
+      weeks,
+      expectedWeeks,
+      period.items.map((item) => item.excerpt.text.slice(0, 80)).join("\n"),
+    );
+    assert.ok(weeks.length > 2);
+    const kinds = period.items.map((item) => item.kind);
+    const lastJournal = kinds.lastIndexOf("journal");
+    const firstDecision = kinds.indexOf("decision");
+    assert.ok(firstDecision > lastJournal);
+    assert.equal(
+      period.items.some(
+        (item) =>
+          item.kind === "decision" &&
+          item.excerpt.text.includes("boundaryshutter"),
+      ),
+      false,
+    );
+    const boundary = period.items.find(
+      (item) =>
+        item.kind === "journal" &&
+        item.excerpt.text.includes("boundaryshutter"),
+    );
+    assert.ok((boundary?.excerpt.text.length ?? 0) > 240);
+    assert.ok((boundary?.excerpt.text.length ?? 0) <= 480);
+    assert.equal(
+      period.items.some((item) => item.excerpt.text.includes("septemberonly")),
+      false,
+    );
+    assert.equal(
+      period.items.some((item) => item.excerpt.text.includes("novemberonly")),
+      false,
+    );
+    const matched = search("lantern", 65536);
+    const matchedWeeks = matched.items
+      .filter((item) => item.kind === "journal")
+      .map((item) => item.excerpt.text.match(/2026-W\d{2}/u)?.[0]);
+    assert.deepEqual(matchedWeeks, expectedWeeks);
+    const undated = buildContextPackage(
+      sources,
+      knowledge,
+      {
+        version: 1,
+        scope: area,
+        question: "lantern",
+        limit: 10,
+        maxBytes: 8192,
+      },
+      undefined,
+      "expi",
+    );
+    const undatedJournals = undated.items.filter(
+      (item) => item.kind === "journal",
+    );
+    assert.equal(undatedJournals.length, 2);
+    assert.ok(undatedJournals.every((item) => item.excerpt.text.length <= 240));
   } finally {
     knowledge.close();
     sources.close();

@@ -205,17 +205,39 @@ export function renderPackProfile(
   };
 }
 
-/** Drop single-concept and vector-only rows once a two-concept hit exists. */
-export function packFloor<T extends { id: string }>(
+/**
+ * When the query hit the glossary, drop a row more than one concept below the
+ * best coverage, or below half the query concepts, if a stronger row exists.
+ * An original token does not keep a one-concept neighbour of a three-word
+ * query. Without glossary coverage, drop a row below half the top hybrid
+ * score. A short query that cannot clear the bar keeps its best rows.
+ */
+export function packFloor<T extends { id: string; status?: string }>(
   items: readonly T[],
   hits: ReadonlyMap<string, TermHit>,
+  input: {
+    scores: ReadonlyMap<string, number>;
+    queryConcepts: number;
+    glossary: boolean;
+  },
 ): T[] {
-  const multi = items.some((item) => (hits.get(item.id)?.concepts ?? 0) >= 2);
-  if (!multi) return [...items];
-  return items.filter((item) => {
-    const hit = hits.get(item.id);
-    return !!hit && (hit.original || hit.concepts >= 2);
-  });
+  if (items.length <= 1) return [...items];
+  const conceptsOf = (id: string) => hits.get(id)?.concepts ?? 0;
+  const maxCoverage = Math.max(...items.map((item) => conceptsOf(item.id)));
+  if (input.glossary && maxCoverage > 0 && input.queryConcepts > 0) {
+    const kept = items.filter((item) => {
+      const concepts = conceptsOf(item.id);
+      return concepts >= maxCoverage - 1 && concepts * 2 >= input.queryConcepts;
+    });
+    if (kept.length > 0) return kept;
+    return items.filter((item) => conceptsOf(item.id) === maxCoverage);
+  }
+  const relevance = (item: T) =>
+    packRelevance(input.scores.get(item.id) ?? 0, item.status);
+  const top = Math.max(...items.map(relevance));
+  if (!(top > 0)) return [...items];
+  const kept = items.filter((item) => relevance(item) * 2 >= top);
+  return kept.length > 0 ? kept : [...items];
 }
 
 function packHeader(flags: Flags): string {
@@ -481,7 +503,11 @@ export function buildTaskPack(
     ),
     memory.scores,
   );
-  const ranked = packFloor(beforeFloor, memory.termHits);
+  const ranked = packFloor(beforeFloor, memory.termHits, {
+    scores: memory.scores,
+    queryConcepts: terms.length,
+    glossary: expansion.length > 0,
+  });
   const dropped = new Set(
     beforeFloor
       .filter((item) => !ranked.some((kept) => kept.id === item.id))

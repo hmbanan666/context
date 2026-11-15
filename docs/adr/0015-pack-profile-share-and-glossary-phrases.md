@@ -67,4 +67,6 @@ matrix pack. Private questions stay private (ADR 0006).
 
 Amended by [ADR 0016](0016-merged-hybrid-rank.md): a glossary concept in the
 floor is a query word matched by that word or by a synonym. Two synonyms of
-one word are still one concept.
+one word are still one concept. The pack drops a row more than one concept
+below the best coverage, or below half the query concepts, when a stronger row
+exists. An original token does not keep a one-concept neighbour.

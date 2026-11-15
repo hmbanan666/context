@@ -159,17 +159,20 @@ with its class (`timeout`, `rate_limit`, `nonzero_exit`, `parse`,
 non-zero exit are retried within the call cap. One such failure does not mark
 the run `unavailable`. Search with a project id and no dates ranks journals, decisions and facts as
 one hybrid list and keeps at most two journals (ADR 0016). A journal card is
-then at most 240 characters. With a date bound, journals, then decisions, then
-facts in that window come first even when the query does not match them, ahead
-of uncited raw sources, and a journal card stays up to 480 characters.
+then at most 240 characters. With a date bound, every weekly journal whose
+week overlaps the window comes first, oldest week first and without that cap,
+then decisions, then facts, even when the query does not match them, ahead of
+uncited raw sources. A journal card stays up to 480 characters.
 Slice 4e records owner approval in `knowledge_reviews`
 and, for a suggested project name, creates or links the project. Approval
 does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012, amended by ADR 0013 and ADR 0015):
 one budgeted pack with the profile, then decisions and facts ranked by the
 task, including proposed decisions labelled `proposed`. The rendered profile
 is at most a fifth of the budget; `read` of `profile:<id>` returns the stored
-profile. Rows the query does not match are left out, and a one-concept
-glossary neighbour is left out once a two-concept hit exists. A raw source
+profile. Rows the query does not match are left out. When the query hits the glossary,
+a row more than one concept below the best coverage, or below half the query
+concepts, is left out if a stronger row exists. Otherwise a row below half the
+top hybrid score is left out. A short query is not emptied. A raw source
 cited by an included decision or fact is omitted in favour of that item.
 About a quarter of the budget is held for at most two uncited raw sources,
 and a smaller share for at most two matching journals.

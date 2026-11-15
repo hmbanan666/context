@@ -35,21 +35,28 @@ most two journals; further journals are left out so a higher-scoring decision
 or fact can use the slot and the byte budget. Other knowledge kinds stay after
 that list. Raw sources cited by a returned item stay omitted.
 
-**Dates.** When `since` or `until` is set, the previous order is unchanged:
-journals, then decisions, then facts. In-window rows that share no words with
-the query are still candidates. A lexical or semantic match still ranks ahead
-of the other rows of the same kind. More than two journals may be returned.
-Period questions keep using dates, not pack mode.
+**Dates.** When `since` or `until` is set, every weekly journal whose ISO week
+overlaps `[since, until)` comes first, oldest week first. The two-journal cap
+and the 240-character journal card apply only when both dates are omitted. A
+week that starts before `since` and ends after it is included. Decisions, then
+facts, follow. In-window decision and fact rows that share no words with the
+query are still candidates, and a lexical or semantic match still ranks ahead
+of the other rows of that kind. Period questions keep using dates, not pack
+mode.
 
 **Concepts.** `expandQueryTerms` returns each synonym with the query-word
 indexes it came from. A phrase covers every word in the match. When the query
 expanded, the score adds the number of query words matched, by the word itself
 or by one of its synonyms, to the reciprocal-rank score. Two synonyms of one
 word count once. An exact original token adds only a tie-break smaller than
-one rank step. Pack ranking uses this same score. The floor still drops a row
-that matches neither the caller's own words nor two concepts once any row
-matches two. A query that matches no glossary entry keeps today's
-reciprocal-rank score, so a vector hit can still outrank one lexical token.
+one rank step. Pack ranking uses this same score. When that coverage is
+available, the pack drops a row more than one concept below the best row, or
+below half the query concepts, if a stronger row exists. A nightly-backup decision that matches one
+word of «улучшить ночную дистилляцию» is dropped once a row covers two. An
+original token does not keep it. A query that matches no glossary entry keeps
+today's reciprocal-rank score, so a vector hit can still outrank one lexical
+token, and the pack then drops a row below half the top hybrid score. The
+floor does not empty a short query.
 
 **Excerpts.** An undated journal card is at most 240 characters, still cut on
 a sentence boundary when one fits. A dated journal card stays at most 480.
@@ -65,7 +72,8 @@ with `expected_any` counting as one.
 ## Consequences
 
 Undated project search no longer spends the budget on every matching journal
-before the decision or fact the query actually covers. A dated overview still
-lists the window in kind order. Callers still convert a token budget to bytes.
+before the decision or fact the query actually covers. A dated overview lists
+every overlapping week, oldest first, then decisions and facts. Callers still
+convert a token budget to bytes.
 Omitting `project` leaves area-wide search unchanged apart from the shared
 concept score. Private questions stay private (ADR 0006).

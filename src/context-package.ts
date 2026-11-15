@@ -395,8 +395,10 @@ export function buildContextPackage(
     return true;
   };
   // Interleave the independently ranked lists; raw BM25 scores are not comparable across indexes.
-  // Project search order is already applied: one hybrid list without dates, kind
-  // order when since or until is set. Raw sources follow those rows.
+  // Project search order is already applied: one hybrid list without dates.
+  // With since or until, journals are chronological and uncapped, then
+  // decisions, then facts. A dated journal card stays at 480 characters.
+  // Raw sources follow those rows.
   const candidates: Array<{
     source?: Material;
     item?: KnowledgeItem;
