@@ -29,9 +29,10 @@ export type PackageSelection = Pick<
   expansion?: readonly ExpandedTerm[];
   projectId?: string;
 };
-// Small explicit question-word list. Glossary expansion happens after this.
+// Small explicit question-word list, including the RU prepositions с/со/к/ко.
+// Glossary expansion happens after this.
 const stop = new Set(
-  "a an the what which who why how did does do was were is are of in on at to for and or my me about happened suitable что какие какой как почему кто где когда это у я мои моих меня в на для и или о об по из происходило подходит подходят известно".split(
+  "a an the what which who why how did does do was were is are of in on at to for and or my me about happened suitable что какие какой как почему кто где когда это у я мои моих меня в на для и или о об по из с со к ко происходило подходит подходят известно".split(
     " ",
   ),
 );

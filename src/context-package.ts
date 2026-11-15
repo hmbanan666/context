@@ -1,6 +1,12 @@
 import type { z } from "zod";
 import type { SemanticHits } from "./embedding-index.js";
 import {
+  assessGrounding,
+  bestCosine,
+  bestQueryTermMatches,
+  type Grounding,
+} from "./grounding.js";
+import {
   datedJournalExcerpt,
   datedJournalExcerptFloor,
   journalExcerpt,
@@ -208,6 +214,8 @@ export interface ContextPackage {
   version: 1;
   scope: string;
   mode: "search" | "timeline";
+  /** Present on search. Absolute evidence, not rank. */
+  grounding?: Grounding;
   dateBasis: "source_created_at_else_captured_at";
   sources: ReturnType<typeof sourceCard>[];
   items: ReturnType<typeof itemCard>[];
@@ -258,6 +266,23 @@ export function buildContextPackage(
     { ...selection, ...(semantic ? { vectors: semantic.items } : {}) },
     original.materials.slice(0, 100).map((m) => m.source.id),
   );
+  const grounding =
+    request.mode === "search"
+      ? assessGrounding({
+          contentTerms: terms.length,
+          matchedTerms: Math.max(
+            original.queryTermMatches,
+            bestQueryTermMatches(
+              derived.items.map((item) => item.text),
+              terms,
+            ),
+          ),
+          cosine: Math.max(
+            bestCosine(semantic?.sources),
+            bestCosine(semantic?.items),
+          ),
+        })
+      : undefined;
   const state = knowledge.retrievalRelations(request.scope);
   let result: ContextPackage = {
     version: 1,
@@ -598,12 +623,15 @@ export function buildContextPackage(
   }
   result.coverage.reasons = [...reasons];
   result.truncated = reasons.size > 0;
+  // Outside the evidence budget: a few dozen bytes must not drop a card.
+  if (grounding) result.grounding = grounding;
   if (projectId === undefined) return result;
   // Serialise distilled items before raw excerpts for the caller.
   return {
     version: result.version,
     scope: result.scope,
     mode: result.mode,
+    ...(result.grounding ? { grounding: result.grounding } : {}),
     dateBasis: result.dateBasis,
     items: result.items,
     sources: result.sources,

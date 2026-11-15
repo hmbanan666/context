@@ -1,5 +1,11 @@
 import type { SemanticHits } from "./embedding-index.js";
 import { knowledgeExcerpt } from "./context-package.js";
+import {
+  assessGrounding,
+  bestCosine,
+  bestQueryTermMatches,
+  type Grounding,
+} from "./grounding.js";
 import type { GlossaryEntry } from "./glossary.js";
 import type { KnowledgeItem, KnowledgeStore } from "./knowledge.js";
 import type { Material } from "./materials.js";
@@ -58,6 +64,7 @@ export interface TaskPack {
   version: 1;
   scope: string;
   mode: "pack";
+  grounding: Grounding;
   project: string;
   header: string;
   items: PackItem[];
@@ -522,6 +529,19 @@ export function buildTaskPack(
   const reasons = [...new Set(input.semantic?.reasons ?? [])];
   if (memory.total > 100 || journals.total > 100 || found.total > 100)
     reasons.push("candidate_limit");
+  const grounding = assessGrounding({
+    contentTerms: terms.length,
+    matchedTerms: Math.max(
+      found.queryTermMatches,
+      memory.queryTermMatches,
+      journals.queryTermMatches,
+      bestQueryTermMatches(section ? [section] : [], terms),
+    ),
+    cosine: Math.max(
+      bestCosine(input.semantic?.sources),
+      bestCosine(input.semantic?.items),
+    ),
+  });
 
   const render = (
     flags: Flags,
@@ -533,6 +553,7 @@ export function buildTaskPack(
     version: 1,
     scope: input.scope,
     mode: "pack",
+    grounding,
     project: input.projectId,
     header: packHeader(flags),
     items,

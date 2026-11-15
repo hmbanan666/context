@@ -112,3 +112,10 @@ The client has to call `remember`, then `search`. A chat reply that never
 calls Context is not a save. `read` opens one result by id. `timeline` lists
 recent notes. Capture and search work with no LLM. To turn interpretation
 on, see [LLM providers](llm-providers.md).
+
+## Curated read-only instance
+
+A website assistant (cases, resume, specialist info) can use its own Context
+with the processor left off. Import a folder of markdown, issue a token with
+`--read` and no `--write`, and treat `search` `grounding: none` as "I don't
+know". The steps are in [Curated instance](curated-instance.md).

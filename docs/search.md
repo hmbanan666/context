@@ -18,6 +18,31 @@ A change to that rule rebuilds the derived source index once. `recall` retains e
 lookup, and `memory_context` retains literal keyword filtering and paged timelines.
 Neither requires model availability.
 
+## Grounding
+
+`search` adds `grounding`: `strong`, `weak`, or `none`. The value is absolute
+evidence, not the rank of the first card. A card can be first and still be
+`none`.
+
+Lexical evidence is the share of non-stopword query terms that occur in any
+candidate, exact or stemmed. Glossary synonyms do not count. At least half of
+those terms (`CONTEXT_GROUNDING_LEXICAL_STRONG`, default `0.5`) is `strong`.
+One or more, but below that share, is `weak`. None is `none`.
+
+Semantic evidence is the best cosine on normalized `multilingual-e5-small`
+vectors, when that model has indexed the area. The retrieval candidate floor
+stays 0.80. Grounding uses a higher bar: cosine `>= 0.84`
+(`CONTEXT_GROUNDING_COSINE_WEAK`) is `weak`, and `>= 0.92`
+(`CONTEXT_GROUNDING_COSINE_STRONG`) is `strong`. On the public curated
+fixture, off-topic neighbours stayed under 0.80 and on-topic cosine was at
+least 0.853, so 0.84 sits between them. A merely nearest passage stays
+`none`. The stronger of the lexical and semantic readings wins. With no
+embeddings, only the lexical reading is used. The field is not charged
+against the evidence byte budget.
+
+When `grounding` is `none`, the agent should say it does not know. Similarity
+and rank are not permission to answer from an unrelated page.
+
 ## Cross-lingual queries
 
 ADR 0014 keeps `Xenova/multilingual-e5-small` (q8 ONNX **118,308,185 bytes**,

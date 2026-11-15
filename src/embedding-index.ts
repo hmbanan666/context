@@ -16,6 +16,7 @@ import { visibleSourceText } from "./source-text.js";
 const MAX_CHUNKS = 50_000;
 // Calibrated on the private RU/EN corpus (see docs/search.md).
 // Lexical hits never depend on these model-specific bounds.
+// Candidate floor only. Answer grounding uses the higher thresholds in grounding.ts.
 const MIN_COSINE = 0.8;
 const MAX_VECTOR_CANDIDATES = 20;
 const LEASE_MS = 600_000;
@@ -467,7 +468,7 @@ export class EmbeddingIndex {
       (a, b) => b.score - a.score || a.id.localeCompare(b.id),
     );
     return {
-      hits: ranked.map(({ id, offset }) => ({ id, offset })),
+      hits: ranked.map(({ id, offset, score }) => ({ id, offset, score })),
       reasons: scanned === MAX_CHUNKS ? ["vector_scan_limit"] : [],
     };
   }

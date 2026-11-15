@@ -35,7 +35,12 @@ rights. Loopback no-auth mode is explicit and forbidden in production.
 ## Sources and retrieval
 
 `store.ts` stores sources, metadata, text-file bytes, checksums and retry identity
-transactionally. `redaction.ts` provides the shared deterministic filter for MCP,
+transactionally. `context import markdown` stores one source per markdown file
+(further pieces only when the text exceeds the 8192-character source limit),
+using the relative path as the import key, and queues embeddings without a
+processor. `search` reports `grounding` of `strong`, `weak` or `none` from
+term overlap and, when vectors exist, cosine. That field is not a rank.
+`redaction.ts` provides the shared deterministic filter for MCP,
 imports and collectors. All content/provenance strings are redacted before
 checksums, fingerprints, FTS or durable writes; decoded file bytes receive the
 same filter. Invalid redacted identities are rejected. Existing sources are not

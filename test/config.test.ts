@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vite-plus/test";
 import { readConfig } from "../src/config.js";
+import { defaultGroundingThresholds } from "../src/grounding.js";
 
 const oauth = {
   NODE_ENV: "production",
@@ -13,6 +14,7 @@ test("defaults to a persistent local database and validates configuration", () =
   assert.deepEqual(readConfig({}), {
     port: 3000,
     databasePath: "./data/context.db",
+    grounding: defaultGroundingThresholds,
   });
   assert.equal(readConfig({ NODE_ENV: "test", CONTEXT_PORT: "0" }).port, 0);
   for (const NODE_ENV of ["production", "staging", "preview"])

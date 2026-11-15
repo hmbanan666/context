@@ -31,6 +31,8 @@ export type SearchTable = "sources" | "knowledge_items";
 export interface VectorHit {
   id: string;
   offset: number;
+  /** Cosine on multilingual-e5-small. Omitted by callers that only have ids. */
+  score?: number;
 }
 export interface TermHit {
   original: boolean;
@@ -389,8 +391,13 @@ export function lexicalCandidates(
   // score stays RRF and a vector hit can still outrank one lexical token.
   // Exact surface form is only a tie-break, smaller than one rank step.
   const termHits = new Map<string, TermHit>();
+  // Query-term overlap ignores glossary synonyms and ignores rank.
+  let queryTermMatches = 0;
   for (const [id, score] of scores) {
-    const covered = conceptCoverage(texts.get(id) ?? "", terms, expansion);
+    const text = texts.get(id) ?? "";
+    const covered = conceptCoverage(text, terms, expansion);
+    const queryTerms = conceptCoverage(text, terms).concepts;
+    if (queryTerms > queryTermMatches) queryTermMatches = queryTerms;
     scores.set(
       id,
       score +
@@ -411,5 +418,6 @@ export function lexicalCandidates(
     matchOffsets: offsets,
     scores,
     termHits,
+    queryTermMatches,
   };
 }

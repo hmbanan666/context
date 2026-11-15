@@ -12,6 +12,39 @@ context import jsonl --source codex --area projects < /path/to/codex.jsonl
 context import jsonl --source grokbot --area personal < /path/to/grokbot.jsonl
 ```
 
+A folder of markdown is a separate command. It does not use JSONL and it does
+not call a processor. See [Curated instance](curated-instance.md) for the
+read-only website-assistant setup.
+
+```sh
+context import markdown /path/to/notes --area studio --project mira
+```
+
+The walk is recursive, `*.md` only, and does not follow symlinks or enter
+`node_modules` or dot-directories. One file is one source. The stable key is
+the relative path (`cases/lantern.md`). The title is front matter `title`,
+else the first heading, else the filename. Optional YAML front matter may
+also set `project`, `date` (`YYYY-MM-DD` or an ISO timestamp with a timezone),
+and `tags` (a string or a list). `--project` is the default; a front-matter
+`project` overrides it and must already exist. `--area` defaults to `inbox`
+when that area is configured, otherwise to the only configured area.
+
+Re-importing an unchanged file is `skipped`. A changed body, title, date,
+tags, area or project writes a new immutable revision and is `updated`. The
+first save is `added`. Stdout is JSONL, one object per stored source, then:
+
+```json
+{"type":"summary","added":1,"updated":0,"skipped":2,"rejected":0}
+```
+
+Exit `0` when nothing was rejected, `2` when a file was rejected and the
+others were saved, `1` on a fatal argument or IO error. A file over **8192**
+characters is split on a paragraph boundary into `path`, `path#2`, `path#3`,
+each within that existing source limit. A file over **256 KiB** or with
+invalid UTF-8 is rejected. Secret redaction runs before storage. Inserts
+queue embeddings the same way as other captures; this command does not load
+a model or an LLM.
+
 `context` is `node dist/scripts/context.js`. `--file -` and an omitted `--file`
 both read stdin. The existing `CONTEXT_DB_PATH` selects the database (production:
 `/app/data/context.db`); `CONTEXT_AREAS` defines valid areas (production:
