@@ -178,7 +178,11 @@ implemented and not deployed.
   weekly journal whose week overlaps that window comes first, oldest week
   first, with no two-journal cap, then decisions, then facts, including rows
   the query does not match. A match ranks ahead of the other decisions and
-  facts. A journal card stays up to 480 characters. Search omits a raw source cited by a
+  facts. A journal card stays up to 480 characters. When those cards do not all
+  fit, each overlapping journal is shortened by the same cap on a sentence
+  boundary, down to about 200 characters, coverage reports `journals_truncated`,
+  and only the remaining bytes go to decisions and facts. A month of up to six
+  weeks fits in the default 8192 bytes. Search omits a raw source cited by a
   returned item. Each distilled item keeps its stored status:
   `proposed`, or `approved` when a review says so. Optional `budgetBytes`
   (2048–65536) overrides the package budget; the default stays 8192. A missing

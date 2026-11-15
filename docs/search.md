@@ -341,7 +341,11 @@ list and returns at most two journals. A journal card is then at most 240
 characters. With `since` or `until`, every weekly journal whose week
 overlaps that window comes first, oldest week first and without the
 two-journal cap, then decisions, then facts, including rows the query does not
-match, and a journal card stays up to 480 characters. Each item is labelled with its
+match, and a journal card stays up to 480 characters. When those cards do not
+all fit, each overlapping journal is shortened by the same cap on a sentence
+boundary, down to about 200 characters, coverage reports `journals_truncated`,
+and only the remaining bytes go to decisions and facts. A month of up to six
+weeks fits in the default 8192 bytes. Each item is labelled with its
 stored status, `proposed` or `approved`, and carries the source id and URL. A
 raw source cited by a returned item is omitted. `budgetBytes` (2048–65536)
 overrides the 8192-byte package budget. Journal paragraphs are the week's

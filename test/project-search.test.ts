@@ -778,3 +778,247 @@ test("a dated search keeps every week that overlaps the month, oldest first", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+// Five and six full journal cards do not fit in the default 8192 bytes.
+// Shortening every card on the same sentence boundary keeps each week and
+// still leaves room for a later decision. A 2048-byte package that cannot
+// hold every week must not fill that hole with a decision.
+test("dated search keeps five and six long journals in a month at the default budget", async () => {
+  const zone = "UTC";
+  const cases = [
+    {
+      since: "2026-10-01T00:00:00.000Z",
+      until: "2026-11-01T00:00:00.000Z",
+      weeks: 5,
+      sentences: 6,
+      sentenceSize: 110,
+      url: true,
+      question: "что делали в октябре",
+    },
+    {
+      since: "2026-03-01T00:00:00.000Z",
+      until: "2026-04-01T00:00:00.000Z",
+      weeks: 6,
+      sentences: 5,
+      sentenceSize: 110,
+      url: false,
+      question: "что делали в марте",
+    },
+  ];
+  for (const [caseIndex, sample] of cases.entries()) {
+    const directory = await mkdtemp(join(tmpdir(), "context-month-journals-"));
+    const path = join(directory, "context.db");
+    const sources = new SourceStore(path);
+    const knowledge = new KnowledgeStore(path);
+    const area = "lab";
+    try {
+      sources.createProject({ id: "expi", name: "Expi", homeArea: area });
+      const anchors: string[] = [];
+      const seen = new Set<string>();
+      for (
+        let cursor = Date.parse(sample.since);
+        cursor < Date.parse(sample.until);
+        cursor += 86_400_000
+      ) {
+        const week = isoWeek(new Date(cursor), zone);
+        if (seen.has(week.id)) continue;
+        seen.add(week.id);
+        anchors.push(new Date(cursor).toISOString());
+      }
+      assert.equal(anchors.length, sample.weeks, anchors.join(","));
+      const sentence = (token: string, index: number) => {
+        const stem = `The fictional ${token} mark ${index} stayed steady`;
+        return `${`${stem}${" tonight".repeat(20)}`.slice(0, sample.sentenceSize - 1)}.`;
+      };
+      anchors.forEach((at, weekIndex) => {
+        const token = `week${String(weekIndex).padStart(2, "0")}`;
+        for (let index = 0; index < sample.sentences; index++) {
+          const text = sentence(token, index);
+          const source = sources.captureMaterial(
+            {
+              version: 1,
+              scope: area,
+              origin: "synthetic:month-journals",
+              idempotencyKey: `month-${caseIndex}-${weekIndex}-${index}`,
+              text,
+              metadata: {
+                createdAt: at,
+                ...(sample.url && index === 0
+                  ? { sourceUri: "https://e.test/a" }
+                  : {}),
+              },
+            },
+            undefined,
+            ["expi"],
+          ).material.source;
+          knowledge.addDistilled({
+            scope: area,
+            sourceId: source.id,
+            kind: "decision",
+            text,
+            createdAt: at,
+          });
+        }
+      });
+      const latest = new Date(Date.parse(sample.until) - 60_000).toISOString();
+      const short = "The expi project kept the smalllatch note.";
+      const shortSource = sources.captureMaterial(
+        {
+          version: 1,
+          scope: area,
+          origin: "synthetic:month-journals",
+          idempotencyKey: `month-${caseIndex}-smalllatch`,
+          text: short,
+          metadata: { createdAt: latest },
+        },
+        undefined,
+        ["expi"],
+      ).material.source;
+      knowledge.addDistilled({
+        scope: area,
+        sourceId: shortSource.id,
+        kind: "decision",
+        text: short,
+        createdAt: latest,
+      });
+      knowledge.refreshJournals({
+        areas: [area],
+        now: new Date("2026-11-15T12:00:00.000Z"),
+        timeZone: zone,
+        dryRun: false,
+        backfillLimit: 24,
+      });
+      const search = (maxBytes?: number) =>
+        buildContextPackage(
+          sources,
+          knowledge,
+          {
+            version: 1,
+            scope: area,
+            question: sample.question,
+            from: sample.since,
+            until: sample.until,
+            ...(maxBytes === undefined ? {} : { maxBytes }),
+          },
+          undefined,
+          "expi",
+        );
+      const period = search();
+      const journals = period.items.filter((item) => item.kind === "journal");
+      const weeks = journals.map(
+        (item) => item.excerpt.text.match(/2026-W\d{2}/u)?.[0],
+      );
+      const expectedWeeks = anchors.map((at) => isoWeek(new Date(at), zone).id);
+      assert.deepEqual(
+        weeks,
+        expectedWeeks,
+        JSON.stringify({
+          bytes: Buffer.byteLength(JSON.stringify(period), "utf8"),
+          reasons: period.coverage.reasons,
+          lengths: journals.map((item) => item.excerpt.text.length),
+          kinds: period.items.map((item) => item.kind),
+          heads: period.items.map((item) => item.excerpt.text.slice(0, 48)),
+        }),
+      );
+      assert.ok(Buffer.byteLength(JSON.stringify(period), "utf8") <= 8192);
+      assert.ok(
+        period.coverage.reasons.includes("journals_truncated"),
+        JSON.stringify({
+          bytes: Buffer.byteLength(JSON.stringify(period), "utf8"),
+          lengths: journals.map((item) => item.excerpt.text.length),
+          card: journals[0]
+            ? Buffer.byteLength(JSON.stringify(journals[0]), "utf8")
+            : 0,
+          reasons: period.coverage.reasons,
+          kinds: period.items.map((item) => item.kind),
+          decision: period.items
+            .filter((item) => item.kind === "decision")
+            .map((item) => Buffer.byteLength(JSON.stringify(item), "utf8")),
+        }),
+      );
+      assert.ok(
+        journals.every(
+          (item) =>
+            item.excerpt.text.length >= 200 &&
+            item.excerpt.text.length < 480 &&
+            /[.!?…。！？]$/u.test(item.excerpt.text),
+        ),
+        journals.map((item) => item.excerpt.text.length).join(","),
+      );
+      const kinds = period.items.map((item) => item.kind);
+      const lastJournal = kinds.lastIndexOf("journal");
+      const decisionAt = period.items.findIndex(
+        (item) =>
+          item.kind === "decision" && item.excerpt.text.includes("smalllatch"),
+      );
+      assert.ok(decisionAt > lastJournal, kinds.join(","));
+      assert.ok(
+        kinds.slice(0, journals.length).every((kind) => kind === "journal"),
+      );
+      const wide = search(65536);
+      assert.equal(wide.coverage.reasons.includes("journals_truncated"), false);
+      const wideJournals = wide.items.filter((item) => item.kind === "journal");
+      assert.deepEqual(
+        wideJournals.map(
+          (item) => item.excerpt.text.match(/2026-W\d{2}/u)?.[0],
+        ),
+        expectedWeeks,
+      );
+      assert.ok(
+        wideJournals.every(
+          (item) => item.excerpt.truncated && item.excerpt.text.length <= 480,
+        ),
+      );
+      assert.ok(
+        journals.every(
+          (item, index) =>
+            item.excerpt.text.length <
+            (wideJournals[index]?.excerpt.text.length ?? 0),
+        ),
+        journals.map((item) => item.excerpt.text.length).join(","),
+      );
+      const cramped = search(2048);
+      const crampedWeeks = cramped.items
+        .filter((item) => item.kind === "journal")
+        .map((item) => item.excerpt.text.match(/2026-W\d{2}/u)?.[0]);
+      assert.ok(crampedWeeks.length < expectedWeeks.length);
+      assert.deepEqual(
+        crampedWeeks,
+        expectedWeeks.slice(0, crampedWeeks.length),
+      );
+      assert.equal(
+        cramped.items.some((item) => item.kind !== "journal"),
+        false,
+      );
+      if (sample.weeks === 6) {
+        const undated = buildContextPackage(
+          sources,
+          knowledge,
+          {
+            version: 1,
+            scope: area,
+            question: "steady",
+            limit: 10,
+          },
+          undefined,
+          "expi",
+        );
+        const undatedJournals = undated.items.filter(
+          (item) => item.kind === "journal",
+        );
+        assert.equal(undatedJournals.length, 2);
+        assert.ok(
+          undatedJournals.every((item) => item.excerpt.text.length <= 240),
+        );
+        assert.equal(
+          undated.coverage.reasons.includes("journals_truncated"),
+          false,
+        );
+      }
+    } finally {
+      knowledge.close();
+      sources.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
