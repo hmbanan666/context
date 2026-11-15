@@ -71,7 +71,9 @@ test("explain text lists the grounding features", () => {
     query: "weather in Paris",
     area: "personal",
     grounding: "none",
+    rule: "none-lexical-share",
     cosine: 0,
+    cosineSource: "missing",
     background: 0,
     margin: 0,
     rareShare: 0,
@@ -88,7 +90,9 @@ test("explain text lists the grounding features", () => {
   };
   const text = formatExplain(row);
   assert.match(text, /grounding: none/);
+  assert.match(text, /rule: none-lexical-share/);
   assert.match(text, /cosine: 0/);
+  assert.match(text, /cosineSource: missing/);
   assert.match(text, /background: 0/);
   assert.match(text, /margin: 0/);
   assert.match(text, /rareShare: 0/);
@@ -96,7 +100,8 @@ test("explain text lists the grounding features", () => {
   assert.match(text, /commonDropped: weather, paris/);
   assert.match(text, /corpus: 41/);
   assert.match(text, /documentFrequency: weather=40 common, paris=40 common/);
-  assert.match(text, /marginWeak=0\.03/);
+  assert.match(text, /lexicalNone=0\.3/);
+  assert.match(text, /marginWeak=0\.024/);
   assert.match(text, /marginStrong=0\.08/);
   assert.match(text, /commonCorpus=40/);
   assert.match(text, /vectors: false/);
@@ -146,6 +151,8 @@ test("grounding explain prints a query and a file summary", async () => {
     assert.equal(hit.status, 0, hit.stderr);
     const body = JSON.parse(hit.stdout) as ExplainRow;
     assert.equal(body.grounding, "strong");
+    assert.equal(body.rule, "strong-lexical");
+    assert.equal(body.cosineSource, "missing");
     assert.equal(body.area, "personal");
     assert.equal(body.cosine, 0);
     assert.ok(body.rareShare >= 0.75);
@@ -159,13 +166,16 @@ test("grounding explain prints a query and a file summary", async () => {
     );
     assert.equal(body.margin, 0);
     assert.equal(body.background, 0);
-    assert.equal(body.thresholds.marginWeak, 0.03);
+    assert.equal(body.thresholds.lexicalNone, 0.3);
+    assert.equal(body.thresholds.marginWeak, 0.024);
     assert.equal(body.thresholds.marginStrong, 0.08);
     assert.equal(body.topHit?.id, saved.material.source.id);
     assert.equal(body.topHit?.title, "Cobalt lantern");
     const human = run(["grounding", "explain", "--query", "cobalt lantern"]);
     assert.equal(human.status, 0, human.stderr);
     assert.match(human.stdout, /grounding: strong/);
+    assert.match(human.stdout, /rule: strong-lexical/);
+    assert.match(human.stdout, /cosineSource: missing/);
     assert.match(human.stdout, /matchedRare: cobalt, lantern/);
     assert.match(human.stdout, /topHit: .+ Cobalt lantern/);
     const file = join(directory, "questions.yaml");

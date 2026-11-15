@@ -164,8 +164,13 @@ test("grounding uses passage co-occurrence and idf, not rank", () => {
     "strong",
   );
   assert.equal(readGroundingThresholds({}).lexicalOnlyStrong, 0.75);
+  assert.equal(readGroundingThresholds({}).lexicalNone, 0.3);
+  assert.equal(readGroundingThresholds({}).marginWeak, 0.024);
   assert.throws(() =>
     readGroundingThresholds({ CONTEXT_GROUNDING_MARGIN_WEAK: "1.2" }),
+  );
+  assert.throws(() =>
+    readGroundingThresholds({ CONTEXT_GROUNDING_LEXICAL_NONE: "-0.1" }),
   );
   assert.throws(() =>
     readGroundingThresholds({
@@ -221,6 +226,96 @@ function groundingFor(
     projectId,
   ).grounding;
 }
+
+test("a small rare share is none when the margin is below the weak floor", () => {
+  const four = ["rare", "other", "third", "fourth"];
+  const frequency = new Map(four.map((term) => [term, 0]));
+  const partial = explainStoredGrounding({
+    terms: four,
+    passages: [{ text: "rare only" }],
+    documents: 100,
+    documentFrequency: frequency,
+    vectorsAvailable: true,
+    backgroundCosine: 0,
+    thresholds,
+  });
+  assert.ok(partial.rareShare < thresholds.lexicalNone);
+  assert.ok(partial.matchedRare.includes("rare"));
+  assert.equal(partial.label, "none");
+  assert.equal(partial.rule, "none-low-share-low-margin");
+  assert.equal(partial.cosineSource, "missing");
+  assert.equal(partial.margin, 0);
+  const lifted = explainStoredGrounding({
+    terms: four,
+    passages: [
+      {
+        text: "rare only",
+        vectors: [{ offset: 0, score: thresholds.marginWeak }],
+      },
+    ],
+    documents: 100,
+    documentFrequency: frequency,
+    vectorsAvailable: true,
+    backgroundCosine: 0,
+    thresholds,
+  });
+  assert.equal(lifted.margin, thresholds.marginWeak);
+  assert.equal(lifted.label, "weak");
+  assert.equal(lifted.rule, "weak-rare");
+  assert.equal(lifted.cosineSource, "vector");
+  const shared = explainStoredGrounding({
+    terms: ["rare", "other"],
+    passages: [{ text: "rare only" }],
+    documents: 100,
+    documentFrequency: new Map([
+      ["rare", 0],
+      ["other", 0],
+    ]),
+    vectorsAvailable: true,
+    backgroundCosine: 0.8,
+    thresholds,
+  });
+  assert.ok(shared.rareShare >= thresholds.lexicalNone);
+  assert.ok(shared.margin < thresholds.marginWeak);
+  assert.equal(shared.label, "weak");
+  assert.equal(shared.rule, "weak-rare");
+  assert.equal(shared.cosineSource, "missing");
+  const lexical = explainStoredGrounding({
+    terms: four,
+    passages: [{ text: "rare only" }],
+    documents: 100,
+    documentFrequency: frequency,
+    vectorsAvailable: false,
+    thresholds,
+  });
+  assert.equal(lexical.label, "none");
+  assert.equal(lexical.rule, "none-lexical-share");
+  assert.equal(lexical.cosineSource, "missing");
+  const lexicalStrong = explainStoredGrounding({
+    terms: ["rare", "other"],
+    passages: [{ text: "rare other" }],
+    documents: 100,
+    documentFrequency: new Map([
+      ["rare", 0],
+      ["other", 0],
+    ]),
+    vectorsAvailable: false,
+    thresholds,
+  });
+  assert.equal(lexicalStrong.label, "strong");
+  assert.equal(lexicalStrong.rule, "strong-lexical");
+  const noFloor = explainStoredGrounding({
+    terms: four,
+    passages: [{ text: "rare only" }],
+    documents: 100,
+    documentFrequency: frequency,
+    vectorsAvailable: true,
+    backgroundCosine: 0,
+    thresholds: { ...thresholds, lexicalNone: 0 },
+  });
+  assert.equal(noFloor.label, "weak");
+  assert.equal(noFloor.rule, "weak-rare");
+});
 
 test("common words in a large area are not strong evidence", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-grounding-common-"));
@@ -508,6 +603,75 @@ test("margin is the best evidence cosine above the project centroid", async () =
       projectId: "alpha",
     });
     assert.equal(again.background, on.background);
+  } finally {
+    await index.close();
+    knowledge.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a rare passage below the retrieval floor uses its stored cosine", async () => {
+  const { EmbeddingIndex } = await import("../src/embedding-index.js");
+  const directory = await mkdtemp(join(tmpdir(), "context-grounding-floor-"));
+  const path = join(directory, "context.db");
+  const store = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  const embedder = {
+    version: "synthetic-floor-v1",
+    async embed(text: string, purpose: "query" | "passage" = "passage") {
+      if (purpose === "query") return Float32Array.from([1, 0]);
+      if (/cobalt lantern/u.test(text)) {
+        const along = 0.7;
+        return Float32Array.from([along, Math.sqrt(1 - along * along)]);
+      }
+      return Float32Array.from([0, 1]);
+    },
+  };
+  const index = new EmbeddingIndex(path, embedder);
+  try {
+    remember(
+      store,
+      "personal",
+      "lantern",
+      "The cobalt lantern is in the blue cabinet.",
+    );
+    for (let index = 0; index < 6; index += 1)
+      remember(
+        store,
+        "personal",
+        `filler-${index}`,
+        `Filler note ${index} about ordinary weather.`,
+      );
+    index.backfill();
+    while (await index.processOne()) {
+      /* drain the synthetic queue */
+    }
+    const found = await index.search({
+      scope: "personal",
+      question: "where is the cobalt lantern",
+    });
+    assert.equal(found.available, true);
+    assert.equal(found.sources.length, 0);
+    const pack = buildContextPackage(
+      store,
+      knowledge,
+      {
+        version: 1,
+        scope: "personal",
+        question: "where is the cobalt lantern",
+        limit: 8,
+      },
+      found,
+    );
+    const report = searchGroundingReport(pack);
+    assert.equal(report?.cosineSource, "vector");
+    assert.ok((report?.cosine ?? 0) > 0.65);
+    assert.ok((report?.cosine ?? 1) < 0.8);
+    assert.ok((report?.margin ?? 0) > thresholds.marginStrong);
+    assert.equal(report?.label, "strong");
+    assert.equal(report?.rule, "strong-rare-margin");
+    assert.deepEqual(report?.matchedRare, ["cobalt", "lantern"]);
   } finally {
     await index.close();
     knowledge.close();

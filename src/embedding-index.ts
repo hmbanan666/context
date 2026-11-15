@@ -27,6 +27,11 @@ export interface SemanticSelection {
   until?: string | undefined;
   projectId?: string | undefined;
 }
+export interface StoredChunkRef {
+  readonly kind: "sources" | "knowledge_items";
+  readonly id: string;
+}
+
 export interface SemanticHits {
   available: boolean;
   sources: VectorHit[];
@@ -34,6 +39,13 @@ export interface SemanticHits {
   reasons: string[];
   /** Cosine of the query to the cached area or project centroid. */
   background?: number;
+  /**
+   * Query cosine against stored chunk vectors, including scores below the
+   * 0.80 retrieval floor. Grounding uses this so a rare-term passage is not
+   * scored as cosine 0 just because it missed the candidate list. Absent
+   * when no query vector was embedded.
+   */
+  storedCosines?: (records: readonly StoredChunkRef[]) => VectorHit[];
 }
 export class EmbeddingIndex {
   readonly #db: DatabaseSync;
@@ -382,6 +394,8 @@ export class EmbeddingIndex {
         reasons: [
           ...new Set([...empty.reasons, ...sources.reasons, ...items.reasons]),
         ],
+        storedCosines: (records) =>
+          this.#storedCosines(input.scope, query, records),
       };
     } catch {
       return { ...empty, reasons: ["embeddings_unavailable"] };
@@ -515,6 +529,50 @@ export class EmbeddingIndex {
     }
     this.#centroids.set(key, { stamp, vector });
     return vector;
+  }
+
+  // Point lookups on the chunk primary key. Cheap next to the full scan above,
+  // and the only way to score a lexical passage the 0.80 floor dropped.
+  #storedCosines(
+    scope: string,
+    query: ArrayLike<number>,
+    records: readonly StoredChunkRef[],
+  ): VectorHit[] {
+    if (!records.length) return [];
+    const statement = this.#db.prepare(
+      "SELECT offset, vector FROM embedding_chunks WHERE kind=? AND record_id=? AND scope=? AND model=?",
+    );
+    const hits: VectorHit[] = [];
+    const seen = new Set<string>();
+    for (const record of records) {
+      if (record.kind !== "sources" && record.kind !== "knowledge_items")
+        continue;
+      if (!record.id || record.id.length > 128) continue;
+      const key = `${record.kind}\0${record.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const rows = statement.all(
+        record.kind,
+        record.id,
+        scope,
+        this.#embedder.version,
+      );
+      for (const row of rows) {
+        if (
+          !(row.vector instanceof Uint8Array) ||
+          row.vector.byteLength !== query.length * 4 ||
+          typeof row.offset !== "number"
+        )
+          continue;
+        const blob = Buffer.from(row.vector);
+        let score = 0;
+        for (let i = 0; i < query.length; i++)
+          score += (query[i] ?? 0) * blob.readFloatLE(i * 4);
+        if (!Number.isFinite(score)) continue;
+        hits.push({ id: record.id, offset: row.offset, score });
+      }
+    }
+    return hits;
   }
 
   async #nearest(

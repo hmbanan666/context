@@ -3,7 +3,7 @@ import { knowledgeExcerpt } from "./context-package.js";
 import {
   assessStoredGrounding,
   bestCosine,
-  groundingVectors,
+  passageVectors,
   type Grounding,
   type GroundingPassage,
 } from "./grounding.js";
@@ -557,10 +557,26 @@ export function buildTaskPack(
     input.projectId,
   );
   const passages: GroundingPassage[] = [];
+  const itemPassages = [
+    ...loadedMemory,
+    ...journalCandidates,
+    ...byId.values(),
+  ];
+  const stored = input.semantic?.storedCosines?.([
+    ...found.materials.map((material) => ({
+      kind: "sources" as const,
+      id: material.source.id,
+    })),
+    ...itemPassages.map((item) => ({
+      kind: "knowledge_items" as const,
+      id: item.id,
+    })),
+  ]);
   for (const material of found.materials) {
-    const vectors = groundingVectors(
-      input.semantic?.sources,
+    const vectors = passageVectors(
       material.source.id,
+      input.semantic?.sources,
+      stored,
     );
     passages.push({
       text: visibleSourceText(material.source.text),
@@ -568,19 +584,16 @@ export function buildTaskPack(
     });
   }
   const seenItems = new Set<string>();
-  for (const item of [
-    ...loadedMemory,
-    ...journalCandidates,
-    ...byId.values(),
-  ]) {
+  for (const item of itemPassages) {
     if (seenItems.has(item.id)) continue;
     seenItems.add(item.id);
-    const vectors = groundingVectors(input.semantic?.items, item.id);
+    const vectors = passageVectors(item.id, input.semantic?.items, stored);
     passages.push({
       text: item.text,
       ...(vectors.length ? { vectors } : {}),
     });
   }
+  // Profile text is rendered, not a stored chunk, so its cosine stays missing.
   if (section) passages.push({ text: section });
   const grounding = assessStoredGrounding({
     terms,

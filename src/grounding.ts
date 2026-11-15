@@ -17,17 +17,47 @@ import { stemText } from "./search-lexical.js";
 //
 // With embeddings, strong also needs a margin: the evidence cosine minus the
 // cosine of the query to the cached area or project centroid. An absolute
-// cosine does not separate compressed E5 scores. With no vectors, the lexical
-// bar is stricter and the margin is not used. A passage that matches only
-// common terms is not lexical evidence: if no passage matches a rare term and
-// the margin is below the weak floor, the result is none. The margin still
-// applies when no passage contains a query term.
+// cosine does not separate compressed E5 scores. The result is none when the
+// uncommon share is below the lexical-none floor and the margin is below the
+// weak floor, even if some rare term matched. Otherwise a rare-term passage
+// is weak or strong as before. With no vectors, the lexical bar is stricter
+// and the margin is not used. The same share floor is none on that path too.
+// A passage that matches only common terms is not lexical evidence. The
+// margin still applies when no passage contains a query term.
+//
+// Search only returns vector hits at cosine >= 0.80, and at most 20 records,
+// so the passage that carried the rare term can have no hit. Its stored chunk
+// vector is then dotted with the query (see SemanticHits.storedCosines).
+// That cosine is `vector`. A chunk with no stored vector for this model stays
+// cosine 0 and `missing`; it is not embedded again. The rendered profile
+// section in a task pack has no chunk row, so it stays `missing` too.
 
 export type Grounding = "strong" | "weak" | "none";
+
+/** Where the evidence cosine came from. `missing` counts as cosine 0. */
+export type CosineSource = "vector" | "missing";
+
+/** Which labelling rule produced the grounding label. */
+export type GroundingRule =
+  | "none-low-share-low-margin"
+  | "none-low-margin"
+  | "strong-margin-only"
+  | "weak-margin"
+  | "strong-rare-margin"
+  | "weak-rare"
+  | "none-lexical-share"
+  | "strong-lexical"
+  | "weak-lexical"
+  | "none-lexical";
 
 export interface GroundingThresholds {
   /** Uncommon IDF share that counts as strong when embeddings exist. */
   readonly lexicalStrong: number;
+  /**
+   * Uncommon IDF share below which a low margin is `none`, even when a rare
+   * term matched. The lexical-only path uses the same floor with no margin.
+   */
+  readonly lexicalNone: number;
   /** Stricter uncommon IDF share when no embeddings are available. */
   readonly lexicalOnlyStrong: number;
   /** Margin that counts as weak when the query terms themselves do not match. */
@@ -44,12 +74,16 @@ export interface GroundingThresholds {
 
 export const defaultGroundingThresholds: GroundingThresholds = {
   lexicalStrong: 0.5,
+  lexicalNone: 0.3,
   lexicalOnlyStrong: 0.75,
   // Public fixture, multilingual-e5-small. Curated on-topic margin was
   // 0.014–0.081 (median 0.032) and off-topic margin was negative. On the mixed
   // corpus, off-topic margin reached 0.109 while absolute cosine reached 0.928.
+  // A later calibration separates classes with margin >= 0.024 or rare share
+  // >= 0.30. 0.024 is the default only while the public curated and mixed
+  // evals, lexical and semantic, stay green.
   // Calibrate on a real database with `context grounding explain --file`.
-  marginWeak: 0.03,
+  marginWeak: 0.024,
   marginStrong: 0.08,
   commonCorpus: 40,
   commonMinDf: 8,
@@ -99,6 +133,11 @@ export function readGroundingThresholds(
     defaultGroundingThresholds.lexicalStrong,
     "CONTEXT_GROUNDING_LEXICAL_STRONG",
   );
+  const lexicalNone = readUnit(
+    env.CONTEXT_GROUNDING_LEXICAL_NONE,
+    defaultGroundingThresholds.lexicalNone,
+    "CONTEXT_GROUNDING_LEXICAL_NONE",
+  );
   const lexicalOnlyStrong = readUnit(
     env.CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG,
     defaultGroundingThresholds.lexicalOnlyStrong,
@@ -136,6 +175,7 @@ export function readGroundingThresholds(
   if (commonRate <= 0) throw new Error("Invalid CONTEXT_GROUNDING_COMMON_RATE");
   return {
     lexicalStrong,
+    lexicalNone,
     lexicalOnlyStrong,
     marginWeak,
     marginStrong,
@@ -190,18 +230,19 @@ function stemsOf(text: string): Set<string> {
 function cosineAt(
   vectors: readonly GroundingVector[] | undefined,
   offset: number,
-): number {
-  let best = 0;
+): { cosine: number; source: CosineSource } {
+  let best = Number.NEGATIVE_INFINITY;
+  let found = false;
   for (const hit of vectors ?? []) {
-    if (
-      hit.offset !== offset ||
-      !Number.isFinite(hit.score) ||
-      hit.score <= best
-    )
-      continue;
-    best = hit.score;
+    if (hit.offset !== offset || !Number.isFinite(hit.score)) continue;
+    found = true;
+    if (hit.score > best) best = hit.score;
   }
-  return best;
+  // No row at this offset. Callers may already have filled a stored cosine
+  // below the retrieval floor; if they did not, the evidence cosine is 0.
+  return found
+    ? { cosine: best, source: "vector" }
+    : { cosine: 0, source: "missing" };
 }
 
 interface WindowScore {
@@ -209,6 +250,7 @@ interface WindowScore {
   readonly coverage: number;
   readonly matched: number;
   readonly cosine: number;
+  readonly cosineSource: CosineSource;
 }
 
 export interface GroundingTermFrequency {
@@ -239,6 +281,13 @@ export interface GroundingReport {
   readonly documentFrequency: readonly GroundingTermFrequency[];
   readonly thresholds: GroundingThresholds;
   readonly vectorsAvailable: boolean;
+  /** Labelling rule that produced `label`. */
+  readonly rule: GroundingRule;
+  /**
+   * `vector` when the evidence cosine is a search hit or a stored chunk.
+   * `missing` when that passage has no vector, so the cosine counts as 0.
+   */
+  readonly cosineSource: CosineSource;
 }
 
 function better(candidate: WindowScore, current: WindowScore): boolean {
@@ -263,6 +312,7 @@ function scorePassages(
   readonly anyRare: boolean;
   readonly best: WindowScore;
   readonly bestCosine: number;
+  readonly sawVector: boolean;
   readonly matchedRare: readonly string[];
   readonly commonDropped: readonly string[];
   readonly terms: readonly GroundingTermFrequency[];
@@ -281,9 +331,16 @@ function scorePassages(
     };
   });
   const totalWeight = info.reduce((sum, term) => sum + term.weight, 0);
-  let best: WindowScore = { uncommon: 0, coverage: 0, matched: 0, cosine: 0 };
+  let best: WindowScore = {
+    uncommon: 0,
+    coverage: 0,
+    matched: 0,
+    cosine: 0,
+    cosineSource: "missing",
+  };
   let anyMatch = false;
-  let bestCosine = 0;
+  let bestCosine = Number.NEGATIVE_INFINITY;
+  let sawVector = false;
   const rareHits = new Set<string>();
   for (const passage of passages) {
     for (const chunk of textChunks(passage.text)) {
@@ -302,8 +359,11 @@ function scorePassages(
         rareHits.add(term.term);
       }
       if (matched > 0) anyMatch = true;
-      const cosine = cosineAt(passage.vectors, chunk.offset);
-      if (cosine > bestCosine) bestCosine = cosine;
+      const looked = cosineAt(passage.vectors, chunk.offset);
+      if (looked.source === "vector") {
+        sawVector = true;
+        if (looked.cosine > bestCosine) bestCosine = looked.cosine;
+      }
       const score: WindowScore = {
         uncommon:
           totalWeight > 0
@@ -318,7 +378,8 @@ function scorePassages(
               ? matched / terms.length
               : 0,
         matched,
-        cosine,
+        cosine: looked.cosine,
+        cosineSource: looked.source,
       };
       if (better(score, best)) best = score;
     }
@@ -327,7 +388,8 @@ function scorePassages(
     anyMatch,
     anyRare: rareHits.size > 0,
     best,
-    bestCosine,
+    bestCosine: sawVector ? bestCosine : 0,
+    sawVector,
     matchedRare: info
       .filter((term) => rareHits.has(term.term))
       .map((term) => term.term),
@@ -363,6 +425,37 @@ export function groundingVectors(
   return vectors;
 }
 
+/** Search hits plus stored chunk cosines for the same record. */
+export function passageVectors(
+  id: string,
+  hits:
+    | readonly {
+        readonly id: string;
+        readonly offset: number;
+        readonly score?: number;
+      }[]
+    | undefined,
+  stored:
+    | readonly {
+        readonly id: string;
+        readonly offset: number;
+        readonly score?: number;
+      }[]
+    | undefined,
+): GroundingVector[] {
+  const vectors = groundingVectors(hits, id);
+  for (const hit of stored ?? []) {
+    if (
+      hit.id !== id ||
+      typeof hit.score !== "number" ||
+      !Number.isFinite(hit.score)
+    )
+      continue;
+    vectors.push({ offset: hit.offset, score: hit.score });
+  }
+  return vectors;
+}
+
 export function bestCosine(
   hits: readonly { readonly score?: number }[] | undefined,
 ): number {
@@ -378,6 +471,61 @@ export function bestCosine(
 function unitCosine(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(-1, value));
+}
+
+function labelLexical(
+  scored: { anyRare: boolean; best: WindowScore },
+  thresholds: GroundingThresholds,
+): { label: Grounding; rule: GroundingRule } {
+  // Same share floor as the embedding none rule. No margin on this path.
+  if (scored.best.uncommon < thresholds.lexicalNone)
+    return { label: "none", rule: "none-lexical-share" };
+  if (scored.anyRare && scored.best.uncommon >= thresholds.lexicalOnlyStrong)
+    return { label: "strong", rule: "strong-lexical" };
+  if (scored.anyRare) return { label: "weak", rule: "weak-lexical" };
+  return { label: "none", rule: "none-lexical" };
+}
+
+function labelWithVectors(
+  scored: { anyMatch: boolean; anyRare: boolean; best: WindowScore },
+  margin: number,
+  thresholds: GroundingThresholds,
+): { label: Grounding; rule: GroundingRule } {
+  // A rare term can match and still be none when it is only a small share
+  // of the query and the passage sits below the weak margin.
+  if (
+    scored.best.uncommon < thresholds.lexicalNone &&
+    margin < thresholds.marginWeak
+  )
+    return { label: "none", rule: "none-low-share-low-margin" };
+  if (!scored.anyRare) {
+    // lexicalNone 0 disables the share floor; a low margin is still none.
+    if (margin < thresholds.marginWeak)
+      return { label: "none", rule: "none-low-margin" };
+    if (!scored.anyMatch && margin >= thresholds.marginStrong)
+      return { label: "strong", rule: "strong-margin-only" };
+    return { label: "weak", rule: "weak-margin" };
+  }
+  if (
+    scored.best.uncommon >= thresholds.lexicalStrong &&
+    margin >= thresholds.marginStrong
+  )
+    return { label: "strong", rule: "strong-rare-margin" };
+  return { label: "weak", rule: "weak-rare" };
+}
+
+function evidenceSource(
+  anyRare: boolean,
+  best: WindowScore,
+  bestCosine: number,
+  sawVector: boolean,
+  unmatched: number | undefined,
+): CosineSource {
+  if (anyRare) return best.cosineSource;
+  const other = unmatched ?? 0;
+  if (sawVector && bestCosine >= other) return "vector";
+  if (other > 0) return "vector";
+  return "missing";
 }
 
 /** Grounding from passage windows, with the features that produced the label. */
@@ -409,29 +557,11 @@ export function explainStoredGrounding(input: {
     : 0;
   const evidenceCosine = scored.anyRare ? scored.best.cosine : cosine;
   const margin = input.vectorsAvailable ? evidenceCosine - background : 0;
-  let label: Grounding;
-  if (!input.vectorsAvailable) {
-    label =
-      scored.anyRare && scored.best.uncommon >= thresholds.lexicalOnlyStrong
-        ? "strong"
-        : scored.anyRare
-          ? "weak"
-          : "none";
-  } else if (!scored.anyRare) {
-    // Common terms alone never reach strong. A low margin is none.
-    if (margin < thresholds.marginWeak) label = "none";
-    else if (!scored.anyMatch && margin >= thresholds.marginStrong)
-      label = "strong";
-    else label = "weak";
-  } else {
-    label =
-      scored.best.uncommon >= thresholds.lexicalStrong &&
-      margin >= thresholds.marginStrong
-        ? "strong"
-        : "weak";
-  }
+  const decided = input.vectorsAvailable
+    ? labelWithVectors(scored, margin, thresholds)
+    : labelLexical(scored, thresholds);
   return {
-    label,
+    label: decided.label,
     cosine,
     background,
     margin,
@@ -442,6 +572,16 @@ export function explainStoredGrounding(input: {
     documentFrequency: scored.terms,
     thresholds,
     vectorsAvailable: input.vectorsAvailable,
+    rule: decided.rule,
+    cosineSource: input.vectorsAvailable
+      ? evidenceSource(
+          scored.anyRare,
+          scored.best,
+          scored.bestCosine,
+          scored.sawVector,
+          input.unmatchedCosine,
+        )
+      : "missing",
   };
 }
 
