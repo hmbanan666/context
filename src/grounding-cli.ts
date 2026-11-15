@@ -33,6 +33,8 @@ export interface ExplainRow {
   readonly expect?: Expectation;
   readonly grounding: Grounding;
   readonly cosine: number;
+  readonly background: number;
+  readonly margin: number;
   readonly rareShare: number;
   readonly matchedRare: readonly string[];
   readonly commonDropped: readonly string[];
@@ -65,14 +67,16 @@ export interface FeatureCut extends ClassScore {
 export interface CombinedCut extends ClassScore {
   readonly op: "and" | "or";
   readonly rareShare: number | null;
-  readonly cosine: number | null;
+  readonly margin: number | null;
 }
 
 export interface SeparationSummary {
   readonly cosine: { on: ClassDistribution; off: ClassDistribution };
   readonly rareShare: { on: ClassDistribution; off: ClassDistribution };
+  readonly margin: { on: ClassDistribution; off: ClassDistribution };
   readonly cosineCut?: FeatureCut;
   readonly rareShareCut?: FeatureCut;
+  readonly marginCut?: FeatureCut;
   readonly combined?: CombinedCut;
   readonly separation?: "need both on and off";
 }
@@ -80,6 +84,7 @@ export interface SeparationSummary {
 interface ScoredQuestion {
   readonly cosine: number;
   readonly rareShare: number;
+  readonly margin: number;
   readonly expect: Expectation;
 }
 
@@ -136,12 +141,14 @@ export function formatExplain(row: ExplainRow): string {
     ...(row.expect ? [`expect: ${row.expect}`] : []),
     `grounding: ${row.grounding}`,
     `cosine: ${formatNumber(row.cosine)}`,
+    `background: ${formatNumber(row.background)}`,
+    `margin: ${formatNumber(row.margin)}`,
     `rareShare: ${formatNumber(row.rareShare)}`,
     `matchedRare: ${formatList(row.matchedRare)}`,
     `commonDropped: ${formatList(row.commonDropped)}`,
     `corpus: ${row.corpus}`,
     `documentFrequency: ${frequency || "-"}`,
-    `thresholds: lexicalStrong=${formatNumber(thresholds.lexicalStrong)} lexicalOnlyStrong=${formatNumber(thresholds.lexicalOnlyStrong)} cosineWeak=${formatNumber(thresholds.cosineWeak)} cosineStrong=${formatNumber(thresholds.cosineStrong)} commonCorpus=${thresholds.commonCorpus} commonMinDf=${thresholds.commonMinDf} commonRate=${formatNumber(thresholds.commonRate)}`,
+    `thresholds: lexicalStrong=${formatNumber(thresholds.lexicalStrong)} lexicalOnlyStrong=${formatNumber(thresholds.lexicalOnlyStrong)} marginWeak=${formatNumber(thresholds.marginWeak)} marginStrong=${formatNumber(thresholds.marginStrong)} commonCorpus=${thresholds.commonCorpus} commonMinDf=${thresholds.commonMinDf} commonRate=${formatNumber(thresholds.commonRate)}`,
     `vectors: ${row.vectors}`,
     `topHit: ${row.topHit ? `${row.topHit.id}${row.topHit.title ? ` ${row.topHit.title}` : ""}` : "-"}`,
   ];
@@ -191,7 +198,7 @@ function passes(value: number, cut: number | null): boolean {
 
 function candidateCuts(values: readonly number[]): Array<number | null> {
   const finite = [
-    ...new Set(values.filter((value) => value >= 0 && value <= 1)),
+    ...new Set(values.filter((value) => value >= -1 && value <= 1)),
     0,
   ].sort((a, b) => a - b);
   return [...finite, null];
@@ -222,7 +229,7 @@ function betterScore(
 
 function bestFeatureCut(
   rows: readonly ScoredQuestion[],
-  feature: "cosine" | "rareShare",
+  feature: "cosine" | "rareShare" | "margin",
 ): FeatureCut {
   let best: FeatureCut = {
     cut: 0,
@@ -244,11 +251,11 @@ function bestFeatureCut(
 
 function bestCombined(rows: readonly ScoredQuestion[]): CombinedCut {
   const rareCuts = candidateCuts(rows.map((row) => row.rareShare));
-  const cosineCuts = candidateCuts(rows.map((row) => row.cosine));
+  const marginCuts = candidateCuts(rows.map((row) => row.margin));
   let best: CombinedCut = {
     op: "and",
     rareShare: 0,
-    cosine: 0,
+    margin: 0,
     ...tally(
       rows,
       rows.map(() => true),
@@ -256,25 +263,25 @@ function bestCombined(rows: readonly ScoredQuestion[]): CombinedCut {
   };
   for (const op of ["and", "or"] as const) {
     for (const rareShare of rareCuts) {
-      for (const cosine of cosineCuts) {
+      for (const margin of marginCuts) {
         const score = tally(
           rows,
           rows.map((row) => {
             const rare = passes(row.rareShare, rareShare);
-            const near = passes(row.cosine, cosine);
+            const near = passes(row.margin, margin);
             return op === "and" ? rare && near : rare || near;
           }),
         );
         const rank =
           cutHeight(rareShare) * 8 +
-          cutHeight(cosine) +
+          cutHeight(margin) +
           (op === "and" ? 0.5 : 0);
         const current =
           cutHeight(best.rareShare) * 8 +
-          cutHeight(best.cosine) +
+          cutHeight(best.margin) +
           (best.op === "and" ? 0.5 : 0);
         if (betterScore(score, rank, best, current))
-          best = { op, rareShare, cosine, ...score };
+          best = { op, rareShare, margin, ...score };
       }
     }
   }
@@ -296,6 +303,10 @@ export function calibrateSeparation(
       on: distribution(on.map((row) => row.rareShare)),
       off: distribution(off.map((row) => row.rareShare)),
     },
+    margin: {
+      on: distribution(on.map((row) => row.margin)),
+      off: distribution(off.map((row) => row.margin)),
+    },
   };
   if (!on.length || !off.length)
     return { ...summary, separation: "need both on and off" };
@@ -303,6 +314,7 @@ export function calibrateSeparation(
     ...summary,
     cosineCut: bestFeatureCut(rows, "cosine"),
     rareShareCut: bestFeatureCut(rows, "rareShare"),
+    marginCut: bestFeatureCut(rows, "margin"),
     combined: bestCombined(rows),
   };
 }
@@ -318,6 +330,8 @@ export function formatSeparation(summary: SeparationSummary): string {
     band("cosine off", summary.cosine.off),
     band("rareShare on", summary.rareShare.on),
     band("rareShare off", summary.rareShare.off),
+    band("margin on", summary.margin.on),
+    band("margin off", summary.margin.off),
   ];
   if (summary.separation) {
     lines.push(`  separation: ${summary.separation}`);
@@ -331,9 +345,13 @@ export function formatSeparation(summary: SeparationSummary): string {
     lines.push(
       `  rareShare cut ${formatCut(summary.rareShareCut.cut)}: ${formatScore(summary.rareShareCut)}`,
     );
+  if (summary.marginCut)
+    lines.push(
+      `  margin cut ${formatCut(summary.marginCut.cut)}: ${formatScore(summary.marginCut)}`,
+    );
   if (summary.combined)
     lines.push(
-      `  combined: rareShare ${formatCut(summary.combined.rareShare)} ${summary.combined.op} cosine ${formatCut(summary.combined.cosine)}: ${formatScore(summary.combined)}`,
+      `  combined: rareShare ${formatCut(summary.combined.rareShare)} ${summary.combined.op} margin ${formatCut(summary.combined.margin)}: ${formatScore(summary.combined)}`,
     );
   return lines.join("\n");
 }
@@ -355,6 +373,8 @@ function rowFromReport(
     ...(expect ? { expect } : {}),
     grounding: report.label,
     cosine: report.cosine,
+    background: report.background,
+    margin: report.margin,
     rareShare: report.rareShare,
     matchedRare: report.matchedRare,
     commonDropped: report.commonDropped,
@@ -515,6 +535,7 @@ export async function groundingCommand(
               {
                 cosine: row.cosine,
                 rareShare: row.rareShare,
+                margin: row.margin,
                 expect: row.expect,
               },
             ]

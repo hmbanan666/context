@@ -15,10 +15,10 @@ import { SourceStore } from "../src/store.js";
 
 test("separation reports on/off distributions and the cuts that split them", () => {
   const summary = calibrateSeparation([
-    { cosine: 0.9, rareShare: 0.1, expect: "on" },
-    { cosine: 0.91, rareShare: 0.2, expect: "on" },
-    { cosine: 0.4, rareShare: 0.1, expect: "off" },
-    { cosine: 0.5, rareShare: 0.2, expect: "off" },
+    { cosine: 0.9, rareShare: 0.1, margin: 0.2, expect: "on" },
+    { cosine: 0.91, rareShare: 0.2, margin: 0.21, expect: "on" },
+    { cosine: 0.4, rareShare: 0.1, margin: 0.01, expect: "off" },
+    { cosine: 0.5, rareShare: 0.2, margin: 0.02, expect: "off" },
   ]);
   assert.equal(summary.cosine.on.n, 2);
   assert.equal(summary.cosine.on.min, 0.9);
@@ -26,11 +26,16 @@ test("separation reports on/off distributions and the cuts that split them", () 
   assert.equal(summary.cosine.off.n, 2);
   assert.equal(summary.cosine.off.p50, 0.4);
   assert.equal(summary.rareShare.on.n, 2);
+  assert.equal(summary.margin.on.min, 0.2);
+  assert.equal(summary.margin.off.max, 0.02);
   assert.equal(summary.cosineCut?.cut, 0.9);
   assert.equal(summary.cosineCut?.onCorrect, 2);
   assert.equal(summary.cosineCut?.onTotal, 2);
   assert.equal(summary.cosineCut?.offCorrect, 2);
   assert.equal(summary.cosineCut?.offTotal, 2);
+  assert.equal(summary.marginCut?.cut, 0.2);
+  assert.equal(summary.marginCut?.onCorrect, 2);
+  assert.equal(summary.marginCut?.offCorrect, 2);
   assert.ok(
     (summary.rareShareCut?.onCorrect ?? 0) +
       (summary.rareShareCut?.offCorrect ?? 0) <
@@ -42,13 +47,22 @@ test("separation reports on/off distributions and the cuts that split them", () 
   const text = formatSeparation(summary);
   assert.match(text, /^summary:\n/);
   assert.match(text, /cosine cut >= 0\.9: on 2\/2 off 2\/2/);
+  assert.match(text, /margin cut >= 0\.2: on 2\/2 off 2\/2/);
   assert.match(text, /rareShare cut /);
-  assert.match(text, /combined: rareShare .+ (and|or) cosine /);
+  assert.match(text, /combined: rareShare .+ (and|or) margin /);
+  const negative = calibrateSeparation([
+    { cosine: 0.8, rareShare: 0, margin: -0.01, expect: "on" },
+    { cosine: 0.8, rareShare: 0, margin: -0.2, expect: "off" },
+  ]);
+  assert.equal(negative.marginCut?.cut, -0.01);
+  assert.equal(negative.marginCut?.onCorrect, 1);
+  assert.equal(negative.marginCut?.offCorrect, 1);
   const oneSided = calibrateSeparation([
-    { cosine: 1, rareShare: 1, expect: "on" },
+    { cosine: 1, rareShare: 1, margin: 1, expect: "on" },
   ]);
   assert.equal(oneSided.separation, "need both on and off");
   assert.equal(oneSided.cosineCut, undefined);
+  assert.equal(oneSided.margin.on.n, 1);
   assert.match(formatSeparation(oneSided), /separation: need both on and off/);
 });
 
@@ -58,6 +72,8 @@ test("explain text lists the grounding features", () => {
     area: "personal",
     grounding: "none",
     cosine: 0,
+    background: 0,
+    margin: 0,
     rareShare: 0,
     matchedRare: [],
     commonDropped: ["weather", "paris"],
@@ -73,12 +89,15 @@ test("explain text lists the grounding features", () => {
   const text = formatExplain(row);
   assert.match(text, /grounding: none/);
   assert.match(text, /cosine: 0/);
+  assert.match(text, /background: 0/);
+  assert.match(text, /margin: 0/);
   assert.match(text, /rareShare: 0/);
   assert.match(text, /matchedRare: -/);
   assert.match(text, /commonDropped: weather, paris/);
   assert.match(text, /corpus: 41/);
   assert.match(text, /documentFrequency: weather=40 common, paris=40 common/);
-  assert.match(text, /cosineWeak=0\.84/);
+  assert.match(text, /marginWeak=0\.03/);
+  assert.match(text, /marginStrong=0\.08/);
   assert.match(text, /commonCorpus=40/);
   assert.match(text, /vectors: false/);
   assert.match(text, /topHit: src-1 Weather bot/);
@@ -138,8 +157,10 @@ test("grounding explain prints a query and a file summary", async () => {
       body.documentFrequency.map((term) => term.term),
       ["cobalt", "lantern"],
     );
-    assert.equal(body.thresholds.cosineWeak, 0.84);
-    assert.equal(body.thresholds.cosineStrong, 0.92);
+    assert.equal(body.margin, 0);
+    assert.equal(body.background, 0);
+    assert.equal(body.thresholds.marginWeak, 0.03);
+    assert.equal(body.thresholds.marginStrong, 0.08);
     assert.equal(body.topHit?.id, saved.material.source.id);
     assert.equal(body.topHit?.title, "Cobalt lantern");
     const human = run(["grounding", "explain", "--query", "cobalt lantern"]);
@@ -175,6 +196,9 @@ test("grounding explain prints a query and a file summary", async () => {
     assert.equal(report.summary.cosine.off.n, 1);
     assert.equal(report.summary.rareShare.on.n, 1);
     assert.equal(report.summary.rareShare.off.n, 1);
+    assert.equal(report.summary.margin.on.n, 1);
+    assert.equal(report.summary.margin.off.n, 1);
+    assert.equal(report.queries[0]?.margin, 0);
     assert.equal(report.summary.rareShareCut?.onCorrect, 1);
     assert.equal(report.summary.rareShareCut?.offCorrect, 1);
     assert.equal(report.summary.combined?.onCorrect, 1);
@@ -185,6 +209,7 @@ test("grounding explain prints a query and a file summary", async () => {
     assert.match(printed.stdout, /grounding: none/);
     assert.match(printed.stdout, /summary:/);
     assert.match(printed.stdout, /rareShare cut /);
+    assert.match(printed.stdout, /margin cut /);
     assert.match(printed.stdout, /combined: /);
     assert.equal(
       run(["grounding", "explain", "--query", "x", "--file", file]).status,
@@ -204,6 +229,86 @@ test("grounding explain prints a query and a file summary", async () => {
       run(["grounding", "explain"]).stderr,
       /Usage: context grounding explain/,
     );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("explain file uses each question's project", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-explain-project-"));
+  const path = join(directory, "context.db");
+  const store = new SourceStore(path);
+  store.createProject({ id: "alpha", name: "Alpha", homeArea: "personal" });
+  store.createProject({ id: "beta", name: "Beta", homeArea: "personal" });
+  const lantern = store.captureMaterial({
+    version: 1,
+    scope: "personal",
+    origin: "synthetic",
+    idempotencyKey: "lantern",
+    text: "The cobalt lantern is in the blue cabinet.",
+    metadata: { title: "Cobalt lantern" },
+  });
+  store.addClientAssociation("source", lantern.material.source.id, ["alpha"]);
+  for (let index = 0; index < 40; index += 1) {
+    const saved = store.capture({
+      version: 1,
+      scope: "personal",
+      origin: "synthetic",
+      idempotencyKey: `weather-${index}`,
+      text: `Weather bot ${index} tagged Paris in the payload.`,
+    });
+    store.addClientAssociation("source", saved.source.id, ["beta"]);
+  }
+  store.close();
+  const file = join(directory, "questions.yaml");
+  await writeFile(
+    file,
+    [
+      "- query: cobalt lantern",
+      "  project: alpha",
+      "  expect: on",
+      "- query: weather in Paris",
+      "  project: beta",
+      "  expect: off",
+      "- query: cobalt lantern",
+      "  expect: off",
+      "",
+    ].join("\n"),
+  );
+  const run = spawnSync(
+    process.execPath,
+    [
+      "dist/scripts/context.js",
+      "grounding",
+      "explain",
+      "--file",
+      file,
+      "--json",
+      "--project",
+      "beta",
+    ],
+    {
+      env: {
+        ...process.env,
+        CONTEXT_DB_PATH: path,
+        CONTEXT_AREAS: "personal",
+      },
+      encoding: "utf8",
+    },
+  );
+  try {
+    assert.equal(run.status, 0, run.stderr);
+    const report = JSON.parse(run.stdout) as {
+      queries: ExplainRow[];
+    };
+    assert.equal(report.queries[0]?.project, "alpha");
+    assert.equal(report.queries[0]?.grounding, "strong");
+    assert.equal(report.queries[0]?.corpus, 1);
+    assert.equal(report.queries[1]?.project, "beta");
+    assert.equal(report.queries[1]?.grounding, "none");
+    assert.equal(report.queries[1]?.corpus, 40);
+    assert.equal(report.queries[2]?.project, "beta");
+    assert.equal(report.queries[2]?.grounding, "none");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

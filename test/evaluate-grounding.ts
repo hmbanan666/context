@@ -6,7 +6,10 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { distractorNotes } from "../fixtures/curated/distractors.js";
-import { buildContextPackage } from "../src/context-package.js";
+import {
+  buildContextPackage,
+  searchGroundingReport,
+} from "../src/context-package.js";
 import { EmbeddingIndex, type SemanticHits } from "../src/embedding-index.js";
 import { localEmbedder } from "../src/embedding-model.js";
 import type { Grounding } from "../src/grounding.js";
@@ -35,6 +38,8 @@ interface Row {
   readonly grounding: Grounding;
   readonly hit: boolean;
   readonly cosine: number;
+  readonly margin: number;
+  readonly background: number;
   readonly pass: boolean;
 }
 
@@ -107,6 +112,7 @@ async function scoreQuestions(
         })
       : false;
     const grounding = pack.grounding ?? "none";
+    const explained = searchGroundingReport(pack);
     const cosine = Math.max(
       0,
       ...(semantic?.sources.map((hit) => hit.score ?? 0) ?? []),
@@ -119,6 +125,8 @@ async function scoreQuestions(
       grounding,
       hit,
       cosine,
+      margin: explained?.margin ?? 0,
+      background: explained?.background ?? 0,
       pass: passed({ kind: question.kind, grounding, hit }, off),
     });
   }
@@ -145,23 +153,35 @@ function report(
     );
   }
   process.stdout.write("\n");
-  if (rows.some((row) => row.cosine > 0)) {
-    const offRows = rows.filter((row) => row.kind === "off");
-    const onRows = rows.filter((row) => row.kind === "on");
-    const offMax = offRows.length
-      ? Math.max(...offRows.map((row) => row.cosine))
-      : 0;
-    const onMin = onRows.length
-      ? Math.min(...onRows.map((row) => row.cosine))
-      : 0;
-    process.stdout.write(
-      `  cosine off-topic max ${offMax.toFixed(3)}, on-topic min ${onMin.toFixed(3)}\n`,
-    );
+  if (rows.some((row) => row.cosine > 0 || row.margin !== 0)) {
+    const band = (name: string, values: readonly number[]) => {
+      if (!values.length) return;
+      const sorted = [...values].sort((a, b) => a - b);
+      const p50 = sorted[Math.floor((sorted.length - 1) / 2)] ?? 0;
+      process.stdout.write(
+        `  ${name} min ${(sorted[0] ?? 0).toFixed(3)} p50 ${p50.toFixed(3)} max ${(sorted.at(-1) ?? 0).toFixed(3)}\n`,
+      );
+    };
+    for (const kind of ["on", "off"] as const) {
+      const group = rows.filter((row) => row.kind === kind);
+      band(
+        `cosine ${kind}`,
+        group.map((row) => row.cosine),
+      );
+      band(
+        `margin ${kind}`,
+        group.map((row) => row.margin),
+      );
+      band(
+        `background ${kind}`,
+        group.map((row) => row.background),
+      );
+    }
   }
   for (const row of rows) {
     if (row.pass) continue;
     process.stdout.write(
-      `  miss ${row.id} ${row.lang} ${row.kind} grounding=${row.grounding} hit=${row.hit} cosine=${row.cosine.toFixed(3)}\n`,
+      `  miss ${row.id} ${row.lang} ${row.kind} grounding=${row.grounding} hit=${row.hit} cosine=${row.cosine.toFixed(3)} margin=${row.margin.toFixed(3)} background=${row.background.toFixed(3)}\n`,
     );
   }
   return (

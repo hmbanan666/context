@@ -80,6 +80,15 @@ export interface Project {
   readonly name: string;
   readonly homeArea: string;
 }
+
+/** Words of the id, the name, and glossary terms. Synonyms stay ordinary words. */
+export function projectIdentityWords(
+  id: string,
+  name: string,
+  glossaryTerms: readonly string[],
+): string[] {
+  return [id, name, ...glossaryTerms].flatMap((text) => phraseWords(text));
+}
 export interface RepositoryMapping {
   readonly repo: string;
   readonly projectId: string;

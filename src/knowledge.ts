@@ -245,13 +245,10 @@ const relationSchema = z.strictObject({
 // Distilled facts and decisions are proposed until the owner reviews them.
 // Historical rows without a review stay suggested. Project-proposal audits in
 // knowledge_reviews are excluded from this status.
+export const knowledgeMatchStatusSql = `CASE WHEN k.kind IN ('fact', 'decision') THEN ${latestReviewStatusSql("k.id", "k.scope", "proposed")} ELSE ${latestReviewStatusSql("k.id", "k.scope", "suggested")} END`;
 const itemSelection = `SELECT k.id, k.scope, k.kind, k.text,
   k.source_refs AS sourceRefs, k.creator, k.created_at AS createdAt,
-  CASE WHEN k.kind IN ('fact', 'decision') THEN
-    ${latestReviewStatusSql("k.id", "k.scope", "proposed")}
-  ELSE
-    ${latestReviewStatusSql("k.id", "k.scope", "suggested")}
-  END AS status
+  ${knowledgeMatchStatusSql} AS status
   FROM knowledge_items k`;
 const relationSelection = `SELECT id, scope, kind, from_id AS fromId, to_id AS toId,
   source_refs AS sourceRefs, creator, created_at AS createdAt, 'suggested' AS status FROM knowledge_relations`;
