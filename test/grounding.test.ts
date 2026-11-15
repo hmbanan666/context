@@ -79,6 +79,21 @@ test("grounding uses passage co-occurrence and idf, not rank", () => {
     }),
     "weak",
   );
+  assert.equal(
+    ground("common plain", ["common", "plain"], {
+      vectorsAvailable: true,
+      cosine: 0.87,
+    }),
+    "weak",
+  );
+  assert.equal(
+    ground("common plain", ["common", "plain"], {
+      vectorsAvailable: true,
+      cosine: 0.5,
+    }),
+    "none",
+  );
+  assert.equal(ground("common plain", ["common", "plain"]), "none");
   assert.equal(ground("", ["rare"], { unmatchedCosine: 0.8 }), "none");
   assert.equal(ground("", ["rare"], { unmatchedCosine: 0.87 }), "weak");
   assert.equal(ground("", ["rare"], { unmatchedCosine: 0.93 }), "strong");
@@ -240,7 +255,7 @@ test("document frequency stays inside the searched project and area", async () =
     );
     assert.equal(
       groundingFor(store, knowledge, "personal", "weather in Paris"),
-      "weak",
+      "none",
     );
     assert.equal(
       groundingFor(store, knowledge, "studio", "weather in Paris"),

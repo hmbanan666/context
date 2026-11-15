@@ -14,8 +14,10 @@ import { stemText } from "./search-lexical.js";
 // On a small corpus nothing is common, so a specific note still grounds.
 //
 // With embeddings, strong also needs the matched passage's cosine. With no
-// vectors, the lexical bar is stricter. Semantic cosine still applies when no
-// passage contains a query term.
+// vectors, the lexical bar is stricter. A passage that matches only common
+// terms is not lexical evidence: if no passage matches a rare term and the
+// best cosine is below the weak floor, the result is none. Semantic cosine
+// still applies when no passage contains a query term.
 
 export type Grounding = "strong" | "weak" | "none";
 
@@ -188,6 +190,29 @@ interface WindowScore {
   readonly cosine: number;
 }
 
+export interface GroundingTermFrequency {
+  readonly term: string;
+  readonly df: number;
+  readonly common: boolean;
+}
+
+/** Features behind one grounding label. Rank is not an input. */
+export interface GroundingReport {
+  readonly label: Grounding;
+  /** Highest cosine on a passage window, or the unmatched hit when higher. */
+  readonly cosine: number;
+  /** Uncommon IDF share of the best passage window. */
+  readonly rareShare: number;
+  /** Rare query terms that occur in at least one passage. */
+  readonly matchedRare: readonly string[];
+  /** Query terms classified as common and left out of the rare numerator. */
+  readonly commonDropped: readonly string[];
+  readonly documents: number;
+  readonly documentFrequency: readonly GroundingTermFrequency[];
+  readonly thresholds: GroundingThresholds;
+  readonly vectorsAvailable: boolean;
+}
+
 function better(candidate: WindowScore, current: WindowScore): boolean {
   if (candidate.uncommon !== current.uncommon)
     return candidate.uncommon > current.uncommon;
@@ -204,18 +229,30 @@ function scorePassages(
   documentFrequency: ReadonlyMap<string, number>,
   documents: number,
   thresholds: GroundingThresholds,
-): { readonly anyMatch: boolean; readonly best: WindowScore } {
+): {
+  readonly anyMatch: boolean;
+  readonly anyRare: boolean;
+  readonly best: WindowScore;
+  readonly bestCosine: number;
+  readonly matchedRare: readonly string[];
+  readonly commonDropped: readonly string[];
+  readonly terms: readonly GroundingTermFrequency[];
+} {
   const info = terms.map((term) => {
     const df = documentFrequency.get(term) ?? 0;
     return {
+      term,
       stem: stemText(term),
       weight: termWeight(df, documents),
       common: termIsCommon(df, documents, thresholds),
+      df,
     };
   });
   const totalWeight = info.reduce((sum, term) => sum + term.weight, 0);
   let best: WindowScore = { uncommon: 0, coverage: 0, matched: 0, cosine: 0 };
   let anyMatch = false;
+  let bestCosine = 0;
+  const rareHits = new Set<string>();
   for (const passage of passages) {
     for (const chunk of textChunks(passage.text)) {
       const stems = stemsOf(chunk.text);
@@ -230,8 +267,11 @@ function scorePassages(
         if (term.common) continue;
         uncommonWeight += term.weight;
         uncommonMatched += 1;
+        rareHits.add(term.term);
       }
       if (matched > 0) anyMatch = true;
+      const cosine = cosineAt(passage.vectors, chunk.offset);
+      if (cosine > bestCosine) bestCosine = cosine;
       const score: WindowScore = {
         uncommon:
           totalWeight > 0
@@ -246,12 +286,26 @@ function scorePassages(
               ? matched / terms.length
               : 0,
         matched,
-        cosine: cosineAt(passage.vectors, chunk.offset),
+        cosine,
       };
       if (better(score, best)) best = score;
     }
   }
-  return { anyMatch, best };
+  return {
+    anyMatch,
+    anyRare: rareHits.size > 0,
+    best,
+    bestCosine,
+    matchedRare: info
+      .filter((term) => rareHits.has(term.term))
+      .map((term) => term.term),
+    commonDropped: info.filter((term) => term.common).map((term) => term.term),
+    terms: info.map((term) => ({
+      term: term.term,
+      df: term.df,
+      common: term.common,
+    })),
+  };
 }
 
 export function groundingVectors(
@@ -289,8 +343,8 @@ export function bestCosine(
   return best;
 }
 
-/** Grounding from passage windows. Rank is not an input. */
-export function assessStoredGrounding(input: {
+/** Grounding from passage windows, with the features that produced the label. */
+export function explainStoredGrounding(input: {
   readonly terms: readonly string[];
   readonly passages: readonly GroundingPassage[];
   readonly documents: number;
@@ -298,7 +352,7 @@ export function assessStoredGrounding(input: {
   readonly vectorsAvailable: boolean;
   readonly unmatchedCosine?: number;
   readonly thresholds?: GroundingThresholds;
-}): Grounding {
+}): GroundingReport {
   const thresholds = input.thresholds ?? readGroundingThresholds(process.env);
   const scored = scorePassages(
     input.passages,
@@ -307,19 +361,40 @@ export function assessStoredGrounding(input: {
     input.documents,
     thresholds,
   );
-  if (scored.anyMatch) {
+  const cosine = Math.max(scored.bestCosine, input.unmatchedCosine ?? 0);
+  let label: Grounding;
+  if (!scored.anyRare) {
+    // Common terms alone never reach strong. A low cosine is none.
+    if (cosine < thresholds.cosineWeak) label = "none";
+    else if (!scored.anyMatch && cosine >= thresholds.cosineStrong)
+      label = "strong";
+    else label = "weak";
+  } else {
     const bar = input.vectorsAvailable
       ? thresholds.lexicalStrong
       : thresholds.lexicalOnlyStrong;
-    if (
+    label =
       scored.best.uncommon >= bar &&
       (!input.vectorsAvailable || scored.best.cosine >= thresholds.cosineStrong)
-    )
-      return "strong";
-    return "weak";
+        ? "strong"
+        : "weak";
   }
-  const cosine = input.unmatchedCosine ?? 0;
-  if (cosine >= thresholds.cosineStrong) return "strong";
-  if (cosine >= thresholds.cosineWeak) return "weak";
-  return "none";
+  return {
+    label,
+    cosine,
+    rareShare: scored.best.uncommon,
+    matchedRare: scored.matchedRare,
+    commonDropped: scored.commonDropped,
+    documents: Math.max(0, input.documents),
+    documentFrequency: scored.terms,
+    thresholds,
+    vectorsAvailable: input.vectorsAvailable,
+  };
+}
+
+/** Grounding from passage windows. Rank is not an input. */
+export function assessStoredGrounding(
+  input: Parameters<typeof explainStoredGrounding>[0],
+): Grounding {
+  return explainStoredGrounding(input).label;
 }

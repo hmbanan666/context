@@ -2,11 +2,12 @@ import type { z } from "zod";
 import type { DocType } from "./documents.js";
 import type { SemanticHits } from "./embedding-index.js";
 import {
-  assessStoredGrounding,
   bestCosine,
+  explainStoredGrounding,
   groundingVectors,
   type Grounding,
   type GroundingPassage,
+  type GroundingReport,
 } from "./grounding.js";
 import {
   datedJournalExcerpt,
@@ -309,8 +310,8 @@ export function buildContextPackage(
       });
     }
   }
-  const grounding = frequency
-    ? assessStoredGrounding({
+  const explained = frequency
+    ? explainStoredGrounding({
         terms,
         passages,
         documents: frequency.documents,
@@ -322,6 +323,7 @@ export function buildContextPackage(
         ),
       })
     : undefined;
+  const grounding = explained?.label;
   const state = knowledge.retrievalRelations(request.scope);
   let result: ContextPackage = {
     version: 1,
@@ -416,6 +418,7 @@ export function buildContextPackage(
         : undefined,
       maximum,
     );
+  let topHit: { id: string; title: string } | undefined;
   const add = (
     ms: Material[],
     ks: KnowledgeItem[] = [],
@@ -490,6 +493,16 @@ export function buildContextPackage(
     if (Buffer.byteLength(JSON.stringify(reserve), "utf8") > request.maxBytes) {
       reasons.add("byte_limit");
       return false;
+    }
+    if (!topHit) {
+      const source = newSources[0];
+      const item = newItems[0];
+      if (source)
+        topHit = {
+          id: source.source.id,
+          title: source.doc?.title ?? source.metadata.title ?? "",
+        };
+      else if (item) topHit = { id: item.id, title: "" };
     }
     result = candidate;
     return true;
@@ -664,9 +677,14 @@ export function buildContextPackage(
   result.truncated = reasons.size > 0;
   // Outside the evidence budget: a few dozen bytes must not drop a card.
   if (grounding) result.grounding = grounding;
-  if (projectId === undefined) return result;
+  const finish = (pack: ContextPackage) => {
+    if (explained) groundingReports.set(pack, explained);
+    if (topHit) groundingTopHits.set(pack, topHit);
+    return pack;
+  };
+  if (projectId === undefined) return finish(result);
   // Serialise distilled items before raw excerpts for the caller.
-  return {
+  return finish({
     version: result.version,
     scope: result.scope,
     mode: result.mode,
@@ -678,5 +696,25 @@ export function buildContextPackage(
     coverage: result.coverage,
     truncated: result.truncated,
     readMore: result.readMore,
-  };
+  });
+}
+
+const groundingReports = new WeakMap<ContextPackage, GroundingReport>();
+const groundingTopHits = new WeakMap<
+  ContextPackage,
+  { id: string; title: string }
+>();
+
+/** Features from the same passage scoring that set `pack.grounding`. */
+export function searchGroundingReport(
+  pack: ContextPackage,
+): GroundingReport | undefined {
+  return groundingReports.get(pack);
+}
+
+/** First card `search` accepted, with a stored title when the source has one. */
+export function searchTopHit(
+  pack: ContextPackage,
+): { id: string; title: string } | undefined {
+  return groundingTopHits.get(pack);
 }

@@ -47,17 +47,33 @@ window, divided by the IDF of every content term. With embeddings, that
 share must reach `CONTEXT_GROUNDING_LEXICAL_STRONG` (default `0.5`) and the
 cosine of that same window must reach `CONTEXT_GROUNDING_COSINE_STRONG`
 (default `0.92`). With no embeddings, the share must reach the stricter
-`CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`). Any other
-in-window term match is `weak`.
+`CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`). A lower rare-term
+share is `weak`.
 
-When no passage contains a query term, cosine on normalized
-`multilingual-e5-small` still applies. The retrieval candidate floor stays
-0.80. Cosine `>= 0.84` (`CONTEXT_GROUNDING_COSINE_WEAK`) is `weak`, and
-`>= 0.92` is `strong`. On the public curated fixture, off-topic neighbours
-stayed under 0.80 and on-topic cosine was at least 0.853. A merely nearest
-passage stays `none`. When a passage does contain query terms, cosine is
-read from that passage, not from a different card. The field is not charged
-against the evidence byte budget.
+If no passage matches a rare term, common words are not evidence. The best
+cosine, including a neighbour that matched no query term, decides: below
+`CONTEXT_GROUNDING_COSINE_WEAK` (default `0.84`) is `none`, and at or above
+that floor is `weak`. Cosine alone reaches `strong` only when no query term
+matched at all and the cosine reaches `0.92`. On the public curated fixture,
+off-topic neighbours stayed under 0.80 and on-topic cosine was at least
+0.853. When a passage does contain a rare query term, cosine is read from
+that passage, not from a different card. The field is not charged against
+the evidence byte budget.
+
+`context grounding explain` runs this same search and prints the label, the
+best cosine, the rare-term share, the rare terms that matched, the common
+terms dropped, the corpus size and document frequencies, and the top hit id
+and title. It does not write thresholds.
+
+```sh
+context grounding explain --query "where is the lantern" --area studio
+context grounding explain --file questions.yaml --area studio --json
+```
+
+`questions.yaml` is a list of `query`, optional `project`, and
+`expect: on` or `off`. The file report adds the on/off distribution of
+cosine and rare-term share, and the single cosine cut, rare-share cut, and
+combined rule that separate the two classes. Defaults stay as above.
 
 When `grounding` is `none`, the agent should say it does not know. Similarity
 and rank are not permission to answer from an unrelated page.

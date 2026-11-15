@@ -93,8 +93,10 @@ of a fifth tool. See [ADR 0018](adr/0018-documents-are-versioned-sources.md).
 Every `search` result includes `grounding`: `strong`, `weak`, or `none`.
 It is computed from uncommon query terms that co-occur in one passage and,
 when embeddings exist, from the cosine of that passage. Common words in a
-large corpus do not make a result strong. It is not the rank of the first
-card. A page can be the nearest stored page and still be `none`.
+large corpus do not make a result strong. If no rare term matches and the
+best cosine is below the weak floor, the result is `none`. It is not the
+rank of the first card. A page can be the nearest stored page and still be
+`none`.
 
 Instruct the agent:
 
@@ -113,6 +115,17 @@ a term is common from corpus size `40`, document frequency `8`, and rate
 `CONTEXT_GROUNDING_COSINE_WEAK`, and
 `CONTEXT_GROUNDING_COSINE_STRONG`.
 See [Search](search.md#grounding).
+
+To inspect labels on a database that stays on this machine:
+
+```sh
+context grounding explain --query "where is the lantern" --area studio
+context grounding explain --file questions.yaml --area studio
+```
+
+The file is a list of `query`, optional `project`, and `expect: on` or
+`off`. The report prints the features and, for a file, the cuts that
+separate on-topic from off-topic. It does not change thresholds.
 
 Check a checkout with the fictional corpus and a few hundred synthetic
 distractor notes:
