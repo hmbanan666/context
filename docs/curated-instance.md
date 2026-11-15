@@ -91,9 +91,10 @@ of a fifth tool. See [ADR 0018](adr/0018-documents-are-versioned-sources.md).
 ## When to say "I don't know"
 
 Every `search` result includes `grounding`: `strong`, `weak`, or `none`.
-It is computed from the query's own content words and, when embeddings exist,
-from cosine on `multilingual-e5-small`. It is not the rank of the first card.
-A page can be the nearest stored page and still be `none`.
+It is computed from uncommon query terms that co-occur in one passage and,
+when embeddings exist, from the cosine of that passage. Common words in a
+large corpus do not make a result strong. It is not the rank of the first
+card. A page can be the nearest stored page and still be `none`.
 
 Instruct the agent:
 
@@ -101,19 +102,32 @@ Instruct the agent:
 - `weak`: answer only from the cited text, and say the overlap is partial.
 - `strong`: answer from the cited text.
 
-Thresholds have defaults (`0.5` of the content words, cosine `0.84` / `0.92`)
-and can be set with `CONTEXT_GROUNDING_LEXICAL_STRONG`,
-`CONTEXT_GROUNDING_COSINE_WEAK`, and `CONTEXT_GROUNDING_COSINE_STRONG`.
+Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
+a term is common from corpus size `40`, document frequency `8`, and rate
+`0.05`; cosine `0.84` / `0.92`) and can be set with
+`CONTEXT_GROUNDING_LEXICAL_STRONG`,
+`CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG`,
+`CONTEXT_GROUNDING_COMMON_CORPUS`,
+`CONTEXT_GROUNDING_COMMON_MIN_DF`,
+`CONTEXT_GROUNDING_COMMON_RATE`,
+`CONTEXT_GROUNDING_COSINE_WEAK`, and
+`CONTEXT_GROUNDING_COSINE_STRONG`.
 See [Search](search.md#grounding).
 
-Check a checkout with the fictional corpus:
+Check a checkout with the fictional corpus and a few hundred synthetic
+distractor notes:
 
 ```sh
 pnpm run eval:grounding
 ```
 
-The target is at least 9 of 10 off-topic questions at `none`, and at least
-9 of 10 on-topic questions not `none` and pointing at the right file.
-The script always runs lexical search. It also runs semantic search when
-`models/Xenova/multilingual-e5-small` is present, and says when that model
-is unavailable.
+On the curated notes alone, the target is at least 9 of 10 off-topic
+questions at `none`, and at least 9 of 10 on-topic questions not `none`
+and pointing at the right file. On the mixed corpus, off-topic questions
+that share ordinary words with the distractors must be `none` or at most
+`weak` for at least 9 of 10, and on-topic questions must still be not
+`none` for at least 9 of 10 and point at the right file. The script always
+runs lexical search. It also runs semantic search when
+`models/Xenova/multilingual-e5-small` or
+`.output/models/Xenova/multilingual-e5-small` is present, and says when
+that model is unavailable.

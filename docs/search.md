@@ -24,20 +24,39 @@ Neither requires model availability.
 evidence, not the rank of the first card. A card can be first and still be
 `none`.
 
-Lexical evidence is the share of non-stopword query terms that occur in any
-candidate, exact or stemmed. Glossary synonyms do not count. At least half of
-those terms (`CONTEXT_GROUNDING_LEXICAL_STRONG`, default `0.5`) is `strong`.
-One or more, but below that share, is `weak`. None is `none`.
+Lexical evidence looks at one passage at a time. A passage is the same chunk
+the embedding index stores: at most 256 UTF-16 code units, overlapping the
+next chunk by 64. Query terms count only when they co-occur inside that
+window, exact or stemmed. Terms scattered across a long note do not add up.
+Glossary synonyms do not count.
 
-Semantic evidence is the best cosine on normalized `multilingual-e5-small`
-vectors, when that model has indexed the area. The retrieval candidate floor
-stays 0.80. Grounding uses a higher bar: cosine `>= 0.84`
-(`CONTEXT_GROUNDING_COSINE_WEAK`) is `weak`, and `>= 0.92`
-(`CONTEXT_GROUNDING_COSINE_STRONG`) is `strong`. On the public curated
-fixture, off-topic neighbours stayed under 0.80 and on-topic cosine was at
-least 0.853, so 0.84 sits between them. A merely nearest passage stays
-`none`. The stronger of the lexical and semantic readings wins. With no
-embeddings, only the lexical reading is used. The field is not charged
+Each content term is weighted by inverse document frequency over the sources
+in the searched area, or in the project when the search is project-scoped.
+Older revisions of a document are left out of that count. A `kind: "doc"`
+search counts only the current documents that filter returns.
+A term is common when that corpus has at least 40 sources
+(`CONTEXT_GROUNDING_COMMON_CORPUS`), the stem occurs in at least 8
+(`CONTEXT_GROUNDING_COMMON_MIN_DF`), and those sources are at least 5% of
+the corpus (`CONTEXT_GROUNDING_COMMON_RATE`). Common terms stay in the
+denominator and do not count toward `strong`. A note that only contains
+ordinary words such as "weather" or "2018" is not strong evidence. On a
+smaller corpus nothing is common, so a specific note still counts.
+
+The uncommon share is the IDF of the uncommon terms matched in the best
+window, divided by the IDF of every content term. With embeddings, that
+share must reach `CONTEXT_GROUNDING_LEXICAL_STRONG` (default `0.5`) and the
+cosine of that same window must reach `CONTEXT_GROUNDING_COSINE_STRONG`
+(default `0.92`). With no embeddings, the share must reach the stricter
+`CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`). Any other
+in-window term match is `weak`.
+
+When no passage contains a query term, cosine on normalized
+`multilingual-e5-small` still applies. The retrieval candidate floor stays
+0.80. Cosine `>= 0.84` (`CONTEXT_GROUNDING_COSINE_WEAK`) is `weak`, and
+`>= 0.92` is `strong`. On the public curated fixture, off-topic neighbours
+stayed under 0.80 and on-topic cosine was at least 0.853. A merely nearest
+passage stays `none`. When a passage does contain query terms, cosine is
+read from that passage, not from a different card. The field is not charged
 against the evidence byte budget.
 
 When `grounding` is `none`, the agent should say it does not know. Similarity
@@ -402,7 +421,8 @@ header names what was included or omitted. No processor runs at query time.
 
 A document is a source ([ADR 0018](adr/0018-documents-are-versioned-sources.md)).
 Search returns its current revision only. `kind: "doc"` and `docType`
-(`adr`, `spec` or `note`) filter to those rows. An accepted ADR or an active
+(`adr`, `spec` or `note`) filter to those rows and omit distilled facts,
+decisions and journals. An accepted ADR or an active
 spec scores one point above an equal match, so a task pack can keep it in the
 two source slots. A superseded, rejected or obsolete document scores half.
 Read `doc:<project>:<type>:<key>` for the current text and `@<revision>` for

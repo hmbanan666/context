@@ -1,10 +1,11 @@
 import type { SemanticHits } from "./embedding-index.js";
 import { knowledgeExcerpt } from "./context-package.js";
 import {
-  assessGrounding,
+  assessStoredGrounding,
   bestCosine,
-  bestQueryTermMatches,
+  groundingVectors,
   type Grounding,
+  type GroundingPassage,
 } from "./grounding.js";
 import type { GlossaryEntry } from "./glossary.js";
 import type { KnowledgeItem, KnowledgeStore } from "./knowledge.js";
@@ -12,6 +13,7 @@ import type { Material } from "./materials.js";
 import { questionTerms } from "./package-query.js";
 import { profileId, type ProjectProfile } from "./projects.js";
 import type { TermHit } from "./search-lexical.js";
+import { visibleSourceText } from "./source-text.js";
 import type { SourceStore } from "./store.js";
 
 export const packBudgetMin = 512;
@@ -549,15 +551,44 @@ export function buildTaskPack(
   const reasons = [...new Set(input.semantic?.reasons ?? [])];
   if (memory.total > 100 || journals.total > 100 || found.total > 100)
     reasons.push("candidate_limit");
-  const grounding = assessGrounding({
-    contentTerms: terms.length,
-    matchedTerms: Math.max(
-      found.queryTermMatches,
-      memory.queryTermMatches,
-      journals.queryTermMatches,
-      bestQueryTermMatches(section ? [section] : [], terms),
-    ),
-    cosine: Math.max(
+  const frequency = sources.documentFrequency(
+    input.scope,
+    terms,
+    input.projectId,
+  );
+  const passages: GroundingPassage[] = [];
+  for (const material of found.materials) {
+    const vectors = groundingVectors(
+      input.semantic?.sources,
+      material.source.id,
+    );
+    passages.push({
+      text: visibleSourceText(material.source.text),
+      ...(vectors.length ? { vectors } : {}),
+    });
+  }
+  const seenItems = new Set<string>();
+  for (const item of [
+    ...loadedMemory,
+    ...journalCandidates,
+    ...byId.values(),
+  ]) {
+    if (seenItems.has(item.id)) continue;
+    seenItems.add(item.id);
+    const vectors = groundingVectors(input.semantic?.items, item.id);
+    passages.push({
+      text: item.text,
+      ...(vectors.length ? { vectors } : {}),
+    });
+  }
+  if (section) passages.push({ text: section });
+  const grounding = assessStoredGrounding({
+    terms,
+    passages,
+    documents: frequency.documents,
+    documentFrequency: frequency.counts,
+    vectorsAvailable: input.semantic?.available === true,
+    unmatchedCosine: Math.max(
       bestCosine(input.semantic?.sources),
       bestCosine(input.semantic?.items),
     ),

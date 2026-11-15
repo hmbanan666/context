@@ -2,10 +2,11 @@ import type { z } from "zod";
 import type { DocType } from "./documents.js";
 import type { SemanticHits } from "./embedding-index.js";
 import {
-  assessGrounding,
+  assessStoredGrounding,
   bestCosine,
-  bestQueryTermMatches,
+  groundingVectors,
   type Grounding,
+  type GroundingPassage,
 } from "./grounding.js";
 import {
   datedJournalExcerpt,
@@ -287,23 +288,40 @@ export function buildContextPackage(
     { ...selection, ...(semantic ? { vectors: semantic.items } : {}) },
     original.materials.slice(0, 100).map((m) => m.source.id),
   );
-  const grounding =
+  const frequency =
     request.mode === "search"
-      ? assessGrounding({
-          contentTerms: terms.length,
-          matchedTerms: Math.max(
-            original.queryTermMatches,
-            bestQueryTermMatches(
-              derived.items.map((item) => item.text),
-              terms,
-            ),
-          ),
-          cosine: Math.max(
-            bestCosine(semantic?.sources),
-            bestCosine(semantic?.items),
-          ),
-        })
+      ? sources.documentFrequency(request.scope, terms, projectId, documents)
       : undefined;
+  const passages: GroundingPassage[] = [];
+  if (frequency) {
+    for (const material of original.materials) {
+      const vectors = groundingVectors(semantic?.sources, material.source.id);
+      passages.push({
+        text: visibleSourceText(material.source.text),
+        ...(vectors.length ? { vectors } : {}),
+      });
+    }
+    for (const item of derived.items) {
+      const vectors = groundingVectors(semantic?.items, item.id);
+      passages.push({
+        text: item.text,
+        ...(vectors.length ? { vectors } : {}),
+      });
+    }
+  }
+  const grounding = frequency
+    ? assessStoredGrounding({
+        terms,
+        passages,
+        documents: frequency.documents,
+        documentFrequency: frequency.counts,
+        vectorsAvailable: semantic?.available === true,
+        unmatchedCosine: Math.max(
+          bestCosine(semantic?.sources),
+          bestCosine(semantic?.items),
+        ),
+      })
+    : undefined;
   const state = knowledge.retrievalRelations(request.scope);
   let result: ContextPackage = {
     version: 1,
