@@ -58,7 +58,8 @@ rules and pinned decisions in force. A task pack loads it for that project.
 _Avoid_: area policy, inferred biography, raw archive.
 
 **Project glossary**: Owner-written bilingual synonyms for one project, stored
-beside the profile. Search expands them into full-text lookup at a lower weight
+beside the profile. A term is one to four words. Search expands it into
+full-text lookup, as a phrase when it has more than one word, at a lower weight
 than the words the caller typed. A small built-in RU→EN developer list fills gaps
 the project does not override.
 _Avoid_: the profile document, an embedding, permission to read another area.

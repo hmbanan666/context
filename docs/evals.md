@@ -264,9 +264,10 @@ returned knowledge item id. `source_id`, `source_external_id` and `substring`
 keep their existing meanings. Placeholders are skipped.
 
 Public CI runs [`projects.yaml`](../fixtures/evals/projects.yaml): 12 Russian
-questions for fictional project `context` and 12 for fictional project `expi`,
-including `context_nightly_distill` ("улучшить ночную дистилляцию"). The corpus
-is synthetic. Real expi or context notes do not belong in that file. On that
+questions for fictional project `context` and 13 for fictional project `expi`,
+including `context_nightly_distill` ("улучшить ночную дистилляцию") and
+`expi_matrix_pack` ("добавить таймфрейм на график Matrix"). The corpus is
+synthetic. Real expi or context notes do not belong in that file. On that
 fixture, with no vectors, recall@10 and pack-hit rate are both 1.
 
 ```sh
@@ -310,10 +311,13 @@ The fictional corpus uses area `workshop` and projects `observatory`,
 | Distilled fact | notebook | `In October 2026 the notebook project renamed its index.` |
 
 The loaded observatory profile section is purpose, then rules, then the text of
-pinned decisions, 1400 bytes in all. The purpose `Track the fictional
+pinned decisions, 1400 bytes in all. A pack renders at most 20% of its budget
+from that section (ADR 0015). The purpose `Track the fictional
 observatory dome.` is inside the first 200 bytes. The pinned decision sentence
 `Dome motors stay disabled until the shutter is confirmed closed.` begins after
-byte 512. A recent approved fact says `The shutter sensor reports open or
+byte 512 of the stored section. At 4096 it still fits in the profile share
+after the oversized rules sentence is left out. At 512 the pack keeps the
+purpose and does not reach that sentence. A recent approved fact says `The shutter sensor reports open or
 closed.` and cites a long source whose excerpt contains `raw shutter wiring
 dump`. A notebook decision says `The notebook project pins its index.` Those
 pack records are dated outside October 2026, so they stay out of the month

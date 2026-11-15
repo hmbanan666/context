@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { maxGlossaryWords, phraseWords } from "./glossary.js";
 import { identifierSchema, nonblankText, scopeSchema } from "./contracts.js";
 import { installJournalMeta } from "./journal.js";
 import { latestReviewStatusSql } from "./review-status.js";
@@ -894,20 +895,35 @@ export function clearProjectProfile(db: DatabaseSync, projectId: string): void {
 }
 export const maxGlossaryTerms = 32;
 export const maxGlossarySynonyms = 8;
-const glossaryToken = z
+const glossaryPhrase = z
   .string()
   .trim()
   .min(1)
   .max(64)
-  .regex(/^[\p{L}\p{N}]+$/u, "Glossary tokens are letters or digits")
-  .transform((value) => value.toLowerCase());
+  .transform((value, ctx) => {
+    const words = phraseWords(value);
+    const phrase = words.join(" ");
+    if (
+      words.length < 1 ||
+      words.length > maxGlossaryWords ||
+      phrase !== value.trim().toLowerCase().replaceAll(/\s+/gu, " ") ||
+      words.some((word) => !/^[\p{L}\p{N}]+$/u.test(word))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Glossary phrases are one to four words",
+      });
+      return z.NEVER;
+    }
+    return phrase;
+  });
 export interface ProjectGlossaryEntry {
   readonly term: string;
   readonly synonyms: readonly string[];
 }
 function parseSynonyms(stored: string): string[] {
   const synonyms = z
-    .array(glossaryToken)
+    .array(glossaryPhrase)
     .min(1)
     .max(maxGlossarySynonyms)
     .parse(JSON.parse(stored));
@@ -935,9 +951,9 @@ export function setProjectGlossaryTerm(
   input: { projectId: string; term: string; synonyms: readonly string[] },
 ): ProjectGlossaryEntry {
   const projectId = projectIdSchema.parse(input.projectId);
-  const term = glossaryToken.parse(input.term);
+  const term = glossaryPhrase.parse(input.term);
   const synonyms = z
-    .array(glossaryToken)
+    .array(glossaryPhrase)
     .min(1)
     .max(maxGlossarySynonyms)
     .parse([...input.synonyms]);
@@ -977,7 +993,7 @@ export function unsetProjectGlossaryTerm(
   term: string,
 ): void {
   const id = projectIdSchema.parse(projectId);
-  const key = glossaryToken.parse(term);
+  const key = glossaryPhrase.parse(term);
   write(db, () => {
     if (!projectRow(db, id)) throw new UnknownProject([id]);
     const result = db

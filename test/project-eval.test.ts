@@ -31,7 +31,7 @@ test("project eval reports per-project recall and the distillation pack", async 
     assert.equal(projects.context?.questions, 12);
     assert.equal(projects.context?.recall_at_k, 1);
     assert.equal(projects.context?.pack_hit_rate, 1);
-    assert.equal(projects.expi?.questions, 12);
+    assert.equal(projects.expi?.questions, 13);
     assert.equal(projects.expi?.recall_at_k, 1);
     assert.equal(projects.expi?.pack_hit_rate, 1);
     const distill = report.questions.find(

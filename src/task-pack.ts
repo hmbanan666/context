@@ -1,9 +1,11 @@
 import type { SemanticHits } from "./embedding-index.js";
 import { knowledgeExcerpt } from "./context-package.js";
+import type { GlossaryEntry } from "./glossary.js";
 import type { KnowledgeItem, KnowledgeStore } from "./knowledge.js";
 import type { Material } from "./materials.js";
 import { questionTerms } from "./package-query.js";
 import { profileId, type ProjectProfile } from "./projects.js";
+import type { TermHit } from "./search-lexical.js";
 import type { SourceStore } from "./store.js";
 
 export const packBudgetMin = 512;
@@ -11,6 +13,7 @@ export const packBudgetMax = 65536;
 export const packBudgetDefault = 8192;
 export const packSourceShare = 0.25;
 export const packJournalShare = 0.15;
+export const packProfileShare = 0.2;
 export const packApprovedBoost = 1.25;
 export const packSourceLimit = 2;
 export const packJournalLimit = 2;
@@ -120,6 +123,99 @@ export function profileSection(profile: ProjectProfile): string {
     profile.rules,
     ...profile.inForce.map((item) => item.text),
   ].join("\n");
+}
+
+function glossaryPackLine(entries: readonly GlossaryEntry[]): string {
+  return entries
+    .map((entry) => `${entry.term}: ${entry.synonyms.join(", ")}`)
+    .join("; ");
+}
+
+function trimGlossary(line: string, room: number): string {
+  if (room <= 0 || !line) return "";
+  if (Buffer.byteLength(line, "utf8") <= room) return line;
+  const kept: string[] = [];
+  for (const entry of line.split("; ")) {
+    const next = kept.length ? `${kept.join("; ")}; ${entry}` : entry;
+    if (Buffer.byteLength(next, "utf8") > room) break;
+    kept.push(entry);
+  }
+  return kept.join("; ");
+}
+
+function fieldPrefix(field: string, room: number): string {
+  if (room <= 0 || !field) return "";
+  if (Buffer.byteLength(field, "utf8") <= room) return field;
+  let chosen = "";
+  for (const end of sentenceEnds(field)) {
+    const slice = field.slice(0, end);
+    if (Buffer.byteLength(slice, "utf8") <= room) chosen = slice;
+    else break;
+  }
+  if (chosen) return chosen;
+  const first = field.slice(0, sentenceEnds(field)[0] ?? field.length);
+  return utf8Prefix(first, room);
+}
+
+/**
+ * Pack rendering of a profile, capped at about 20% of the caller's budget.
+ * Purpose, then rules, then pinned sentences, then a trimmed project glossary.
+ * The stored profile is unchanged.
+ */
+export function renderPackProfile(
+  profile: ProjectProfile,
+  glossary: readonly GlossaryEntry[],
+  budgetBytes: number,
+): { text: string; partial: boolean; shownPins: string[] } {
+  const cap = Math.max(1, Math.floor(budgetBytes * packProfileShare));
+  const parts: string[] = [];
+  const used = () => Buffer.byteLength(parts.join("\n"), "utf8");
+  const room = () => cap - used() - (parts.length ? 1 : 0);
+  const push = (text: string) => {
+    if (!text || Buffer.byteLength(text, "utf8") > room()) return false;
+    parts.push(text);
+    return true;
+  };
+  if (profile.purpose && !push(profile.purpose)) {
+    const prefix = fieldPrefix(profile.purpose, cap);
+    if (prefix) parts.push(prefix);
+    return { text: parts.join("\n"), partial: true, shownPins: [] };
+  }
+  let rulesPartial = false;
+  if (profile.rules && !push(profile.rules)) {
+    const prefix = fieldPrefix(profile.rules, room());
+    if (prefix) parts.push(prefix);
+    rulesPartial = true;
+  }
+  const shownPins: string[] = [];
+  for (const pin of profile.inForce) {
+    if (!push(pin.text)) break;
+    shownPins.push(pin.id);
+  }
+  const glossaryText = glossaryPackLine(glossary);
+  const glossaryOut = trimGlossary(glossaryText, room());
+  if (glossaryOut) parts.push(glossaryOut);
+  return {
+    text: parts.join("\n"),
+    partial:
+      rulesPartial ||
+      shownPins.length < profile.inForce.length ||
+      (glossaryText !== "" && glossaryOut !== glossaryText),
+    shownPins,
+  };
+}
+
+/** Drop single-concept and vector-only rows once a two-concept hit exists. */
+export function packFloor<T extends { id: string }>(
+  items: readonly T[],
+  hits: ReadonlyMap<string, TermHit>,
+): T[] {
+  const multi = items.some((item) => (hits.get(item.id)?.concepts ?? 0) >= 2);
+  if (!multi) return [...items];
+  return items.filter((item) => {
+    const hit = hits.get(item.id);
+    return !!hit && (hit.original || hit.concepts >= 2);
+  });
 }
 
 function packHeader(flags: Flags): string {
@@ -254,14 +350,21 @@ export function buildTaskPack(
   const profile = sources.profile(input.projectId);
   const loaded =
     profile && profile.homeArea === input.scope ? profile : undefined;
-  const section = loaded ? profileSection(loaded) : "";
+  const rendered = loaded
+    ? renderPackProfile(
+        loaded,
+        sources.projectGlossary(input.projectId),
+        budget,
+      )
+    : undefined;
+  const section = rendered?.text ?? "";
+  const shownPins = new Set(rendered?.shownPins ?? []);
   const pinSources = new Map<string, string[]>();
   for (const pin of loaded?.inForce ?? []) {
     const item = knowledge.find(pin.id, input.scope);
     pinSources.set(pin.text, item?.sourceRefs.map((ref) => ref.sourceId) ?? []);
   }
   const superseded = knowledge.retrievalRelations(input.scope).superseded;
-  const pinned = new Set(loaded?.pinned ?? []);
   const hybrid = {
     scope: input.scope,
     terms,
@@ -296,17 +399,10 @@ export function buildTaskPack(
   const load = (id: string) => knowledge.find(id, input.scope);
   const eligible = (item: KnowledgeItem | undefined): item is KnowledgeItem =>
     !!item && item.status !== "rejected" && !superseded.has(item.id);
-  const ranked = rankPackItems(
-    memory.ids
-      .map(load)
-      .filter(eligible)
-      .filter(
-        (item) =>
-          (item.kind === "fact" || item.kind === "decision") &&
-          !(item.kind === "decision" && pinned.has(item.id)),
-      ),
-    memory.scores,
-  );
+  const loadedMemory = memory.ids
+    .map(load)
+    .filter(eligible)
+    .filter((item) => item.kind === "fact" || item.kind === "decision");
   const journalCandidates = journals.ids
     .map(load)
     .filter(eligible)
@@ -327,6 +423,76 @@ export function buildTaskPack(
     if (recency) return recency;
     return a.source.id.localeCompare(b.source.id);
   });
+  const citingBySource = new Map<string, KnowledgeItem[]>();
+  const citingIds = rankedSources.map((material) => material.source.id);
+  if (citingIds.length) {
+    for (const item of knowledge.memoryCiting(
+      input.scope,
+      input.projectId,
+      citingIds,
+    )) {
+      if (!eligible(item)) continue;
+      if (item.kind !== "fact" && item.kind !== "decision") continue;
+      for (const ref of item.sourceRefs) {
+        const list = citingBySource.get(ref.sourceId) ?? [];
+        list.push(item);
+        citingBySource.set(ref.sourceId, list);
+      }
+    }
+  }
+  const hitOf = (hits: ReadonlyMap<string, TermHit>, id: string): TermHit =>
+    hits.get(id) ?? { original: false, concepts: 0 };
+  const preferDistilled = (items: readonly KnowledgeItem[]) =>
+    [...items].sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "decision" ? -1 : 1;
+      const score =
+        (memory.scores.get(b.id) ?? 0) - (memory.scores.get(a.id) ?? 0);
+      if (score) return score;
+      const size =
+        Buffer.byteLength(a.text, "utf8") - Buffer.byteLength(b.text, "utf8");
+      if (size) return size;
+      return a.id.localeCompare(b.id);
+    })[0];
+  const byId = new Map(loadedMemory.map((item) => [item.id, item]));
+  for (const material of rankedSources.slice(0, packSourceLimit)) {
+    const sourceScore = found.scores.get(material.source.id) ?? 0;
+    if (sourceScore <= 0) continue;
+    const best = preferDistilled(
+      (citingBySource.get(material.source.id) ?? []).filter(
+        (item) => !(item.kind === "decision" && shownPins.has(item.id)),
+      ),
+    );
+    if (!best) continue;
+    const ownScore = memory.scores.get(best.id) ?? 0;
+    const own = hitOf(memory.termHits, best.id);
+    const sourceHit = hitOf(found.termHits, material.source.id);
+    // A hit that already ranks keeps its score. Only a miss inherits the
+    // source, so a short weak neighbour cannot jump a better decision.
+    if (ownScore <= 0) memory.scores.set(best.id, sourceScore);
+    memory.termHits.set(best.id, {
+      original: own.original || sourceHit.original,
+      concepts: Math.max(own.concepts, sourceHit.concepts),
+    });
+    byId.set(best.id, best);
+  }
+  const beforeFloor = rankPackItems(
+    [...byId.values()].filter(
+      (item) => !(item.kind === "decision" && shownPins.has(item.id)),
+    ),
+    memory.scores,
+  );
+  const ranked = packFloor(beforeFloor, memory.termHits);
+  const dropped = new Set(
+    beforeFloor
+      .filter((item) => !ranked.some((kept) => kept.id === item.id))
+      .map((item) => item.id),
+  );
+  const blockedSources = new Set<string>();
+  for (const [sourceId, citedItems] of citingBySource) {
+    if (!citedItems.length) continue;
+    if (citedItems.every((item) => dropped.has(item.id)))
+      blockedSources.add(sourceId);
+  }
   const reasons = [...new Set(input.semantic?.reasons ?? [])];
   if (memory.total > 100 || journals.total > 100 || found.total > 100)
     reasons.push("candidate_limit");
@@ -385,13 +551,17 @@ export function buildTaskPack(
   let items: PackItem[] = [];
   let cut = false;
 
+  let profilePartial = false;
   if (section) {
     const id = profileId(input.projectId);
-    const fullFlags = { ...flags, profile: "full" as const };
-    const full = profileCard(id, section, false, pinsIn(section));
-    if (fits(fullFlags, [full], [], reasons.length > 0, undefined)) {
-      flags = fullFlags;
-      items = [full];
+    const partial = rendered?.partial ?? false;
+    const presence = partial ? ("partial" as const) : ("full" as const);
+    const card = profileCard(id, section, partial, pinsIn(section));
+    const nextFlags = { ...flags, profile: presence };
+    if (fits(nextFlags, [card], [], reasons.length > 0, undefined)) {
+      flags = nextFlags;
+      items = [card];
+      profilePartial = partial;
     } else {
       let chosen = "";
       for (const end of sentenceEnds(section)) {
@@ -454,8 +624,11 @@ export function buildTaskPack(
     Math.min(
       packSourceLimit,
       sourceCards.length +
-        rankedSources.filter((material) => !cited.has(material.source.id))
-          .length,
+        rankedSources.filter(
+          (material) =>
+            !cited.has(material.source.id) &&
+            !blockedSources.has(material.source.id),
+        ).length,
     );
   const sectionFlags = (): Flags => ({
     ...flags,
@@ -481,25 +654,20 @@ export function buildTaskPack(
 
   const pushMemory = (ceiling: number) => {
     if (cut) return;
-    while (memoryCards.length < ranked.length) {
-      const item = ranked[memoryCards.length];
-      if (!item) break;
+    for (const item of ranked) {
+      if (memoryCards.some((card) => card.id === item.id)) continue;
       const card = memoryCard(item, sources, input.scope);
       const nextCited = new Set(cited);
       for (const id of card.sourceIds) nextCited.add(id);
-      const nextSources = sourceCards.filter(
-        (source) => !nextCited.has(source.id),
-      );
       const savedSources = sourceCards;
-      const saved = memoryCards.length;
-      sourceCards = nextSources;
+      sourceCards = sourceCards.filter((source) => !nextCited.has(source.id));
       memoryCards.push(card);
       const probe = packOf(true, "byte_limit");
       const size = bytes(probe);
       if (size > ceiling || size > budget) {
-        memoryCards.splice(saved);
+        memoryCards.pop();
         sourceCards = savedSources;
-        return;
+        continue;
       }
       cited = nextCited;
       flags = sectionFlags();
@@ -514,6 +682,7 @@ export function buildTaskPack(
     for (const material of rankedSources) {
       if (sourceCards.length >= packSourceLimit) break;
       if (cited.has(material.source.id)) continue;
+      if (blockedSources.has(material.source.id)) continue;
       const card = sourceCard(
         material,
         found.matchOffsets.get(material.source.id) ?? 0,
@@ -553,7 +722,7 @@ export function buildTaskPack(
   }
 
   const memoryShort = !cut && memoryCards.length < ranked.length;
-  const truncated = cut || memoryShort || reasons.length > 0;
+  const truncated = cut || profilePartial || memoryShort || reasons.length > 0;
   flags = sectionFlags();
   const pack = packOf(truncated, undefined);
   if (cut || memoryShort) {

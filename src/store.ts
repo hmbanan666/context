@@ -69,6 +69,7 @@ import {
   installSearchIndex,
   lexicalCandidates,
   registerSearchFunctions,
+  type TermHit,
 } from "./search-lexical.js";
 
 export interface SourceInput {
@@ -819,6 +820,7 @@ export class SourceStore {
       total,
       matchOffsets: new Map<string, number>(),
       scores: new Map<string, number>(),
+      termHits: new Map<string, TermHit>(),
       materials: rows.map((row) => {
         const material = this.findMaterial(String(row.id), input.scope);
         if (!material) throw new Error("Missing source candidate");
