@@ -35,42 +35,28 @@ test("MCP queues only authorized persisted sources and returns status without wo
     }),
   );
   const input = {
-    version: 1,
+    version: 1 as const,
     scope,
     sourceId: source.id,
     idempotencyKey: "job",
   };
   try {
-    const denied = await client.callTool({
-      name: "queue_processing",
-      arguments: { ...input, scope: "other" },
-    });
-    assert.equal(denied.isError, true);
-    const missing = await client.callTool({
-      name: "queue_processing",
-      arguments: { ...input, sourceId: "absent" },
-    });
-    assert.equal(missing.isError, true);
-    const saved = await client.callTool({
-      name: "queue_processing",
-      arguments: input,
-    });
-    assert.ok(!saved.isError);
-    const { job } = z
-      .object({
-        job: z.object({ id: z.string(), status: z.literal("queued") }),
-      })
-      .parse(saved.structuredContent);
+    for (const hiddenName of ["queue_processing", "processing_status"]) {
+      const hidden = await client.callTool({
+        name: hiddenName,
+        arguments: { ...input, version: 1 },
+      });
+      assert.equal(hidden.isError, true, hiddenName);
+      assert.equal(
+        z.object({ error: z.string() }).parse(hidden.structuredContent).error,
+        "unknown_tool",
+      );
+      assert.equal(JSON.stringify(hidden).includes("leaseToken"), false);
+    }
+    const queued = jobs.enqueue(input);
     const claimed = jobs.claim(scope);
     assert.ok(claimed);
-    const status = await client.callTool({
-      name: "processing_status",
-      arguments: { version: 1, scope, id: job.id },
-    });
-    assert.ok(!status.isError);
-    assert.equal(JSON.stringify(status).includes(claimed.leaseToken), false);
-    assert.equal(JSON.stringify(status).includes("leaseToken"), false);
-    assert.equal(JSON.stringify(status).includes("output"), false);
+    assert.equal(JSON.stringify(queued).includes(claimed.leaseToken), false);
     assert.equal(jobs.list(scope).length, 1);
   } finally {
     await client.close();

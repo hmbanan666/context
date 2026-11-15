@@ -108,31 +108,20 @@ export async function retrieveForEval(
     ])) {
       try {
         const projectSearch = question.project !== undefined;
+        const budget =
+          question.budget_bytes ?? (projectSearch ? undefined : 65536);
         const response = await client.callTool({
-          name: projectSearch ? "search" : "context_package",
-          arguments: projectSearch
-            ? {
-                scope: area,
-                query: question.question,
-                k,
-                project: question.project,
-                ...(question.since === undefined
-                  ? {}
-                  : { since: question.since }),
-                ...(question.until === undefined
-                  ? {}
-                  : { until: question.until }),
-                ...(question.mode === undefined ? {} : { mode: question.mode }),
-                ...(question.budget_bytes === undefined
-                  ? {}
-                  : { budgetBytes: question.budget_bytes }),
-              }
-            : {
-                question: question.question,
-                scope: area,
-                limit: k,
-                maxBytes: 65536,
-              },
+          name: "search",
+          arguments: {
+            scope: area,
+            query: question.question,
+            k,
+            ...(projectSearch ? { project: question.project } : {}),
+            ...(question.since === undefined ? {} : { since: question.since }),
+            ...(question.until === undefined ? {} : { until: question.until }),
+            ...(question.mode === undefined ? {} : { mode: question.mode }),
+            ...(budget === undefined ? {} : { budgetBytes: budget }),
+          },
         });
         const authorized = question.read_areas.includes(area);
         if (response.isError) {

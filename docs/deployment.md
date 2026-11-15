@@ -107,6 +107,7 @@ Inside the container (or `pnpm run context ...` in a built checkout):
 
 ```sh
 context token create coding-agent --read projects --write projects --default-write projects
+context token create one-project --read projects --write projects --default-write projects --project observatory
 context client list
 context token list
 context token revoke TOKEN_ID
@@ -114,9 +115,13 @@ context client revoke CLIENT_ID
 ```
 
 Tokens print once and expire in 90 days by default; `--expires` accepts bounded
-`m`, `h`, `d` durations up to one year. Optional `--process projects` also requires
-read/write rights. Reusing a CLI client name can add rights to its registry but
-never broadens older tokens. Revoked names cannot be reused. Revocation is checked
+`m`, `h`, `d` durations up to one year. Optional `--project <id>` binds that
+token to one existing project; the area flags are still required. OAuth
+consent does not offer a project, so browser clients stay area-scoped.
+Optional `--process projects` also requires
+read/write rights. Reusing a CLI client name can add area rights to its registry but
+never broadens older tokens, and a project id on a new token does not attach
+itself to older tokens. Revoked names cannot be reused. Revocation is checked
 on every request. CLI commands use owner filesystem authority, not network login.
 
 ## Backups

@@ -305,7 +305,7 @@ test("owner enrolls a passkey; DCR → PKCE → consent → SDK MCP save/read �
     assert.ok(
       !(
         await client.callTool({
-          name: "memory_context",
+          name: "timeline",
           arguments: { scope: "garden" },
         })
       ).isError,
@@ -313,7 +313,7 @@ test("owner enrolls a passkey; DCR → PKCE → consent → SDK MCP save/read �
     assert.equal(
       (
         await client.callTool({
-          name: "memory_context",
+          name: "timeline",
           arguments: { scope: "personal" },
         })
       ).isError,
@@ -332,7 +332,7 @@ test("owner enrolls a passkey; DCR → PKCE → consent → SDK MCP save/read �
     assert.match(
       JSON.stringify(
         await reopened.callTool({
-          name: "memory_context",
+          name: "timeline",
           arguments: { scope: "garden" },
         }),
       ),

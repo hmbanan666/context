@@ -5,7 +5,9 @@ import { evalCommand } from "../src/eval-cli.js";
 import { runIndexCommand } from "../src/index-command.js";
 import { runReindexCommand } from "../src/reindex-command.js";
 import { projectCommand } from "../src/project-cli.js";
+import { projectIdSchema } from "../src/projects.js";
 import { searchCommand } from "../src/search-cli.js";
+import { SourceStore } from "../src/store.js";
 import { tidyCommand } from "../src/tidy-cli.js";
 import { runImport } from "./import-jsonl.js";
 
@@ -136,6 +138,7 @@ async function main() {
             "--process",
             "--default-write",
             "--expires",
+            "--project",
           ].includes(key) ||
           options.has(key)
         )
@@ -150,12 +153,30 @@ async function main() {
         throw new Error("Expiry must be a bounded duration such as 90d");
       const seconds =
         Number(match[1]) * ({ d: 86400, h: 3600, m: 60 }[match[2] ?? ""] ?? 0);
+      const project = options.get("--project");
+      if (project !== undefined && !projectIdSchema.safeParse(project).success)
+        throw new Error("Invalid token options");
+      if (project) {
+        const sources = new SourceStore(config.databasePath);
+        let known = false;
+        try {
+          known = sources.hasProject(project);
+        } finally {
+          sources.close();
+        }
+        if (!known) {
+          process.stderr.write("Unknown project\n");
+          process.exitCode = 1;
+          return;
+        }
+      }
       const result = store.createCliToken(
         name,
         {
           read: list("--read"),
           write: list("--write"),
           process: list("--process"),
+          ...(project ? { project } : {}),
         },
         options.get("--default-write") ?? null,
         seconds,
@@ -165,7 +186,7 @@ async function main() {
       return;
     }
     throw new Error(
-      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--expires 90d] | token list|revoke <id> | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>]",
+      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d] | token list|revoke <id> | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>]",
     );
   } finally {
     store.close();

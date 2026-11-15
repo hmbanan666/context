@@ -82,7 +82,7 @@ These rules are fixed across search implementations.
 
 ## Retrieval and metrics
 
-The harness calls `context_package` through the real protected MCP handler and
+The harness calls `search` through the real protected MCP handler and
 SDK, with explicit read-only client grants. The transport is in-process and has
 no listener. It does not implement its own search or rank by SQL. Both CLI and
 nightly eval attach the server's `EmbeddingIndex` search implementation, including
@@ -299,7 +299,7 @@ items do not cite. The October fixture has no journal entry, so
 matching uses those excerpts. A forbidden substring
 anywhere in the returned package fails that question. `expect_truncated` must
 match the package's `truncated` flag when the field is set. Questions without
-`project` still call `context_package` with the question, area, k and a 64 KiB
+`project` still call `search` with the question, area, k and a 64 KiB
 budget. Substring matching against source or knowledge excerpts stays as
 defined above.
 

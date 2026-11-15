@@ -82,14 +82,14 @@ test("JSONL imports survive reopen, skip retries, preserve changed originals and
     try {
       const client = await f.connect();
       const recalled = await client.callTool({
-        name: "recall",
-        arguments: { version: 1, scope: "personal", query: "cobalt telescope" },
+        name: "search",
+        arguments: { scope: "personal", query: "cobalt telescope" },
       });
-      assert.ok(!recalled.isError);
+      assert.ok(!recalled.isError, JSON.stringify(recalled));
       assert.ok(JSON.stringify(recalled.structuredContent).includes(line.text));
       const packaged = await client.callTool({
-        name: "context_package",
-        arguments: { question: "cobalt telescope", scope: "personal" },
+        name: "search",
+        arguments: { query: "cobalt telescope", scope: "personal" },
       });
       assert.ok(!packaged.isError);
       assert.ok(
@@ -107,8 +107,8 @@ test("JSONL imports survive reopen, skip retries, preserve changed originals and
         line.id,
       );
       const denied = await client.callTool({
-        name: "recall",
-        arguments: { version: 1, scope: "projects", id: revision.id },
+        name: "read",
+        arguments: { scope: "projects", id: revision.id },
       });
       assert.ok(denied.isError);
       assert.equal(source.text, line.text);

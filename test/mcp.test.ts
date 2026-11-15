@@ -14,13 +14,17 @@ import { startTestService as startService } from "./fixtures/search-service.js";
 function payload(result: { structuredContent?: unknown }) {
   return z.record(z.string(), z.unknown()).parse(result.structuredContent);
 }
+function materialSource(result: { structuredContent?: unknown }) {
+  return sourceSchema.parse(
+    z.object({ source: sourceSchema }).parse(payload(result).material).source,
+  );
+}
 
 const scope = "local-foundation";
 const capture = {
   version: 1,
   scope,
   text: "Synthetic cobalt fox jumps.\nЮникод 🦊",
-  origin: "test:mcp-client",
   idempotencyKey: "mcp-001",
 };
 const sourceSchema = z.object({
@@ -69,45 +73,47 @@ test(
         "timeline",
       ]);
       const saved = await client.callTool({
-        name: "capture",
+        name: "remember",
         arguments: capture,
       });
       assert.ok(!saved.isError);
-      const source = sourceSchema.parse(payload(saved).source);
+      const source = materialSource(saved);
       assert.equal(source.text, capture.text);
-      assert.equal(source.origin, capture.origin);
+      assert.equal(source.origin, "mcp:local");
       assert.equal(source.scope, scope);
-      assert.equal(
-        source.checksum,
-        "12d9e9edd65c2213a088a61dfcffa9080327c690ef222fab3579721311a6330f",
-      );
       const duplicate = await client.callTool({
-        name: "capture",
+        name: "remember",
         arguments: capture,
       });
       assert.equal(payload(duplicate).duplicate, true);
-      assert.deepEqual(payload(duplicate).source, source);
+      assert.deepEqual(materialSource(duplicate), source);
       const conflict = await client.callTool({
-        name: "capture",
+        name: "remember",
         arguments: { ...capture, text: "different" },
       });
       assert.equal(conflict.isError, true);
       assert.equal(payload(conflict).error, "idempotency_conflict");
       const results = await client.callTool({
-        name: "recall",
-        arguments: { version: 1, scope, query: "cobalt fox" },
+        name: "search",
+        arguments: { scope, query: "cobalt fox" },
       });
-      assert.deepEqual(payload(results).sources, [source]);
+      assert.deepEqual(
+        z
+          .array(z.object({ id: z.string() }))
+          .parse(payload(results).sources)
+          .map((item) => item.id),
+        [source.id],
+      );
       await client.close();
       client = undefined;
       await service.close();
       service = await startService(config);
       client = await connect(`http://127.0.0.1:${service.address.port}`);
       const recalled = await client.callTool({
-        name: "recall",
-        arguments: { version: 1, scope, id: source.id },
+        name: "read",
+        arguments: { scope, id: source.id },
       });
-      assert.deepEqual(payload(recalled).sources, [source]);
+      assert.deepEqual(materialSource(recalled), source);
       const read = await client.callTool({
         name: "read",
         arguments: { scope, id: source.id },
@@ -128,16 +134,22 @@ test(
         [source.id],
       );
       const retry = await client.callTool({
-        name: "capture",
+        name: "remember",
         arguments: capture,
       });
       assert.equal(payload(retry).duplicate, true);
-      assert.deepEqual(payload(retry).source, source);
+      assert.deepEqual(materialSource(retry), source);
       const searched = await client.callTool({
-        name: "recall",
-        arguments: { version: 1, scope, query: "Юникод" },
+        name: "search",
+        arguments: { scope, query: "Юникод" },
       });
-      assert.deepEqual(payload(searched).sources, [source]);
+      assert.deepEqual(
+        z
+          .array(z.object({ id: z.string() }))
+          .parse(payload(searched).sources)
+          .map((item) => item.id),
+        [source.id],
+      );
     } finally {
       await client?.close();
       await service.close();
@@ -162,14 +174,14 @@ test("scope grants come from server configuration and cannot be supplied by a cl
   const a = await connect(`http://127.0.0.1:${writer.address.port}`);
   const b = await connect(`http://127.0.0.1:${reader.address.port}`);
   try {
-    const saved = await a.callTool({ name: "capture", arguments: capture });
-    const source = sourceSchema.parse(payload(saved).source);
+    const saved = await a.callTool({ name: "remember", arguments: capture });
+    const source = materialSource(saved);
     for (const arguments_ of [
-      { version: 1, scope, id: source.id },
-      { version: 1, scope, query: "cobalt" },
+      { scope, id: source.id },
+      { scope, query: "cobalt" },
     ]) {
       const denied = await b.callTool({
-        name: "recall",
+        name: "id" in arguments_ ? "read" : "search",
         arguments: arguments_,
       });
       assert.equal(denied.isError, true);
@@ -177,37 +189,35 @@ test("scope grants come from server configuration and cannot be supplied by a cl
       assert.equal(JSON.stringify(denied).includes(capture.text), false);
     }
     const deniedWrite = await b.callTool({
-      name: "capture",
+      name: "remember",
       arguments: capture,
     });
     assert.equal(payload(deniedWrite).error, "forbidden_scope");
     const crossScopeId = await b.callTool({
-      name: "recall",
-      arguments: { version: 1, scope: "other", id: source.id },
+      name: "read",
+      arguments: { scope: "other", id: source.id },
     });
     assert.equal(payload(crossScopeId).error, "not_found");
     const crossScopeSearch = await b.callTool({
-      name: "recall",
-      arguments: { version: 1, scope: "other", query: "cobalt" },
+      name: "search",
+      arguments: { scope: "other", query: "cobalt" },
     });
     assert.deepEqual(payload(crossScopeSearch).sources, []);
     const other = await b.callTool({
-      name: "capture",
+      name: "remember",
       arguments: { ...capture, scope: "other" },
     });
-    const otherSource = sourceSchema.parse(payload(other).source);
+    const otherSource = materialSource(other);
     assert.notEqual(otherSource.id, source.id);
     const concurrent = await Promise.all(
       Array.from({ length: 8 }, () =>
         a.callTool({
-          name: "capture",
+          name: "remember",
           arguments: { ...capture, idempotencyKey: "concurrent-001" },
         }),
       ),
     );
-    const ids = concurrent.map(
-      (item) => sourceSchema.parse(payload(item).source).id,
-    );
+    const ids = concurrent.map((item) => materialSource(item).id);
     assert.equal(new Set(ids).size, 1);
     assert.equal(
       concurrent.filter((item) => payload(item).duplicate === false).length,
@@ -247,33 +257,32 @@ test("MCP validates inputs, rejects approval claims and treats search operators 
     ];
     for (const input of invalidCaptures) {
       const result = await client.callTool({
-        name: "capture",
+        name: "remember",
         arguments: input,
       });
       assert.equal(result.isError, true);
     }
     for (const input of [
-      { version: 1, scope },
-      { version: 1, scope, id: "a", query: "fox" },
-      { version: 1, scope, query: "fox", limit: 21 },
-      { version: 1, scope, query: "fox", limit: 0 },
+      { scope },
+      { scope, query: "fox", k: 21 },
+      { scope, query: "fox", k: 0 },
     ]) {
       const result = await client.callTool({
-        name: "recall",
+        name: "search",
         arguments: input,
       });
       assert.equal(result.isError, true);
     }
     const valid = await client.callTool({
-      name: "capture",
+      name: "remember",
       arguments: capture,
     });
     assert.equal(payload(valid).duplicate, false);
     const noOperators = await client.callTool({
-      name: "recall",
-      arguments: { version: 1, scope, query: '" OR fox* --' },
+      name: "search",
+      arguments: { scope, query: '" OR marble* --' },
     });
-    assert.ok(!noOperators.isError);
+    assert.ok(!noOperators.isError, JSON.stringify(noOperators));
     assert.deepEqual(payload(noOperators).sources, []);
   } finally {
     await client.close();

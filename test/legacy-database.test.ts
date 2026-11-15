@@ -84,10 +84,10 @@ test("pre-cleanup database keeps every domain row, original bytes, retry and leg
         ])
           assert.ok(!names.includes(removed));
         const timeline = await client.callTool({
-          name: "memory_context",
+          name: "timeline",
           arguments: { scope },
         });
-        assert.ok(!timeline.isError);
+        assert.ok(!timeline.isError, JSON.stringify(timeline));
         const data = timeline.structuredContent as {
           sources: { source: { id: string }; file?: unknown }[];
           totalMatchingSources: number;
@@ -96,64 +96,60 @@ test("pre-cleanup database keeps every domain row, original bytes, retry and leg
         const file = data.sources.find((m) => m.file);
         assert.ok(file);
         const bytes = await client.callTool({
-          name: "read_file",
-          arguments: { version: 1, scope, id: file.source.id },
+          name: "read",
+          arguments: { scope, id: file.source.id },
         });
-        assert.ok(!bytes.isError);
+        assert.ok(!bytes.isError, JSON.stringify(bytes));
         assert.ok(
           JSON.stringify(bytes.structuredContent).includes(
             Buffer.from("\ufeffFictional garden file\r\n").toString("base64"),
           ),
         );
-        const legacy = await client.callTool({
-          name: "capture",
-          arguments: {
-            version: 1,
-            scope: "synthetic:legacy",
-            text: "Fictional old area source",
-            origin: "fixture:legacy",
-            idempotencyKey: "legacy-capture",
-          },
-        });
-        assert.equal(
-          z.object({ duplicate: z.boolean() }).parse(legacy.structuredContent)
-            .duplicate,
-          true,
-        );
-        const material = await client.callTool({
-          name: "capture_material",
-          arguments: {
-            version: 1,
-            scope,
-            text: "Fictional garden notebook: preserve the violet lamp.",
-            origin: "mcp:fictional-cli",
-            idempotencyKey: "legacy-note",
-            metadata: {
-              title: "Fictional notebook",
-              createdAt: "2026-10-01T12:00:00Z",
-            },
-          },
-        });
-        assert.equal(
-          z.object({ duplicate: z.boolean() }).parse(material.structuredContent)
-            .duplicate,
-          true,
-        );
+        const { SourceStore } = await import("../src/store.js");
+        const direct = new SourceStore(database);
+        try {
+          assert.equal(
+            direct.capture({
+              version: 1,
+              scope: "synthetic:legacy",
+              text: "Fictional old area source",
+              origin: "fixture:legacy",
+              idempotencyKey: "legacy-capture",
+            }).duplicate,
+            true,
+          );
+          assert.equal(
+            direct.captureMaterial({
+              version: 1,
+              scope,
+              text: "Fictional garden notebook: preserve the violet lamp.",
+              origin: "mcp:fictional-cli",
+              idempotencyKey: "legacy-note",
+              metadata: {
+                title: "Fictional notebook",
+                createdAt: "2026-10-01T12:00:00Z",
+              },
+            }).duplicate,
+            true,
+          );
+        } finally {
+          direct.close();
+        }
         const knowledge = await client.callTool({
-          name: "read_knowledge",
-          arguments: { version: 1, scope },
+          name: "read",
+          arguments: { scope, id: "5d564d3d-8726-428d-b797-05fc6d04e71c" },
         });
-        assert.ok(!knowledge.isError);
+        assert.ok(!knowledge.isError, JSON.stringify(knowledge));
         assert.ok(
           JSON.stringify(knowledge.structuredContent).includes(
             '"status":"rejected"',
           ),
         );
         const packageResult = await client.callTool({
-          name: "context_package",
-          arguments: { scope, question: "lamps" },
+          name: "search",
+          arguments: { scope, query: "lamps" },
         });
-        assert.ok(!packageResult.isError);
+        assert.ok(!packageResult.isError, JSON.stringify(packageResult));
         assert.ok(
           (packageResult.structuredContent as { sources: unknown[] }).sources
             .length > 0,
@@ -164,7 +160,7 @@ test("pre-cleanup database keeps every domain row, original bytes, retry and leg
           ),
         );
         const denied = await client.callTool({
-          name: "memory_context",
+          name: "timeline",
           arguments: { scope: "garden" },
         });
         assert.equal(

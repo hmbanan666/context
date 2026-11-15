@@ -39,6 +39,7 @@ import {
   unsetProjectGlossaryTerm,
   type ProjectGlossaryEntry,
   getProjectProfile,
+  findProject,
   hasProject,
   installProjects,
   isLinkedToProject,
@@ -47,6 +48,7 @@ import {
   linkConfiguredImport,
   linkedProjectSql,
   listProjects,
+  listVisibleProjects,
   mapRepository,
   type ProjectProfile,
   proposeProjectLink,
@@ -844,6 +846,17 @@ export class SourceStore {
 
   listProjects(limit?: number): { projects: Project[]; truncated: boolean } {
     return listProjects(this.#database, limit);
+  }
+
+  findProject(id: string): Project | undefined {
+    return findProject(this.#database, id);
+  }
+
+  listVisibleProjects(
+    areas: readonly string[],
+    limit?: number,
+  ): { projects: Project[]; truncated: boolean } {
+    return listVisibleProjects(this.#database, areas, limit);
   }
 
   mapRepository(repo: string, projectId: string): RepositoryMapping {

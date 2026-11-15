@@ -49,20 +49,72 @@ test("CLI initializes exactly one owner, prints credentials once, lists grants a
     const records = JSON.parse(list.stdout);
     assert.equal(records.length, 1);
     const clients = JSON.parse(run(["client", "list"]).stdout);
-    assert.deepEqual(clients[0].grants.write, ["garden"]);
+    const worker = clients.find(
+      (client: { name?: string }) => client.name === "fictional-worker",
+    );
+    assert.deepEqual(worker.grants.write, ["garden"]);
     const store = new AuthStore(path, ["personal", "garden"]);
     try {
       assert.equal(
         store.access(token, env.CONTEXT_PUBLIC_URL).defaultWrite,
         "garden",
       );
-      assert.equal(run(["client", "revoke", clients[0].id]).status, 0);
+      assert.equal(
+        store.access(token, env.CONTEXT_PUBLIC_URL).grants.project,
+        undefined,
+      );
+      const project = run([
+        "project",
+        "create",
+        "--id",
+        "alpha",
+        "--name",
+        "Synthetic Alpha",
+        "--home",
+        "garden",
+      ]);
+      assert.equal(project.status, 0, project.stderr);
+      const scoped = run([
+        "token",
+        "create",
+        "fictional-alpha",
+        "--read",
+        "garden",
+        "--write",
+        "garden",
+        "--default-write",
+        "garden",
+        "--project",
+        "alpha",
+      ]);
+      assert.equal(scoped.status, 0, scoped.stderr);
+      assert.equal(
+        store.access(scoped.stdout.trim(), env.CONTEXT_PUBLIC_URL).grants
+          .project,
+        "alpha",
+      );
+      const missing = run([
+        "token",
+        "create",
+        "fictional-missing",
+        "--read",
+        "garden",
+        "--project",
+        "missing",
+      ]);
+      assert.equal(missing.status, 1);
+      assert.match(missing.stderr, /Unknown project/);
+      assert.equal(run(["client", "revoke", worker.id]).status, 0);
       assert.throws(() => store.access(token, env.CONTEXT_PUBLIC_URL));
     } finally {
       store.close();
     }
     assert.equal(run(["token", "revoke", records[0].id]).status, 0);
-    assert.equal(JSON.parse(run(["token", "list"]).stdout)[0].revoked, true);
+    const after = JSON.parse(run(["token", "list"]).stdout);
+    assert.equal(
+      after.find((row: { id: string }) => row.id === records[0].id).revoked,
+      true,
+    );
     assert.equal(
       run([
         "token",

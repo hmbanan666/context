@@ -42,8 +42,11 @@ are also possible through authorized agents via MCP.
    log in with password + passkey (WebAuthn), with no separate MFA, and approve
    its rights and default write area. Registration alone grants no memory access.
 2. As the owner, I want to connect a headless agent, so that it can work without
-   a browser login. `context token create <client> --scope ...` issues a bearer
-   token with bounded rights. The client appears in the same revocable client list.
+   a browser login. `context token create <client> --read <areas> --write <areas>`
+   issues a bearer token with bounded area rights. `--project <id>` optionally
+   binds that token to one existing project; OAuth consent stays area-only.
+   The client appears in the same revocable client list. A token issued before
+   project binding has no project field and stays area-scoped.
 3. As the owner, I want to say "remember this", so that capture needs no technical
    choices. The client uses its default write area or an explicitly allowed area;
    unknown routing goes to inbox when authorized. Secrets are redacted before
@@ -155,9 +158,17 @@ implemented and not deployed.
   Proposals do not affect retrieval until that approval. Association is not
   permission.
 - `search` and `timeline` take an optional `project` filter and otherwise stay
-  area-wide. `search` with `listProjects: true` returns the bounded id-and-name
-  catalog and does not search. `read` returns each association's project id,
-  origin and status. The catalog is not the project profile.
+  area-wide for an area token. A token bound with `--project` always uses that
+  project: omitting the argument applies it, and a different id is rejected.
+  `search` with `listProjects: true` returns the bounded id-and-name catalog
+  and does not search. For an area token the catalog is projects whose home
+  area is readable, or that have a linked source or knowledge item in a
+  readable area. A project-bound token receives only its project. `read`
+  returns each association's project id, origin and status, and for a
+  project-bound token returns `not_found` unless the record is linked to that
+  project. `remember` from a project-bound token tags that project and rejects
+  any other id. The catalog is not the project profile. `tools/call` accepts
+  only `search`, `remember`, `read` and `timeline`.
 - The configured processor distills a source revision into one proposed sentence
   (`fact` or `decision`) with its project, date and source link. A source date
   with a numeric offset is accepted and stored on the item as UTC. When the

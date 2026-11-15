@@ -40,13 +40,13 @@ test("MCP grounds suggested knowledge, denies cross-scope references and exposes
     }),
   );
   const input = {
-    version: 1,
+    version: 1 as const,
     scope,
     idempotencyKey: "idea",
-    kind: "idea",
+    kind: "idea" as const,
     text: "A paper observatory",
     sourceRefs: [{ sourceId: source.id, quote: "paper observatory" }],
-    creator: { kind: "user", name: "Untrusted author claim" },
+    creator: { kind: "user" as const, name: "Untrusted author claim" },
   };
   try {
     const names = (await client.listTools()).tools.map((tool) => tool.name);
@@ -54,37 +54,31 @@ test("MCP grounds suggested knowledge, denies cross-scope references and exposes
       names.some((name) => /approve|review/.test(name)),
       false,
     );
-    const invalid = await client.callTool({
-      name: "add_knowledge",
-      arguments: { ...input, status: "approved" },
-    });
-    assert.equal(invalid.isError, true);
-    const crossScope = await client.callTool({
-      name: "add_knowledge",
-      arguments: { ...input, sourceRefs: [{ sourceId: foreign.id }] },
-    });
-    assert.equal(crossScope.isError, true);
-    assert.equal(JSON.stringify(crossScope).includes(foreign.text), false);
-    const saved = await client.callTool({
-      name: "add_knowledge",
-      arguments: input,
-    });
-    assert.ok(!saved.isError);
-    const { item } = z
-      .object({
-        item: z.object({ id: z.string(), status: z.literal("suggested") }),
-      })
-      .parse(saved.structuredContent);
-    const denied = await client.callTool({
-      name: "read_knowledge",
-      arguments: { version: 1, scope: foreign.scope, id: item.id },
-    });
-    assert.equal(denied.isError, true);
+    assert.throws(() =>
+      knowledge.add({
+        ...input,
+        sourceRefs: [{ sourceId: foreign.id }],
+      }),
+    );
+    const saved = knowledge.add(input);
+    assert.equal(saved.item.status, "suggested");
+    for (const name of ["add_knowledge", "read_knowledge"]) {
+      const hidden = await client.callTool({
+        name,
+        arguments: { version: 1, scope, id: saved.item.id },
+      });
+      assert.equal(hidden.isError, true, name);
+      assert.equal(
+        z.object({ error: z.string() }).parse(hidden.structuredContent).error,
+        "unknown_tool",
+      );
+      assert.equal(JSON.stringify(hidden).includes(foreign.text), false);
+    }
     const recalled = await client.callTool({
-      name: "read_knowledge",
-      arguments: { version: 1, scope, id: item.id },
+      name: "read",
+      arguments: { scope, id: saved.item.id },
     });
-    assert.ok(!recalled.isError);
+    assert.ok(!recalled.isError, JSON.stringify(recalled));
     assert.equal(knowledge.list(scope).length, 1);
   } finally {
     await client.close();

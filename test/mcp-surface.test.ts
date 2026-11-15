@@ -121,15 +121,8 @@ test("remember accepts a text file with safe retries, redaction and exact readba
   }
 });
 
-test("all legacy names remain callable while discovery advertises only four annotated tools", async () => {
+test("legacy tool names are rejected at tools/call while discovery lists four tools", async () => {
   const mcp = await open();
-  const called = new Set<string>();
-  const call = async (name: string, args: Record<string, unknown>) => {
-    const result = await mcp.call(name, { version: 1, ...args });
-    assert.ok(!result.isError, `${name}: ${JSON.stringify(result)}`);
-    called.add(name);
-    return object.parse(result.structuredContent);
-  };
   try {
     const listed = (await mcp.client.listTools()).tools;
     assert.deepEqual(listed.map((t) => t.name).sort(), [
@@ -148,125 +141,7 @@ test("all legacy names remain callable while discovery advertises only four anno
       assert.equal(tool.inputSchema.type, "object");
       assert.equal(tool.inputSchema.additionalProperties, false);
     }
-    const original = await call("capture", {
-      text: "Synthetic cobalt original",
-      origin: "fixture",
-      idempotencyKey: "original",
-    });
-    const source = z
-      .object({ id: z.string(), text: z.string() })
-      .parse(original.source);
-    assert.deepEqual((await call("recall", { id: source.id })).sources, [
-      original.source,
-    ]);
-    const note = await call("capture_material", {
-      text: "Synthetic cobalt material",
-      origin: "fixture",
-      idempotencyKey: "material",
-    });
-    const material = savedSchema.parse(note).material;
-    assert.deepEqual(
-      (await call("read_material", { id: material.source.id })).material,
-      note.material,
-    );
-    const fileSaved = await call("capture_file", {
-      ...file,
-      origin: "fixture",
-      idempotencyKey: "file",
-    });
-    const fileId = savedSchema.parse(fileSaved).material.source.id;
-    const bytes = (await call("read_file", { id: fileId })).file;
-    assert.deepEqual((await call("read", { id: fileId })).file, bytes);
-    assert.deepEqual(
-      (await call("read", { id: source.id })).material,
-      (await call("read_material", { id: source.id })).material,
-    );
-    const remembered = await call("remember", {
-      text: "Synthetic cobalt decision",
-      idempotencyKey: "note",
-    });
-    assert.equal(
-      savedSchema.parse(remembered).material.source.origin,
-      "mcp:local",
-    );
-    const memory = await call("memory_context", {});
-    assert.equal(memory.totalMatchingSources, 4);
-    const knowledgeInput = {
-      kind: "decision_proposal",
-      text: "Synthetic cobalt proposal",
-      sourceRefs: [{ sourceId: source.id }],
-      creator: { kind: "model", name: "fixture" },
-    };
-    const itemSchema = z.object({
-      id: z.string(),
-      status: z.literal("suggested"),
-    });
-    const first = await call("add_knowledge", {
-      ...knowledgeInput,
-      idempotencyKey: "first",
-    });
-    const second = await call("add_knowledge", {
-      ...knowledgeInput,
-      text: "Replacement cobalt proposal",
-      idempotencyKey: "second",
-    });
-    const firstId = itemSchema.parse(first.item).id;
-    const secondId = itemSchema.parse(second.item).id;
-    assert.deepEqual((await call("read_knowledge", { id: firstId })).items, [
-      first.item,
-    ]);
-    const relation = await call("relate_knowledge", {
-      kind: "supersedes",
-      fromId: secondId,
-      toId: firstId,
-      sourceRefs: knowledgeInput.sourceRefs,
-      creator: knowledgeInput.creator,
-      idempotencyKey: "relation",
-    });
-    assert.deepEqual((await call("read_relations", {})).relations, [
-      relation.relation,
-    ]);
-    for (const id of [firstId, secondId]) {
-      const read = await call("read", { id });
-      assert.deepEqual(read.relations, [relation.relation]);
-      assert.equal(itemSchema.parse(read.item).status, "suggested");
-      assert.equal(read.truncated, false);
-    }
-    for (const id of [source.id, material.source.id, fileId, firstId]) {
-      assert.equal(
-        (await mcp.call("read", { scope: "other", id })).isError,
-        true,
-      );
-      assert.equal(
-        (await mcp.call("read", { scope: "forbidden", id })).isError,
-        true,
-      );
-    }
-    const queued = await call("queue_processing", {
-      sourceId: source.id,
-      idempotencyKey: "job",
-    });
-    const job = z.object({ id: z.string() }).parse(queued.job);
-    assert.deepEqual((await call("processing_status", { id: job.id })).jobs, [
-      queued.job,
-    ]);
-    const legacy = await call("context_package", {
-      question: "cobalt",
-      limit: 2,
-    });
-    const current = await mcp.call("search", { query: "cobalt", k: 2 });
-    const data = object.parse(current.structuredContent);
-    assert.deepEqual(data, {
-      ...legacy,
-      readMore: {
-        sources: "read",
-        items: "read",
-        relations: "read",
-        arguments:
-          "scope=this scope, id=source/knowledge ID; for relations use fromId or toId",
-      },
-    });
-    assert.deepEqual([...called].filter((name) => name !== "read").sort(), [
+    for (const name of [
       "add_knowledge",
       "capture",
       "capture_file",
@@ -281,26 +156,18 @@ test("all legacy names remain callable while discovery advertises only four anno
       "read_relations",
       "recall",
       "relate_knowledge",
-      "remember",
-    ]);
-    for (const [name, args] of [
-      [
-        "capture",
-        {
-          text: "missing version",
-          origin: "fixture",
-          idempotencyKey: "invalid",
-        },
-      ],
-      ["context_package", { query: "wrong legacy schema" }],
-      ["read_material", { id: source.id }],
-    ] as const)
-      assert.equal((await mcp.call(name, args)).isError, true);
+    ]) {
+      const result = await mcp.call(name, { version: 1 });
+      assert.equal(result.isError, true, name);
+      assert.equal(
+        z.object({ error: z.string() }).parse(result.structuredContent).error,
+        "unknown_tool",
+      );
+    }
   } finally {
     await mcp.close();
   }
 });
-
 test("search and timeline honor area, date boundaries, ordering and bounds", async () => {
   const mcp = await open();
   try {
@@ -467,23 +334,16 @@ test("remember supersedes facts atomically and visible read/search expose source
       idempotencyKey: "file-update",
       supersedes: [current.material.source.id],
     });
-    const duplicate = await mcp.call("relate_knowledge", {
-      version: 1,
-      idempotencyKey: "duplicate",
-      kind: "duplicates",
-      fromId: copy.material.source.id,
-      toId: current.material.source.id,
-      sourceRefs: [{ sourceId: copy.material.source.id }],
-      creator: { kind: "user", name: "fixture" },
-    });
-    assert.ok(!duplicate.isError);
-    for (const id of [current.material.source.id, copy.material.source.id]) {
-      const relations = z
-        .array(z.object({ kind: z.string() }))
-        .parse((await history(id)).relations);
-      assert.ok(relations.some((r) => r.kind === "duplicates"));
-      assert.ok(relations.some((r) => r.kind === "supersedes"));
-    }
+    const relations = z
+      .array(z.object({ kind: z.string(), toId: z.string() }))
+      .parse((await history(copy.material.source.id)).relations);
+    assert.ok(
+      relations.some(
+        (relation) =>
+          relation.kind === "supersedes" &&
+          relation.toId === current.material.source.id,
+      ),
+    );
   } finally {
     await mcp.close();
   }
