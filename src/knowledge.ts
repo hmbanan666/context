@@ -612,6 +612,10 @@ export class KnowledgeStore {
       sourceIds.length > 100
     )
       throw new Error("Invalid candidate bound");
+    // kind doc is a source filter. Distilled facts, decisions and journals
+    // stay out even when the search is project-scoped.
+    if (input.documentsOnly || input.docType)
+      return { total: 0, items: [], matchOffsets: new Map<string, number>() };
     if (!input.terms.length && !sourceIds.length)
       return { total: 0, items: [], matchOffsets: new Map<string, number>() };
     // Area-wide search keeps its mix and omits distilled sentences and journals.

@@ -308,6 +308,54 @@ test("remember writes ADR revisions, read addresses them, and search keeps the l
     assert.equal(packed.includes(accepted.material.source.id), true);
     assert.equal(packed.includes(active.material.source.id), true);
     assert.equal(packed.includes(superseded.material.source.id), false);
+    const fact = mcp.knowledge.addDistilled({
+      scope: area,
+      sourceId: accepted.material.source.id,
+      kind: "decision",
+      text: "The cobalt ledger rule stays in force.",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      proposedProjectId: "alpha",
+    });
+    const mixed = z
+      .object({
+        items: z.array(z.object({ id: z.string(), kind: z.string() })),
+      })
+      .parse(
+        (
+          await mcp.call("search", {
+            query: "cobalt ledger",
+            project: "alpha",
+          })
+        ).structuredContent,
+      );
+    assert.equal(
+      mixed.items.some(
+        (item) => item.id === fact.item.id && item.kind === "decision",
+      ),
+      true,
+    );
+    const docsOnly = z
+      .object({
+        sources: z.array(
+          z.object({ id: z.string(), doc: z.unknown().optional() }),
+        ),
+        items: z.array(z.object({ kind: z.string() })),
+      })
+      .parse(
+        (
+          await mcp.call("search", {
+            query: "cobalt ledger",
+            project: "alpha",
+            kind: "doc",
+          })
+        ).structuredContent,
+      );
+    assert.equal(docsOnly.items.length, 0);
+    assert.equal(docsOnly.sources.length, 3);
+    assert.equal(
+      docsOnly.sources.every((source) => source.doc !== undefined),
+      true,
+    );
   } finally {
     await mcp.close();
   }

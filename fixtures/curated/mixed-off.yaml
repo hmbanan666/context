@@ -1,0 +1,43 @@
+area: studio
+project: mira
+questions:
+  - id: mix-weather
+    kind: off
+    lang: en
+    question: What is the weather in Paris?
+  - id: mix-borscht
+    kind: off
+    lang: ru
+    question: Какой рецепт борща?
+  - id: mix-cup
+    kind: off
+    lang: en
+    question: Who won the 2018 World Cup?
+  - id: mix-mbappe
+    kind: off
+    lang: en
+    question: Mbappé penalty final Luzhniki
+  - id: mix-qcd
+    kind: off
+    lang: en
+    question: What is quantum chromodynamics gluon confinement?
+  - id: mix-penalty
+    kind: off
+    lang: en
+    question: What was the penalty in the final?
+  - id: mix-rain
+    kind: off
+    lang: en
+    question: Will it rain in Paris tomorrow?
+  - id: mix-pogoda
+    kind: off
+    lang: ru
+    question: Какая погода в Париже?
+  - id: mix-asset
+    kind: off
+    lang: en
+    question: Where is the borscht recipe image asset?
+  - id: mix-venue
+    kind: off
+    lang: en
+    question: Where was the 2018 world cup final played?

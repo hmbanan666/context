@@ -40,7 +40,7 @@ import {
   type MaterialFileDescriptor,
   type MaterialMetadata,
 } from "./materials.js";
-import type { PackageSelection } from "./package-query.js";
+import { ftsTerms, type PackageSelection } from "./package-query.js";
 import {
   addClientAssociation,
   associationsFor,
@@ -84,6 +84,7 @@ import {
   installSearchIndex,
   lexicalCandidates,
   registerSearchFunctions,
+  stemText,
   type ExpandedTerm,
   type TermHit,
 } from "./search-lexical.js";
@@ -985,6 +986,46 @@ export class SourceStore {
         return material;
       }),
     };
+  }
+
+  // Corpus size for grounding. Common words are common in this area, or in
+  // this project when the search is project-scoped. Other areas do not count.
+  // Older revisions of a document do not count. A document filter counts only
+  // the current revisions that filter would return.
+  documentFrequency(
+    scope: string,
+    terms: readonly string[],
+    projectId?: string,
+    documents?: { readonly type?: "adr" | "spec" | "note" },
+  ): { documents: number; counts: Map<string, number> } {
+    const conditions = ["s.scope = ?"];
+    const params: (string | number)[] = [scope];
+    if (projectId) {
+      conditions.push(linkedProjectSql("source", "s.id"));
+      params.push(projectId);
+    }
+    if (documents) {
+      conditions.push(currentDocumentSourceSql(documents.type !== undefined));
+      if (documents.type) params.push(documents.type);
+    } else conditions.push(`NOT (${staleDocumentSourceSql})`);
+    const where = conditions.join(" AND ");
+    const corpus = Number(
+      this.#database
+        .prepare(`SELECT COUNT(*) n FROM sources s WHERE ${where}`)
+        .get(...params)?.n,
+    );
+    const counts = new Map<string, number>();
+    const countStem = this.#database.prepare(
+      `SELECT COUNT(*) n FROM sources_stemmed JOIN sources s ON s.rowid = sources_stemmed.rowid WHERE ${where} AND sources_stemmed MATCH ?`,
+    );
+    for (const term of terms) {
+      const stem = stemText(term);
+      counts.set(
+        term,
+        stem ? Number(countStem.get(...params, ftsTerms([stem]))?.n) : 0,
+      );
+    }
+    return { documents: corpus, counts };
   }
 
   createProject(input: {

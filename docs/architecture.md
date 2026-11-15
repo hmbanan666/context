@@ -39,7 +39,9 @@ transactionally. `context import markdown` stores one source per markdown file
 (further pieces only when the text exceeds the 8192-character source limit),
 using the relative path as the import key, and queues embeddings without a
 processor. `search` reports `grounding` of `strong`, `weak` or `none` from
-term overlap and, when vectors exist, cosine. That field is not a rank.
+uncommon terms that co-occur in one passage and, when vectors exist, cosine
+on that passage. Common words in a large corpus do not make a result strong.
+That field is not a rank.
 `redaction.ts` provides the shared deterministic filter for MCP,
 imports and collectors. All content/provenance strings are redacted before
 checksums, fingerprints, FTS or durable writes; decoded file bytes receive the
