@@ -32,7 +32,9 @@ export interface ExplainRow {
   readonly project?: string;
   readonly expect?: Expectation;
   readonly grounding: Grounding;
+  readonly rule: GroundingReport["rule"];
   readonly cosine: number;
+  readonly cosineSource: GroundingReport["cosineSource"];
   readonly background: number;
   readonly margin: number;
   readonly rareShare: number;
@@ -140,7 +142,9 @@ export function formatExplain(row: ExplainRow): string {
     ...(row.project ? [`project: ${row.project}`] : []),
     ...(row.expect ? [`expect: ${row.expect}`] : []),
     `grounding: ${row.grounding}`,
+    `rule: ${row.rule}`,
     `cosine: ${formatNumber(row.cosine)}`,
+    `cosineSource: ${row.cosineSource}`,
     `background: ${formatNumber(row.background)}`,
     `margin: ${formatNumber(row.margin)}`,
     `rareShare: ${formatNumber(row.rareShare)}`,
@@ -148,7 +152,7 @@ export function formatExplain(row: ExplainRow): string {
     `commonDropped: ${formatList(row.commonDropped)}`,
     `corpus: ${row.corpus}`,
     `documentFrequency: ${frequency || "-"}`,
-    `thresholds: lexicalStrong=${formatNumber(thresholds.lexicalStrong)} lexicalOnlyStrong=${formatNumber(thresholds.lexicalOnlyStrong)} marginWeak=${formatNumber(thresholds.marginWeak)} marginStrong=${formatNumber(thresholds.marginStrong)} commonCorpus=${thresholds.commonCorpus} commonMinDf=${thresholds.commonMinDf} commonRate=${formatNumber(thresholds.commonRate)}`,
+    `thresholds: lexicalStrong=${formatNumber(thresholds.lexicalStrong)} lexicalNone=${formatNumber(thresholds.lexicalNone)} lexicalOnlyStrong=${formatNumber(thresholds.lexicalOnlyStrong)} marginWeak=${formatNumber(thresholds.marginWeak)} marginStrong=${formatNumber(thresholds.marginStrong)} commonCorpus=${thresholds.commonCorpus} commonMinDf=${thresholds.commonMinDf} commonRate=${formatNumber(thresholds.commonRate)}`,
     `vectors: ${row.vectors}`,
     `topHit: ${row.topHit ? `${row.topHit.id}${row.topHit.title ? ` ${row.topHit.title}` : ""}` : "-"}`,
   ];
@@ -372,7 +376,9 @@ function rowFromReport(
     ...(project ? { project } : {}),
     ...(expect ? { expect } : {}),
     grounding: report.label,
+    rule: report.rule,
     cosine: report.cosine,
+    cosineSource: report.cosineSource,
     background: report.background,
     margin: report.margin,
     rareShare: report.rareShare,

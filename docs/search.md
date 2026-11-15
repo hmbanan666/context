@@ -52,37 +52,54 @@ they occur throughout that project. Glossary synonyms are not protected.
 The uncommon share is the IDF of the uncommon terms matched in the best
 window, divided by the IDF of every content term. With embeddings, that
 share must reach `CONTEXT_GROUNDING_LEXICAL_STRONG` (default `0.5`) and the
-margin must reach `CONTEXT_GROUNDING_MARGIN_STRONG` (default `0.08`). The
-margin is the evidence cosine minus the cosine of the query against a
-cached centroid of the passage vectors in that area, or in that project
-when the search is project-scoped. The centroid is the mean of those
-normalized chunk vectors, normalized again, and it is recomputed when the
-chunk set changes. With no embeddings, the share must reach the stricter
-`CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`) and the margin is
-not used.
+margin must reach `CONTEXT_GROUNDING_MARGIN_STRONG` (default `0.08`) to be
+`strong`. The margin is the evidence cosine minus the cosine of the query
+against a cached centroid of the passage vectors in that area, or in that
+project when the search is project-scoped. The centroid is the mean of
+those normalized chunk vectors, normalized again, and it is recomputed when
+the chunk set changes. With no embeddings, the share must reach the
+stricter `CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`) and the
+margin is not used. On that path a share below
+`CONTEXT_GROUNDING_LEXICAL_NONE` (default `0.30`) is `none`.
 
-If no passage matches a rare term, common words are not evidence. The margin
-of the best cosine, including a neighbour that matched no query term,
-decides: below `CONTEXT_GROUNDING_MARGIN_WEAK` (default `0.03`) is `none`,
-and at or above that floor is `weak`. Margin alone reaches `strong` only
-when no query term matched at all and the margin reaches `0.08`. When a
-passage does contain a rare query term, the margin is read from that
-passage, not from a different card. On the public curated fixture with
-multilingual-e5-small, on-topic margin was 0.014–0.081 (median 0.032) and
-off-topic margin was negative, because those neighbours stayed under the
-0.80 retrieval floor. On the mixed corpus, off-topic margin reached 0.109
-(median 0.069) while absolute cosine reached 0.928, so a cosine cut does
-not separate the classes. `0.03` / `0.08` keep that fixture's off-topic
-rows at `none` or `weak`. A large private corpus compresses E5 cosines
-further. Calibrate the two margin variables with
+With embeddings, the result is `none` when the uncommon share is below
+`CONTEXT_GROUNDING_LEXICAL_NONE` (default `0.30`) and the margin is below
+`CONTEXT_GROUNDING_MARGIN_WEAK` (default `0.024`). That includes a passage
+that matched a rare term, when the match is only a small part of the query.
+Otherwise the older rules apply. If no rare term matched, common words are
+not evidence: margin below the weak floor is `none`, and at or above that
+floor is `weak`. Margin alone reaches `strong` only when no query term
+matched at all and the margin reaches `0.08`. When a passage does contain
+a rare query term and the none rule did not fire, the margin is read from
+that passage, not from a different card.
+
+Search keeps vector hits only at cosine 0.80 or above, and at most 20
+records, so the passage that carried the rare term can be missing from
+that list. Grounding then reads the stored chunk vector and dots it with
+the query already embedded for search. It does not embed the passage
+again. `cosineSource` is `vector` when that cosine, or a search hit, was
+used, and `missing` when the chunk has no stored vector for this model. A
+missing cosine counts as 0, so the margin is about minus the centroid.
+A rendered profile section has no chunk row and stays `missing`.
+
+On the public curated fixture with multilingual-e5-small, on-topic margin
+was 0.014–0.081 (median 0.032) and off-topic margin was negative, because
+those neighbours stayed under the 0.80 retrieval floor. On the mixed
+corpus, off-topic margin reached 0.109 (median 0.069) while absolute
+cosine reached 0.928, so a cosine cut does not separate the classes. A
+project-scoped calibration separated on-topic from off-topic with margin
+`0.024` or rare share `0.30`. `0.024` / `0.08` stay the defaults while the
+public curated and mixed evals, lexical and semantic, stay green. A large
+private corpus compresses E5 cosines further. Calibrate with
 `context grounding explain --file` on the database you search. The field is
 not charged against the evidence byte budget.
 
 `context grounding explain` runs this same search and prints the label, the
-best cosine, the background cosine, the margin, the rare-term share, the
-rare terms that matched, the common terms dropped, the corpus size and
-document frequencies, and the top hit id and title. It does not write
-thresholds.
+rule that fired, the best cosine, whether the evidence cosine came from a
+vector or was missing, the background cosine, the margin, the rare-term
+share, the rare terms that matched, the common terms dropped, the corpus
+size and document frequencies, and the top hit id and title. It does not
+write thresholds.
 
 ```sh
 context grounding explain --query "where is the lantern" --area studio

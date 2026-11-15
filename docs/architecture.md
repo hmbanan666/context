@@ -41,9 +41,9 @@ using the relative path as the import key, and queues embeddings without a
 processor. `search` reports `grounding` of `strong`, `weak` or `none` from
 uncommon terms that co-occur in one passage and, when vectors exist, the
 margin of that passage over the cached area or project centroid. Common
-words in a large corpus do not make a result strong, and a match of only
-those words is `none` when the margin is below the weak floor. That field
-is not a rank.
+words in a large corpus do not make a result strong. A low uncommon share
+is `none` when the margin is below the weak floor, even if a rare term
+matched. That field is not a rank.
 `redaction.ts` provides the shared deterministic filter for MCP,
 imports and collectors. All content/provenance strings are redacted before
 checksums, fingerprints, FTS or durable writes; decoded file bytes receive the

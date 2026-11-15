@@ -4,7 +4,7 @@ import type { SemanticHits } from "./embedding-index.js";
 import {
   bestCosine,
   explainStoredGrounding,
-  groundingVectors,
+  passageVectors,
   type Grounding,
   type GroundingPassage,
   type GroundingReport,
@@ -295,15 +295,29 @@ export function buildContextPackage(
       : undefined;
   const passages: GroundingPassage[] = [];
   if (frequency) {
+    const stored = semantic?.storedCosines?.([
+      ...original.materials.map((material) => ({
+        kind: "sources" as const,
+        id: material.source.id,
+      })),
+      ...derived.items.map((item) => ({
+        kind: "knowledge_items" as const,
+        id: item.id,
+      })),
+    ]);
     for (const material of original.materials) {
-      const vectors = groundingVectors(semantic?.sources, material.source.id);
+      const vectors = passageVectors(
+        material.source.id,
+        semantic?.sources,
+        stored,
+      );
       passages.push({
         text: visibleSourceText(material.source.text),
         ...(vectors.length ? { vectors } : {}),
       });
     }
     for (const item of derived.items) {
-      const vectors = groundingVectors(semantic?.items, item.id);
+      const vectors = passageVectors(item.id, semantic?.items, stored);
       passages.push({
         text: item.text,
         ...(vectors.length ? { vectors } : {}),

@@ -94,9 +94,11 @@ Every `search` result includes `grounding`: `strong`, `weak`, or `none`.
 It is computed from uncommon query terms that co-occur in one passage and,
 when embeddings exist, from the margin of that passage over the area or
 project centroid. Common words in a large corpus do not make a result
-strong. If no rare term matches and the margin is below the weak floor, the
-result is `none`. It is not the rank of the first card. A page can be the
-nearest stored page and still be `none`.
+strong. The result is `none` when the uncommon share is below `0.30` and,
+if embeddings exist, the margin is below the weak floor. That includes a
+rare term that covers only a small part of the query. It is not the rank
+of the first card. A page can be the nearest stored page and still be
+`none`.
 
 Instruct the agent:
 
@@ -105,9 +107,11 @@ Instruct the agent:
 - `strong`: answer from the cited text.
 
 Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
-a term is common from corpus size `40`, document frequency `8`, and rate
-`0.05`; margin `0.03` / `0.08`) and can be set with
+share below `0.30` is the none floor; a term is common from corpus size
+`40`, document frequency `8`, and rate `0.05`; margin `0.024` / `0.08`) and
+can be set with
 `CONTEXT_GROUNDING_LEXICAL_STRONG`,
+`CONTEXT_GROUNDING_LEXICAL_NONE`,
 `CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG`,
 `CONTEXT_GROUNDING_COMMON_CORPUS`,
 `CONTEXT_GROUNDING_COMMON_MIN_DF`,
