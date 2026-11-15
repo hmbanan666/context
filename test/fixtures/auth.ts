@@ -56,6 +56,7 @@ export function fixtureAuth(
           process: granted.process.filter(
             (a) => scopes.includes("context:process") && scopes.includes(a),
           ),
+          ...(granted.project ? { project: granted.project } : {}),
         },
         write[0] ?? null,
         86400,

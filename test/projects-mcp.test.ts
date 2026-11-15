@@ -10,6 +10,7 @@ import {
 import { protectMcp } from "../src/auth.js";
 import { JobStore } from "../src/jobs.js";
 import { KnowledgeStore } from "../src/knowledge.js";
+import { buildMemoryContext, InvalidMemoryCursor } from "../src/memory.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
 import type { ClientGrants } from "./fixtures/auth.js";
@@ -101,6 +102,22 @@ test("protected MCP applies area and operation grants to every read, write, proc
       ["context_package", { question: "secret" }],
       ["memory_context", {}],
     ] as const;
+    const hidden = new Set([
+      "recall",
+      "read_material",
+      "read_file",
+      "read_knowledge",
+      "read_relations",
+      "processing_status",
+      "context_package",
+      "memory_context",
+      "capture",
+      "capture_material",
+      "capture_file",
+      "add_knowledge",
+      "relate_knowledge",
+      "queue_processing",
+    ]);
     for (const [name, args] of reads) {
       const result = await codex.callTool({
         name,
@@ -113,7 +130,9 @@ test("protected MCP applies area and operation grants to every read, write, proc
       assert.equal(result.isError, true, name);
       assert.match(
         JSON.stringify(result.structuredContent),
-        /insufficient_scope|forbidden_scope/,
+        hidden.has(name)
+          ? /unknown_tool/
+          : /insufficient_scope|forbidden_scope/,
         name,
       );
       assert.equal(JSON.stringify(result).includes(sb.text), false, name);
@@ -186,25 +205,28 @@ test("protected MCP applies area and operation grants to every read, write, proc
       assert.equal(result.isError, true, name);
       assert.match(
         JSON.stringify(result.structuredContent),
-        /insufficient_scope|forbidden_scope/,
+        hidden.has(name)
+          ? /unknown_tool/
+          : /insufficient_scope|forbidden_scope/,
         name,
       );
     }
     const context = await codex.callTool({
-      name: "context_package",
+      name: "search",
       arguments: {
-        version: 1,
         scope: a,
-        question: "observatory",
-        maxBytes: 2048,
+        query: "observatory",
+        budgetBytes: 2048,
       },
     });
-    assert.ok(!context.isError);
+    assert.ok(!context.isError, JSON.stringify(context));
     assert.ok(JSON.stringify(context).includes(sa.id));
     assert.equal(JSON.stringify(context).includes(sb.id), false);
-    assert.ok(
-      Buffer.byteLength(JSON.stringify(context.structuredContent)) <= 2048,
-    );
+    const { readMore: _hint, ...pack } = context.structuredContent as Record<
+      string,
+      unknown
+    >;
+    assert.ok(Buffer.byteLength(JSON.stringify(pack)) <= 2048);
     const tools = (await codex.listTools()).tools;
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       "read",
@@ -236,6 +258,10 @@ test("protected MCP applies area and operation grants to every read, write, proc
       },
     });
     assert.equal(deniedQueue.isError, true);
+    assert.equal(
+      (deniedQueue.structuredContent as { error?: string }).error,
+      "unknown_tool",
+    );
     assert.equal(jobs.list(a).length, 0);
     const owner = await connect("context-chatgpt");
     const queued = await owner.callTool({
@@ -247,7 +273,11 @@ test("protected MCP applies area and operation grants to every read, write, proc
         idempotencyKey: "owner-job",
       },
     });
-    assert.ok(!queued.isError);
+    assert.equal(
+      (queued.structuredContent as { error?: string }).error,
+      "unknown_tool",
+    );
+    assert.equal(jobs.list(a).length, 0);
     const missingRead = await connect("fictional-reader", ["context:write"]);
     for (const [name, args] of reads) {
       const denied = await missingRead.callTool({
@@ -261,7 +291,7 @@ test("protected MCP applies area and operation grants to every read, write, proc
       assert.equal(denied.isError, true, name);
       assert.match(
         JSON.stringify(denied.structuredContent),
-        /insufficient_scope/,
+        hidden.has(name) ? /unknown_tool/ : /insufficient_scope/,
         name,
       );
     }
@@ -280,10 +310,7 @@ test("protected MCP applies area and operation grants to every read, write, proc
         },
       });
       assert.equal(denied.isError, true);
-      assert.match(
-        JSON.stringify(denied.structuredContent),
-        /insufficient_scope/,
-      );
+      assert.match(JSON.stringify(denied.structuredContent), /unknown_tool/);
     }
     // A configured non-personal area supports the same memory journey.
     const note = {
@@ -298,22 +325,17 @@ test("protected MCP applies area and operation grants to every read, write, proc
       ...(saved.structuredContent as object),
       duplicate: true,
     });
-    const page = await owner.callTool({
-      name: "memory_context",
-      arguments: { scope: a, limit: 1 },
-    });
-    assert.ok(!page.isError);
-    const cursor = (page.structuredContent as { nextCursor: string })
-      .nextCursor;
-    assert.ok(cursor);
-    const otherArea = await owner.callTool({
-      name: "memory_context",
-      arguments: { scope: b, limit: 1, cursor },
-    });
-    assert.deepEqual(otherArea.structuredContent, {
-      version: 1,
-      error: "invalid_cursor",
-    });
+    const page = buildMemoryContext(sources, { scope: a, limit: 1 });
+    assert.ok(page.nextCursor);
+    assert.throws(
+      () =>
+        buildMemoryContext(sources, {
+          scope: b,
+          limit: 1,
+          cursor: page.nextCursor ?? undefined,
+        }),
+      InvalidMemoryCursor,
+    );
     const defaultSaved = await owner.callTool({
       name: "remember",
       arguments: {

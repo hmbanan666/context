@@ -152,7 +152,7 @@ test("built-in auth routes and CLI credentials work through the HTTP listener, i
     assert.ok(
       !(
         await client.callTool({
-          name: "memory_context",
+          name: "timeline",
           arguments: { scope: "garden" },
         })
       ).isError,

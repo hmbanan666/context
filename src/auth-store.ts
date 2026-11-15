@@ -20,12 +20,20 @@ export const digest = (value: string) =>
   createHash("sha256").update(value).digest("base64url");
 export const equal = (a: string, b: string) =>
   timingSafeEqual(Buffer.from(digest(a)), Buffer.from(digest(b)));
+// Same character rules as an area, capped at the project id length. Absent on
+// tokens issued before project binding; those credentials stay area-scoped.
+const projectGrantSchema = scopeSchema.pipe(z.string().max(64));
 export const grantsSchema = z.strictObject({
   read: z.array(scopeSchema).max(8),
   write: z.array(scopeSchema).max(8),
   process: z.array(scopeSchema).max(8),
+  project: projectGrantSchema.optional(),
 });
 export type Grants = z.infer<typeof grantsSchema>;
+export function retainProject(grants: Grants, source: Grants): Grants {
+  if (source.project === undefined) return grants;
+  return { ...grants, project: projectGrantSchema.parse(source.project) };
+}
 export const clientAuthMethods = [
   "none",
   "client_secret_basic",
@@ -118,7 +126,7 @@ export class AuthStore {
   }
   validateGrants(input: Grants, defaultWrite: string | null) {
     const grants = grantsSchema.parse(input);
-    for (const list of Object.values(grants)) {
+    for (const list of [grants.read, grants.write, grants.process]) {
       if (
         new Set(list).size !== list.length ||
         list.some((a) => !this.areas.includes(a))
@@ -129,6 +137,8 @@ export class AuthStore {
       throw new Error("Default must be writable");
     if (grants.write.length && defaultWrite === null)
       throw new Error("Choose a default write area");
+    if (grants.project && !grants.read.length && !grants.write.length)
+      throw new Error("Invalid grants");
     return grants;
   }
   listClients(): RegisteredClient[] {
@@ -226,6 +236,13 @@ export class AuthStore {
     )
       throw new Error("Invalid token options");
     const grants = this.validateGrants(input, defaultWrite);
+    // The client registry is the area ceiling. Project binding stays on the
+    // credential so a later area-only token for the same name is not narrowed.
+    const areas: Grants = {
+      read: grants.read,
+      write: grants.write,
+      process: grants.process,
+    };
     return this.transaction(() => {
       let client = this.listClients().find(
         (c) => c.name === name && c.kind === "cli",
@@ -239,7 +256,7 @@ export class AuthStore {
           name,
           redirects: [],
           refresh: false,
-          grants,
+          grants: areas,
           defaultWrite,
           created: this.now(),
           lastUsed: null,
@@ -249,7 +266,7 @@ export class AuthStore {
       } else {
         for (const op of ["read", "write", "process"] as const)
           client.grants[op] = [
-            ...new Set([...client.grants[op], ...grants[op]]),
+            ...new Set([...client.grants[op], ...areas[op]]),
           ];
         client.defaultWrite = defaultWrite ?? client.defaultWrite;
       }
@@ -363,7 +380,13 @@ export class AuthStore {
         "UPDATE auth_clients SET data=json_set(data, '$.lastUsed', ?) WHERE id=?",
       )
       .run(client.lastUsed, client.id);
-    return { ...token, grants, client };
+    let scoped: Grants;
+    try {
+      scoped = retainProject(grants, token.grants);
+    } catch {
+      throw new Error("Invalid token");
+    }
+    return { ...token, grants: scoped, client };
   }
   async initOwner(password: string) {
     if (password.length < 12 || password.length > 1024)

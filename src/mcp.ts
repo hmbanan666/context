@@ -4,7 +4,12 @@ import {
   McpServer,
 } from "@modelcontextprotocol/server";
 import type { AuthStore, Grants } from "./auth-store.js";
-import { captureSchema, recallSchema, scopeSchema } from "./contracts.js";
+import {
+  captureSchema,
+  personalDataScope,
+  recallSchema,
+  scopeSchema,
+} from "./contracts.js";
 import type { EmbeddingIndex } from "./embedding-index.js";
 import type { JobStore } from "./jobs.js";
 import type { KnowledgeStore } from "./knowledge.js";
@@ -159,6 +164,8 @@ export function createContextMcp(
           }
         },
       );
+      const onlyArea = (areas: readonly string[] | undefined) =>
+        areas?.length === 1 ? areas[0] : undefined;
       registerSurfaceTools(
         server,
         store,
@@ -166,7 +173,12 @@ export function createContextMcp(
         authorize,
         protectedMode,
         authInfo?.clientId ?? "local",
-        credential?.defaultWrite ?? undefined,
+        onlyArea(grants?.write) ??
+          credential?.defaultWrite ??
+          personalDataScope,
+        onlyArea(grants?.read) ?? personalDataScope,
+        grants?.project,
+        grants?.read,
       );
       return server;
     },

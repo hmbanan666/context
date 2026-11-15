@@ -10,6 +10,7 @@ import {
 import { z } from "zod";
 import { protectMcp } from "../src/auth.js";
 import { backupDatabase, restoreDatabase } from "../src/backup.js";
+import { buildMemoryContext, InvalidMemoryCursor } from "../src/memory.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
 import type { ClientGrants } from "./fixtures/auth.js";
@@ -21,6 +22,32 @@ const grants: ClientGrants = {
   "context-chatgpt": { read: [scope], write: [scope], process: [] },
   "context-codex": { read: [scope], write: [], process: [] },
 };
+
+function contextCall(sources: SourceStore, args: Record<string, unknown>) {
+  try {
+    const data = buildMemoryContext(sources, {
+      scope: typeof args.scope === "string" ? args.scope : scope,
+      ...(typeof args.from === "string" ? { from: args.from } : {}),
+      ...(typeof args.until === "string" ? { until: args.until } : {}),
+      ...(typeof args.query === "string" ? { query: args.query } : {}),
+      ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {}),
+      ...(typeof args.limit === "number" ? { limit: args.limit } : {}),
+      ...(typeof args.maxBytes === "number" ? { maxBytes: args.maxBytes } : {}),
+    });
+    return { isError: false, structuredContent: data };
+  } catch (error) {
+    return {
+      isError: true,
+      structuredContent: {
+        version: 1,
+        error:
+          error instanceof InvalidMemoryCursor
+            ? "invalid_cursor"
+            : "invalid_input",
+      },
+    };
+  }
+}
 
 async function openMemory(path: string) {
   const store = new SourceStore(path);
@@ -110,7 +137,7 @@ test("remember saves an original without user-selected scopes or signatures and 
     });
     const reader = await memory.connect("context-codex");
     const original = await reader.callTool({
-      name: "read_material",
+      name: "read",
       arguments: { version: 1, scope, id: saved.material.source.id },
     });
     assert.ok(!original.isError);
@@ -186,16 +213,12 @@ test("memory context covers a period beyond the recent twenty, handles offsets a
       text: "Foreign observatory diary",
       idempotencyKey: "foreign",
     });
-    const reader = await memory.connect("context-codex");
     const filters = {
       from: "2026-09-01T00:00:00Z",
       until: "2026-10-01T00:00:00Z",
       limit: 7,
     };
-    const first = await reader.callTool({
-      name: "memory_context",
-      arguments: filters,
-    });
+    const first = contextCall(memory.store, filters);
     assert.ok(!first.isError, JSON.stringify(first));
     let page = contextSchema.parse(first.structuredContent);
     assert.equal(page.totalMatchingSources, 28);
@@ -216,9 +239,9 @@ test("memory context covers a period beyond the recent twenty, handles offsets a
     let pages = 1;
     while (page.nextCursor) {
       assert.ok(pages++ < 10, "pagination must terminate");
-      const response = await reader.callTool({
-        name: "memory_context",
-        arguments: { ...filters, cursor: page.nextCursor },
+      const response = contextCall(memory.store, {
+        ...filters,
+        cursor: page.nextCursor,
       });
       assert.ok(!response.isError);
       page = contextSchema.parse(response.structuredContent);
@@ -227,14 +250,16 @@ test("memory context covers a period beyond the recent twenty, handles offsets a
     }
     assert.equal(ids.length, 28);
     assert.deepEqual(new Set(ids), expectedIds);
-    const changed = await reader.callTool({
-      name: "memory_context",
-      arguments: { ...filters, from: "2026-08-01T00:00:00Z", cursor },
+    const changed = contextCall(memory.store, {
+      ...filters,
+      from: "2026-08-01T00:00:00Z",
+      cursor,
     });
     assert.equal(changed.isError, true);
-    const search = await reader.callTool({
-      name: "memory_context",
-      arguments: { ...filters, query: "missingword observatory", limit: 20 },
+    const search = contextCall(memory.store, {
+      ...filters,
+      query: "missingword observatory",
+      limit: 20,
     });
     assert.equal(
       contextSchema.parse(search.structuredContent).totalMatchingSources,
@@ -274,13 +299,13 @@ test("personal tools enforce owner, operation and independent client grants befo
     for (const scopes of [["context:read", "context:write"], [scope]]) {
       const denied = await memory.connect("context-chatgpt", scopes);
       for (const request of [
-        { name: "memory_context", arguments: {} },
+        { name: "timeline", arguments: {} },
         {
           name: "remember",
           arguments: { text: "Fictional denied", idempotencyKey: "denied" },
         },
         {
-          name: "read_material",
+          name: "read",
           arguments: { version: 1, scope, id: saved.material.source.id },
         },
       ]) {
@@ -323,7 +348,7 @@ test("personal tools enforce owner, operation and independent client grants befo
     assert.equal(
       (
         await reader.callTool({
-          name: "memory_context",
+          name: "timeline",
           arguments: { scope: "other" },
         })
       ).isError,
@@ -338,8 +363,7 @@ test("personal tools enforce owner, operation and independent client grants befo
       401,
     );
     const context = contextSchema.parse(
-      (await reader.callTool({ name: "memory_context", arguments: {} }))
-        .structuredContent,
+      contextCall(memory.store, {}).structuredContent,
     );
     assert.equal(context.totalMatchingSources, 1);
     assert.equal(context.truncated, false);
@@ -374,9 +398,9 @@ test("byte-bounded context advances without losing originals, and rejects malfor
     const observed: string[] = [];
     let omitted = 0;
     for (let i = 0; i < 10; i++) {
-      const result = await reader.callTool({
-        name: "memory_context",
-        arguments: { maxBytes: 1500, ...(cursor ? { cursor } : {}) },
+      const result = contextCall(memory.store, {
+        maxBytes: 1500,
+        ...(cursor ? { cursor } : {}),
       });
       assert.ok(!result.isError);
       assert.ok(
@@ -393,7 +417,7 @@ test("byte-bounded context advances without losing originals, and rejects malfor
         assert.ok(oversized.requiredBytes > 1500);
         assert.equal(page.truncated, true);
         const full = await reader.callTool({
-          name: "read_material",
+          name: "read",
           arguments: { version: 1, scope, id: oversized.id },
         });
         assert.ok(!full.isError);
@@ -413,14 +437,9 @@ test("byte-bounded context advances without losing originals, and rejects malfor
       { limit: 500000 },
       { maxBytes: 10000000 },
     ])
-      assert.equal(
-        (await reader.callTool({ name: "memory_context", arguments: input }))
-          .isError,
-        true,
-      );
-    const empty = await reader.callTool({
-      name: "memory_context",
-      arguments: { query: '" OR absenttoken NOT *' },
+      assert.equal(contextCall(memory.store, input).isError, true);
+    const empty = contextCall(memory.store, {
+      query: '" OR absenttoken NOT *',
     });
     assert.ok(!empty.isError);
     assert.equal(
@@ -461,17 +480,11 @@ test("a restored private inbox keeps original bytes, metadata, timeline and retr
         ),
         { ...saved, duplicate: true },
       );
-      const freshReader = await clone.connect("context-codex");
       const page = contextSchema.parse(
-        (
-          await freshReader.callTool({
-            name: "memory_context",
-            arguments: {
-              from: "2026-09-01T00:00:00Z",
-              until: "2026-10-01T00:00:00Z",
-            },
-          })
-        ).structuredContent,
+        contextCall(clone.store, {
+          from: "2026-09-01T00:00:00Z",
+          until: "2026-10-01T00:00:00Z",
+        }).structuredContent,
       );
       assert.equal(page.totalMatchingSources, 1);
       assert.deepEqual(page.sources[0], saved.material);
@@ -503,19 +516,12 @@ test("every accepted timezone offset remains retrievable with the same timestamp
       });
       assert.ok(!saved.isError);
     }
-    const reader = await memory.connect("context-codex");
-    const all = await reader.callTool({
-      name: "memory_context",
-      arguments: {},
-    });
+    const all = contextCall(memory.store, {});
     assert.ok(!all.isError, JSON.stringify(all));
     assert.equal(contextSchema.parse(all.structuredContent).sources.length, 3);
-    const filtered = await reader.callTool({
-      name: "memory_context",
-      arguments: {
-        from: "2026-09-01T12:00:00+15:00",
-        until: "2026-09-01T13:00:00+15:00",
-      },
+    const filtered = contextCall(memory.store, {
+      from: "2026-09-01T12:00:00+15:00",
+      until: "2026-09-01T13:00:00+15:00",
     });
     assert.ok(!filtered.isError);
     const page = contextSchema.parse(filtered.structuredContent);

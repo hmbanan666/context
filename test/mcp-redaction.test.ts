@@ -31,12 +31,7 @@ test("every MCP source writer redacts before storage, checksums and retry identi
     }),
   );
   try {
-    for (const name of [
-      "capture",
-      "capture_material",
-      "remember",
-      "capture_file",
-    ]) {
+    for (const name of ["remember"]) {
       const args = {
         version: 1,
         scope: "personal",
@@ -69,7 +64,7 @@ test("every MCP source writer redacts before storage, checksums and retry identi
       assert.ok(id);
       const lookup = { version: 1, scope: "personal", id };
       const read = await client.callTool({
-        name: "read_material",
+        name: "read",
         arguments: lookup,
       });
       const material = (
@@ -83,16 +78,6 @@ test("every MCP source writer redacts before storage, checksums and retry identi
         createHash("sha256").update(retained).digest("hex"),
       );
       assert.ok(!JSON.stringify(read).includes(secret));
-      if (name === "capture_file") {
-        const file = await client.callTool({
-          name: "read_file",
-          arguments: lookup,
-        });
-        const bytes = (
-          file.structuredContent as { file: { contentBase64: string } }
-        ).file.contentBase64;
-        assert.equal(Buffer.from(bytes, "base64").toString(), retained);
-      }
       const retry = await client.callTool({ name, arguments: args });
       assert.equal(data(retry).duplicate, true);
       const cleanRetry = await client.callTool({
@@ -152,46 +137,33 @@ test("knowledge, relation and queue writes cannot persist secrets in text, prove
         version: `password=${secret}`,
       },
     };
-    const ids: string[] = [];
-    for (const key of ["one", "two"]) {
-      const args = { ...provenance, text, kind: "idea", idempotencyKey: key };
-      const added = await call("add_knowledge", args);
-      assert.ok(!added.isError);
-      assert.ok(!JSON.stringify(added).includes(secret));
-      const id = (added.structuredContent as { item: { id: string } }).item.id;
-      ids.push(id);
-      const read = await call("read_knowledge", { id });
-      assert.ok(!JSON.stringify(read).includes(secret));
-      assert.equal(data(await call("add_knowledge", args)).duplicate, true);
+    for (const name of [
+      "add_knowledge",
+      "read_knowledge",
+      "relate_knowledge",
+      "read_relations",
+      "queue_processing",
+    ]) {
+      const hidden = await call(name, {
+        text,
+        idempotencyKey: "hidden",
+        kind: "idea",
+        sourceId,
+        ...provenance,
+      });
+      assert.equal(hidden.isError, true, name);
+      assert.equal(
+        (hidden.structuredContent as { error?: string }).error,
+        "unknown_tool",
+      );
+      assert.ok(!JSON.stringify(hidden).includes(secret), name);
     }
-    const relation = {
-      ...provenance,
-      fromId: ids[0],
-      toId: ids[1],
-      kind: "supports",
-      idempotencyKey: "relation",
-    };
-    const related = await call("relate_knowledge", relation);
-    assert.ok(!related.isError);
-    assert.ok(!JSON.stringify(related).includes(secret));
-    assert.equal(
-      data(await call("relate_knowledge", relation)).duplicate,
-      true,
-    );
-    assert.ok(
-      !JSON.stringify(await call("read_relations", {})).includes(secret),
-    );
-    // Secret-bearing identities must be rejected, never collapsed to one marker.
-    for (const [name, args] of [
-      ["remember", { text }],
-      ["add_knowledge", { ...provenance, text, kind: "idea" }],
-      ["relate_knowledge", relation],
-      ["queue_processing", { sourceId }],
-    ] as const) {
-      const rejected = await call(name, { ...args, idempotencyKey: secret });
-      assert.equal(rejected.isError, true, name);
-      assert.ok(!JSON.stringify(rejected).includes(secret), name);
-    }
+    const rejected = await call("remember", {
+      text,
+      idempotencyKey: secret,
+    });
+    assert.equal(rejected.isError, true);
+    assert.ok(!JSON.stringify(rejected).includes(secret));
     for (const file of await readdir(directory)) {
       assert.ok(
         !(await readFile(join(directory, file))).includes(Buffer.from(secret)),

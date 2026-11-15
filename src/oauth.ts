@@ -8,6 +8,7 @@ import {
   equal,
   type Grants,
   grantScopes,
+  retainProject,
   secret,
   type TokenRecord,
 } from "./auth-store.js";
@@ -302,6 +303,7 @@ export class AuthorizationServer {
           this.store.deleteSession(value);
           location.searchParams.set("error", "access_denied");
         } else {
+          // OAuth consent is area-only. A project binding is a CLI token option.
           const grants: Grants = { read: [], write: [], process: [] };
           for (const op of ["read", "write", "process"] as const) {
             grants[op] = form.getAll(op);
@@ -513,10 +515,16 @@ export class AuthorizationServer {
             client.grants[op].includes(a) &&
             this.config.areas.includes(a),
         );
+      let scoped: Grants;
+      try {
+        scoped = retainProject(grants, token.grants);
+      } catch {
+        throw new OAuthFailure("invalid_grant");
+      }
       const common = {
         clientId: client.id,
         resource: token.resource,
-        grants,
+        grants: scoped,
         defaultWrite:
           token.defaultWrite && grants.write.includes(token.defaultWrite)
             ? token.defaultWrite

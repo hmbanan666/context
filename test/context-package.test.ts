@@ -49,13 +49,20 @@ test("package finds old derived knowledge, one-hop causes and exact compact sour
       ["What did the cobalt telescope reveal?", [ids.long]],
     ] as const) {
       const r = await client.callTool({
-        name: "context_package",
-        arguments: { question, ...period, maxBytes: 4096 },
+        name: "search",
+        arguments: {
+          query: question,
+          since: period.from,
+          until: period.until,
+          budgetBytes: 4096,
+        },
       });
-      assert.ok(!r.isError);
-      const data = r.structuredContent as unknown as ReturnType<
-        typeof buildContextPackage
-      >;
+      assert.ok(!r.isError, JSON.stringify(r));
+      const { readMore: _hint, ...rest } = r.structuredContent as Record<
+        string,
+        unknown
+      > & { readMore?: unknown };
+      const data = rest as unknown as ReturnType<typeof buildContextPackage>;
       assert.deepEqual(new Set(data.sources.map((s) => s.id)), new Set(wanted));
       assert.ok(Buffer.byteLength(JSON.stringify(data)) <= 4096);
       for (const s of data.sources) {
@@ -67,8 +74,8 @@ test("package finds old derived knowledge, one-hop causes and exact compact sour
           m.source.text.slice(s.excerpt.start, s.excerpt.end),
         );
         const read = await client.callTool({
-          name: "read_material",
-          arguments: { version: 1, scope, id: s.id },
+          name: "read",
+          arguments: { scope, id: s.id },
         });
         assert.deepEqual(
           (read.structuredContent as Record<string, unknown>)?.material,
@@ -111,8 +118,8 @@ test("authorization precedes package counts and traversal; private defaults neve
       [forgedScope, { scope: "forbidden" }],
     ] as const) {
       const r = await client.callTool({
-        name: "context_package",
-        arguments: { question: "platinum", ...args },
+        name: "search",
+        arguments: { query: "platinum", ...args },
       });
       assert.equal(r.isError, true);
       assert.equal(
@@ -133,8 +140,8 @@ test("authorization precedes package counts and traversal; private defaults neve
     assert.equal(wrongOwner, true);
     const ordinary = await f.connect("context-codex");
     const r = await ordinary.callTool({
-      name: "context_package",
-      arguments: { question: "platinum" },
+      name: "search",
+      arguments: { query: "platinum" },
     });
     assert.ok(!r.isError);
     assert.deepEqual(
@@ -142,8 +149,8 @@ test("authorization precedes package counts and traversal; private defaults neve
       [],
     );
     const original = await ordinary.callTool({
-      name: "memory_context",
-      arguments: period,
+      name: "timeline",
+      arguments: { since: period.from, until: period.until },
     });
     assert.ok(!original.isError);
   } finally {
@@ -166,8 +173,8 @@ test("authorization precedes package counts and traversal; private defaults neve
         }),
       );
       const response = await client.callTool({
-        name: "context_package",
-        arguments: { question: "private" },
+        name: "search",
+        arguments: { query: "private" },
       });
       assert.equal(response.isError, true);
       assert.equal(
@@ -737,8 +744,8 @@ for (const [question, prefix, fact] of [
       }).item;
       const client = await f.connect();
       const response = await client.callTool({
-        name: "context_package",
-        arguments: { question, maxBytes: 4096 },
+        name: "search",
+        arguments: { query: question, budgetBytes: 4096 },
       });
       assert.ok(!response.isError);
       const result = response.structuredContent as unknown as ReturnType<

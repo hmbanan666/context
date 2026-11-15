@@ -29,10 +29,20 @@ test("MCP preserves file bytes and metadata and denies material access outside g
   };
   try {
     const saved = await client.callTool({
-      name: "capture_file",
-      arguments: args,
+      name: "remember",
+      arguments: {
+        version: 1,
+        scope: args.scope,
+        idempotencyKey: args.idempotencyKey,
+        metadata: args.metadata,
+        file: {
+          filename: args.filename,
+          mediaType: args.mediaType,
+          contentBase64: args.contentBase64,
+        },
+      },
     });
-    assert.ok(!saved.isError);
+    assert.ok(!saved.isError, JSON.stringify(saved));
     const { material } = z
       .object({
         material: z.object({
@@ -43,45 +53,44 @@ test("MCP preserves file bytes and metadata and denies material access outside g
       .parse(saved.structuredContent);
     assert.equal(material.source.text, "Synthetic green kite.\r\n");
     assert.equal(material.metadata.title, "Synthetic idea");
-    const lookup = { version: 1, scope: args.scope, id: material.source.id };
-    const file = await client.callTool({
-      name: "read_file",
-      arguments: lookup,
+    const read = await client.callTool({
+      name: "read",
+      arguments: { scope: args.scope, id: material.source.id },
     });
     assert.equal(
       z
         .object({ file: z.object({ contentBase64: z.string() }) })
-        .parse(file.structuredContent).file.contentBase64,
+        .parse(read.structuredContent).file.contentBase64,
       args.contentBase64,
     );
-    for (const name of ["read_file", "read_material"]) {
-      const denied = await client.callTool({
-        name,
-        arguments: { ...lookup, scope: "forbidden" },
-      });
-      assert.equal(denied.isError, true);
-      assert.equal(JSON.stringify(denied).includes("green kite"), false);
-    }
-    for (const name of ["capture_material", "capture_file"]) {
-      const input =
-        name === "capture_file"
-          ? args
-          : {
-              version: 1,
-              scope: args.scope,
-              origin: args.origin,
-              idempotencyKey: "material-001",
-              text: "Synthetic note",
-            };
-      const denied = await client.callTool({
-        name,
-        arguments: { ...input, scope: "forbidden" },
-      });
-      assert.equal(denied.isError, true);
-    }
+    const denied = await client.callTool({
+      name: "read",
+      arguments: { scope: "forbidden", id: material.source.id },
+    });
+    assert.equal(denied.isError, true);
+    assert.equal(JSON.stringify(denied).includes("green kite"), false);
+    const deniedWrite = await client.callTool({
+      name: "remember",
+      arguments: {
+        version: 1,
+        scope: "forbidden",
+        idempotencyKey: "material-001",
+        text: "Synthetic note",
+      },
+    });
+    assert.equal(deniedWrite.isError, true);
     const malformed = await client.callTool({
-      name: "capture_file",
-      arguments: { ...args, contentBase64: "not base64" },
+      name: "remember",
+      arguments: {
+        version: 1,
+        scope: args.scope,
+        idempotencyKey: "bad-file",
+        file: {
+          filename: args.filename,
+          mediaType: args.mediaType,
+          contentBase64: "not base64",
+        },
+      },
     });
     assert.equal(malformed.isError, true);
   } finally {

@@ -120,48 +120,49 @@ test(
               ),
             );
             const saved = await client.callTool({
-              name: "capture",
+              name: "remember",
               arguments: {
                 version: 1,
                 scope: syntheticSource.scope,
                 text: syntheticSource.text,
-                origin: "fixture:process-smoke",
                 idempotencyKey: "process-smoke-001",
               },
             });
-            assert.ok(!saved.isError);
+            assert.ok(!saved.isError, JSON.stringify(saved));
             const output = z
               .record(z.string(), z.unknown())
               .parse(saved.structuredContent);
             const source = z
               .record(z.string(), z.unknown())
-              .parse(output.source);
+              .parse(
+                z
+                  .object({ source: z.record(z.string(), z.unknown()) })
+                  .parse(output.material).source,
+              );
             assert.equal(output.duplicate, restart === 1);
             if (restart === 0) capturedSource = source;
             else assert.deepEqual(source, capturedSource);
             assert.equal(source.text, syntheticSource.text);
-            assert.equal(
-              source.checksum,
-              "764a377a0b97c616c0d85f32c933f1be9c400b422a2581687778222efa45ae31",
-            );
             const recalled = await client.callTool({
-              name: "recall",
+              name: "read",
               arguments: {
-                version: 1,
                 scope: syntheticSource.scope,
                 id: source.id,
               },
             });
             assert.deepEqual(
               z
-                .record(z.string(), z.unknown())
-                .parse(recalled.structuredContent).sources,
-              [capturedSource],
+                .object({ source: z.record(z.string(), z.unknown()) })
+                .parse(
+                  z
+                    .record(z.string(), z.unknown())
+                    .parse(recalled.structuredContent).material,
+                ).source,
+              capturedSource,
             );
             const seeded = await client.callTool({
-              name: "recall",
+              name: "search",
               arguments: {
-                version: 1,
                 scope: syntheticSource.scope,
                 query: "imaginary blue marbles",
               },

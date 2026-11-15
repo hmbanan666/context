@@ -46,8 +46,8 @@ test("eval retrieves the same vector-only evidence as protected MCP", async () =
     };
     const client = await f.connect();
     const response = await client.callTool({
-      name: "context_package",
-      arguments: { question: question.question },
+      name: "search",
+      arguments: { query: question.question },
     });
     assert.equal(
       (response.structuredContent as { sources: { id: string }[] }).sources[0]
@@ -308,8 +308,8 @@ test("semantic candidates use a 0.80 floor, top 20 cap and outweigh duplicate le
     }
     const client = await f.connect();
     const r = await client.callTool({
-      name: "context_package",
-      arguments: { question: "Как восстановить наблюдения?" },
+      name: "search",
+      arguments: { query: "Как восстановить наблюдения?" },
     });
     assert.deepEqual(
       (r.structuredContent as { sources: { id: string }[] }).sources.map(
@@ -329,16 +329,16 @@ test("semantic candidates use a 0.80 floor, top 20 cap and outweigh duplicate le
       /* drain */
     }
     const capped = await client.callTool({
-      name: "context_package",
-      arguments: { question: "Как восстановить наблюдения?", limit: 20 },
+      name: "search",
+      arguments: { query: "Как восстановить наблюдения?", k: 20 },
     });
     assert.equal(
       (capped.structuredContent as { sources: unknown[] }).sources.length,
       20,
     );
     const fused = await client.callTool({
-      name: "context_package",
-      arguments: { question: "unrelated", limit: 1 },
+      name: "search",
+      arguments: { query: "unrelated", k: 1 },
     });
     assert.deepEqual(
       (fused.structuredContent as { sources: { id: string }[] }).sources.map(

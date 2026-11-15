@@ -368,6 +368,63 @@ export function listProjects(
     truncated,
   };
 }
+export function findProject(db: DatabaseSync, id: string): Project | undefined {
+  const projectId = projectIdSchema.parse(id);
+  const row = db
+    .prepare("SELECT id, name, home_area FROM projects WHERE id = ?")
+    .get(projectId) as Record<string, unknown> | undefined;
+  return row ? decodeProject(row) : undefined;
+}
+function catalogLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10_000)
+    throw new Error("Invalid project catalog limit");
+  return limit;
+}
+// Home area in the granted areas, or a linked source/knowledge row in one of
+// them. A repository mapping does not publish the project by itself.
+export function listVisibleProjects(
+  db: DatabaseSync,
+  areas: readonly string[],
+  limit?: number,
+): { projects: Project[]; truncated: boolean } {
+  const bounded = catalogLimit(limit);
+  const granted = [...new Set(areas.map((area) => scopeSchema.parse(area)))];
+  if (!granted.length) return { projects: [], truncated: false };
+  const marks = granted.map(() => "?").join(", ");
+  const knowledge = knowledgeReady(db);
+  const params: (string | number)[] = [...granted, ...granted];
+  let sql = `SELECT p.id AS id, p.name AS name, p.home_area AS home_area
+    FROM projects p
+    WHERE p.home_area IN (${marks})
+       OR EXISTS (
+         SELECT 1 FROM project_associations pa
+         JOIN sources s ON pa.record_kind = 'source' AND pa.record_id = s.id
+         WHERE pa.project_id = p.id AND pa.status = 'linked'
+           AND s.scope IN (${marks})
+       )`;
+  if (knowledge) {
+    sql += `
+       OR EXISTS (
+         SELECT 1 FROM project_associations pa
+         JOIN knowledge_items k ON pa.record_kind = 'knowledge' AND pa.record_id = k.id
+         WHERE pa.project_id = p.id AND pa.status = 'linked'
+           AND k.scope IN (${marks})
+       )`;
+    params.push(...granted);
+  }
+  sql += " ORDER BY p.id";
+  if (bounded !== undefined) {
+    sql += " LIMIT ?";
+    params.push(bounded + 1);
+  }
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  const truncated = bounded !== undefined && rows.length > bounded;
+  return {
+    projects: (truncated ? rows.slice(0, bounded) : rows).map(decodeProject),
+    truncated,
+  };
+}
 function mappedProject(db: DatabaseSync, repo: string): string | undefined {
   const key = repositoryKey(repo);
   const row = db

@@ -27,8 +27,10 @@ Resource URLs and client/token storage formats remain stable in this refactor.
 See [deployment](deployment.md#authentication) for expiry and recovery details.
 
 Areas are independent of topics. `CONTEXT_AREAS` defines up to eight; wire fields
-remain `scope`. `remember` defaults to the credential's write area, which grants
-no extra rights. Loopback no-auth mode is explicit and forbidden in production.
+remain `scope`. When a credential has one read area, `search`, `read` and
+`timeline` default to it; otherwise they default to `personal`. When it has
+one write area, `remember` defaults to that area. A default grants no extra
+rights. Loopback no-auth mode is explicit and forbidden in production.
 
 ## Sources and retrieval
 
@@ -44,12 +46,11 @@ and retain changed external items as immutable revisions. Source and import
 identity commit together. Unchanged revisions skip safely on retries.
 
 MCP discovery lists only `search`, `remember`, `read` and `timeline`.
-`mcp-surface.ts` registers these thin adapters and overrides only `tools/list`;
-the SDK still validates and dispatches every old name through `tools/call` with
-its original schema and access checks. Existing text `remember` calls retain
-client provenance and retry identity; an optional file input uses the same file
-writer/redaction as `capture_file`. Grounded suggestions remain a distinct legacy
-write (`add_knowledge`). No storage or credential migration is required.
+`mcp-surface.ts` registers these adapters and rejects every other name at
+`tools/call` as well as hiding it from `tools/list`. A CLI token may carry one
+optional project id beside its areas; rows that omit it stay area-scoped, and
+OAuth consent does not set a project. No startup rewrite of stored credentials
+is required. See [ADR 0017](adr/0017-project-scoped-tokens.md).
 
 `search` maps query/k/date inputs to the existing context package and points
 follow-up reads to `read`. `read` returns originals, file bytes or knowledge plus
@@ -74,7 +75,7 @@ existing database; no startup cleanup drops or rewrites them.
 
 ## Retrieval measurement
 
-The [eval harness](evals.md) exercises the protected `context_package` handler
+The [eval harness](evals.md) exercises the protected `search` handler
 with simulated read-only client grants over an in-process MCP transport. Search
 remains owned by the MCP implementation, with its embedding index attached.
 Nightly eval shares the server index/model; the standalone CLI opens a read-only

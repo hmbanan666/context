@@ -106,3 +106,49 @@ test("MCP bearer gate denies absent, foreign and revoked credentials and keeps t
     store.close();
   }
 });
+
+test("project binding stays on the credential and does not rewrite an older token", () => {
+  const store = new AuthStore(":memory:", ["personal", "garden"]);
+  const resource = "https://context.example/mcp";
+  try {
+    const area = store.createCliToken(
+      "fictional-worker",
+      { read: ["personal"], write: ["garden"], process: [] },
+      "garden",
+      86400,
+      resource,
+    );
+    const bound = store.createCliToken(
+      "fictional-worker",
+      {
+        read: ["garden"],
+        write: ["garden"],
+        process: [],
+        project: "alpha",
+      },
+      "garden",
+      86400,
+      resource,
+    );
+    const older = store.access(area.token, resource).grants;
+    assert.deepEqual(older, {
+      read: ["personal"],
+      write: ["garden"],
+      process: [],
+    });
+    assert.equal("project" in older, false);
+    assert.equal(store.access(bound.token, resource).grants.project, "alpha");
+    assert.equal(store.listClients()[0]?.grants.project, undefined);
+    assert.throws(() =>
+      store.createCliToken(
+        "fictional-bound",
+        { read: [], write: [], process: [], project: "alpha" },
+        null,
+        86400,
+        resource,
+      ),
+    );
+  } finally {
+    store.close();
+  }
+});

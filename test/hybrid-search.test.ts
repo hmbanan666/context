@@ -41,8 +41,8 @@ test("authorized packages find RU inflections and EN plurals in sources and know
       "планета",
     ]) {
       const result = await client.callTool({
-        name: "context_package",
-        arguments: { question },
+        name: "search",
+        arguments: { query: question },
       });
       assert.ok(!result.isError);
       const data = result.structuredContent as {
@@ -232,10 +232,10 @@ test("MCP fuses paraphrases with lexical ranks after area, date and knowledge-st
       "Как восстановить наблюдения?",
     ]) {
       const response = await client.callTool({
-        name: "context_package",
+        name: "search",
         arguments: {
-          question,
-          from: "2026-10-01T00:00:00Z",
+          query: question,
+          since: "2026-10-01T00:00:00Z",
           until: "2026-11-01T00:00:00Z",
         },
       });
@@ -267,8 +267,8 @@ test("MCP fuses paraphrases with lexical ranks after area, date and knowledge-st
       assert.equal(data.coverage.knowledgeMatches, 1);
     }
     const denied = await client.callTool({
-      name: "context_package",
-      arguments: { question: "restore", scope: "forbidden" },
+      name: "search",
+      arguments: { query: "restore", scope: "forbidden" },
     });
     assert.ok(denied.isError);
     assert.equal(
@@ -308,8 +308,8 @@ test("long-text embeddings retain later passages and their original excerpt offs
     assert.ok(f.embeddings.status("personal").chunks > 1);
     const client = await f.connect();
     const r = await client.callTool({
-      name: "context_package",
-      arguments: { question: "Recover observations" },
+      name: "search",
+      arguments: { query: "Recover observations" },
     });
     const data = r.structuredContent as {
       sources: {
@@ -368,8 +368,8 @@ test("rebuild invalidates in-flight embeddings and can be retried without changi
     assert.deepEqual(f.store.find(source.id, "personal"), source);
     const client = await f.connect();
     const r = await client.callTool({
-      name: "context_package",
-      arguments: { question: "server" },
+      name: "search",
+      arguments: { query: "server" },
     });
     assert.equal(
       (r.structuredContent as { sources: { id: string }[] }).sources[0]?.id,
@@ -431,36 +431,36 @@ test("owner rebuild CLI preserves originals and startup backfills automatically 
         new URL(`http://127.0.0.1:${service.address.port}/mcp`),
       ),
     );
+    const { DatabaseSync } = await import("node:sqlite");
+    const jobs = new DatabaseSync(path, { readOnly: true });
     let completed = 0;
-    for (let i = 0; i < 100 && completed !== 1; i++) {
-      const status = await client.callTool({
-        name: "processing_status",
-        arguments: { version: 1, scope: "personal" },
-      });
-      assert.ok(!status.isError);
-      const data = status.structuredContent as {
-        embeddings: {
-          completed: number;
-          queued: number;
-          running: number;
-          failed: number;
-        };
-      };
-      completed = data.embeddings.completed;
-      assert.equal(
-        data.embeddings.completed +
-          data.embeddings.queued +
-          data.embeddings.running +
-          data.embeddings.failed,
-        1,
-      );
-      if (completed !== 1)
-        await new Promise((resolve) => setTimeout(resolve, 10));
+    try {
+      for (let i = 0; i < 100 && completed !== 1; i++) {
+        const rows = jobs
+          .prepare(
+            "SELECT status, COUNT(*) AS n FROM embedding_jobs WHERE scope = 'personal' GROUP BY status",
+          )
+          .all() as { status: string; n: number }[];
+        const count = (status: string) =>
+          Number(rows.find((row) => row.status === status)?.n ?? 0);
+        completed = count("completed");
+        assert.equal(
+          count("completed") +
+            count("queued") +
+            count("running") +
+            count("failed"),
+          1,
+        );
+        if (completed !== 1)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      jobs.close();
     }
     assert.equal(completed, 1);
     const response = await client.callTool({
-      name: "context_package",
-      arguments: { question: "бэкап" },
+      name: "search",
+      arguments: { query: "бэкап" },
     });
     assert.equal(
       (response.structuredContent as { sources: { id: string }[] }).sources[0]
@@ -468,8 +468,8 @@ test("owner rebuild CLI preserves originals and startup backfills automatically 
       source.id,
     );
     const denied = await client.callTool({
-      name: "processing_status",
-      arguments: { version: 1, scope: "forbidden" },
+      name: "search",
+      arguments: { query: "бэкап", scope: "forbidden" },
     });
     assert.ok(denied.isError);
     assert.equal(
@@ -507,8 +507,8 @@ test("weak semantic neighbours do not fill a package with unrelated evidence", a
     }
     const client = await f.connect();
     const r = await client.callTool({
-      name: "context_package",
-      arguments: { question: "Restore lost observations" },
+      name: "search",
+      arguments: { query: "Restore lost observations" },
     });
     const data = r.structuredContent as {
       sources: unknown[];
@@ -517,8 +517,8 @@ test("weak semantic neighbours do not fill a package with unrelated evidence", a
     assert.deepEqual(data.sources, []);
     assert.equal(data.coverage.sourceMatches, 0);
     const lexical = await client.callTool({
-      name: "context_package",
-      arguments: { question: "flower" },
+      name: "search",
+      arguments: { query: "flower" },
     });
     assert.equal(
       (lexical.structuredContent as { sources: unknown[] }).sources.length,
@@ -618,8 +618,8 @@ test("current sources outrank history and duplicate-only matches return one read
     }
     const client = await f.connect();
     const result = await client.callTool({
-      name: "context_package",
-      arguments: { question: "agents", maxBytes: 10000 },
+      name: "search",
+      arguments: { query: "agents", budgetBytes: 10000 },
     });
     const cards = (
       result.structuredContent as {
@@ -632,8 +632,8 @@ test("current sources outrank history and duplicate-only matches return one read
     );
     assert.equal(cards[1]?.supersededBy, "new");
     const copies = await client.callTool({
-      name: "context_package",
-      arguments: { question: "uniquealias garden", maxBytes: 10000 },
+      name: "search",
+      arguments: { query: "uniquealias garden", budgetBytes: 10000 },
     });
     assert.deepEqual(
       (copies.structuredContent as { sources: { id: string }[] }).sources.map(
@@ -642,8 +642,8 @@ test("current sources outrank history and duplicate-only matches return one read
       ["canonical"],
     );
     const canonicalOnly = await client.callTool({
-      name: "context_package",
-      arguments: { question: "original", maxBytes: 10000 },
+      name: "search",
+      arguments: { query: "original", budgetBytes: 10000 },
     });
     assert.deepEqual(
       (
@@ -711,8 +711,8 @@ test("knowledge supersession and canonical chains preserve current cards and exa
       });
     const client = await f.connect();
     const result = await client.callTool({
-      name: "context_package",
-      arguments: { question: "policy", maxBytes: 10000 },
+      name: "search",
+      arguments: { query: "policy", budgetBytes: 10000 },
     });
     const cards = (
       result.structuredContent as {
@@ -725,8 +725,8 @@ test("knowledge supersession and canonical chains preserve current cards and exa
     );
     assert.equal(cards[1]?.supersededBy, current.id);
     const copies = await client.callTool({
-      name: "context_package",
-      arguments: { question: "secondalias", maxBytes: 10000 },
+      name: "search",
+      arguments: { query: "secondalias", budgetBytes: 10000 },
     });
     assert.deepEqual(
       (copies.structuredContent as { items: { id: string }[] }).items.map(
@@ -736,8 +736,8 @@ test("knowledge supersession and canonical chains preserve current cards and exa
     );
     assert.deepEqual(f.knowledge.find(copy2.id, "personal"), copy2);
     const denied = await client.callTool({
-      name: "read_relations",
-      arguments: { version: 1, scope: "forbidden" },
+      name: "read",
+      arguments: { scope: "forbidden", id: canonical.id },
     });
     assert.equal(denied.isError, true);
   } finally {
