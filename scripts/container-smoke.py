@@ -1,6 +1,7 @@
 """Exercise a built Context image using disposable, loopback-only synthetic storage."""
 import http.client
 import json
+import os
 import subprocess
 import sys
 import time
@@ -54,6 +55,38 @@ def main():
         assert get("/.well-known/oauth-protected-resource/mcp") == 200
         assert get("/mcp", "POST") == 401
         print("Protected container health, metadata and anonymous denial: passed", flush=True)
+        init = run(["docker", "exec", container, "context", "init"])
+        issued = json.loads(init.stdout)
+        token = issued["admin"]["token"]
+        password = issued["owner"]["password"]
+        assert issued["mcpUrl"] == "https://context.example/mcp"
+        assert issued["owner"]["created"] is True
+        assert issued["admin"]["created"] is True
+        again = run(["docker", "exec", container, "context", "init"])
+        assert token not in again.stdout and password not in again.stdout
+        repeat = json.loads(again.stdout)
+        assert repeat["admin"]["created"] is False
+        assert repeat["mcp"]["headers"]["Authorization"] == "Bearer <already issued>"
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        smoke = subprocess.run(
+            ["node", os.path.join(root, "scripts", "mcp-smoke.mjs")],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=root,
+            env={
+                **os.environ,
+                "MCP_URL": f"http://127.0.0.1:{port}/mcp",
+                "MCP_HOST": "context.example",
+                "MCP_TOKEN": token,
+                "MCP_SCOPE": "sandbox",
+            },
+        )
+        mcp = json.loads(smoke.stdout)
+        assert mcp["tools"] == ["read", "remember", "search", "timeline"]
+        assert mcp["searchOk"] is True
+        print("Init token, tools/list and search: passed", flush=True)
         insert = """import {SourceStore} from './dist/src/store.js';
 import {KnowledgeStore} from './dist/src/knowledge.js';
 import {JobStore} from './dist/src/jobs.js';

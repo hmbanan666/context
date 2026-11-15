@@ -1,7 +1,8 @@
 # Hosting, client access and recovery
 
 The [README](../README.md) is the installation guide and single environment-variable
-reference. Context needs one container behind HTTPS and persistent SQLite storage.
+reference. A new image install is [Quick start](QUICKSTART.md). Context needs
+one container behind HTTPS and persistent SQLite storage.
 On 2 November 2026 the owner confirms built-in OAuth/ChatGPT, eval #27 and hybrid
 search #28 are deployed. This refactor has not accessed or changed production.
 
@@ -103,9 +104,17 @@ Access tokens last five minutes. Refresh authorization lasts one day, or 30 days
 with separately consented `offline_access`; rotation retains the original family
 deadline. Replay of a consumed code or refresh token revokes that family.
 
+`context init` prepares a new database in one step: the owner when missing,
+an optional project (`--project` with `--name`), and one admin token for
+every configured area. `--project` binds that token. The password and token
+print once. [Quick start](QUICKSTART.md). `context owner init` remains the
+password-only command and still refuses a second owner.
+
 Inside the container (or `pnpm run context ...` in a built checkout):
 
 ```sh
+context init
+context init --project notes --name "Notes"
 context token create coding-agent --read projects --write projects --default-write projects
 context token create one-project --read projects --write projects --default-write projects --project observatory
 context client list
@@ -397,8 +406,10 @@ row. `search`, `read` and profile `inForce` pick up the new item status
 immediately. The journal paragraph includes the change on the next tidy
 refresh. No fifth MCP tool is added.
 
-The OpenAI-compatible API remains the default (`CONTEXT_PROCESSOR` unset or
-`openai`). Compose forwards the selector and these existing API settings:
+The OpenAI-compatible client is selected when `CONTEXT_PROCESSOR` is unset or
+`openai`. It stays off until both the key and the model are set.
+[Providers](llm-providers.md). Compose forwards the selector and these
+existing API settings:
 
 - `CONTEXT_LLM_API_KEY`: endpoint credential (a placeholder is enough for a local
   endpoint that requires no authentication).

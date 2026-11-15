@@ -222,3 +222,53 @@ for (const overlay of [false, true]) {
 console.log(
   "Optional Codex overlay: isolated mounts and inherited hardening passed",
 );
+
+const fresh = JSON.parse(
+  execFileSync(
+    "docker",
+    [
+      "compose",
+      "-p",
+      "fictional-context",
+      "--env-file",
+      "/dev/null",
+      "-f",
+      "compose.yaml",
+      "config",
+      "--format",
+      "json",
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        CONTEXT_PUBLIC_URL: "https://context.example/mcp",
+      },
+    },
+  ),
+);
+assert.equal(fresh.services.context.image, "ghcr.io/hmbanan666/context:latest");
+assert.equal(fresh.services.context.build, undefined);
+assert.equal(fresh.services.context.environment.CONTEXT_AREAS, "personal");
+assert.equal(fresh.services.context.environment.CONTEXT_PROCESSOR, "");
+assert.equal(fresh.services.context.environment.CONTEXT_LLM_API_KEY, "");
+assert.equal(fresh.services.context.environment.CONTEXT_LLM_MODEL, "");
+assert.equal(fresh.services.context.ports?.[0]?.host_ip, "127.0.0.1");
+assert.equal(fresh.services.context.ports?.[0]?.published, "3000");
+assert.deepEqual(
+  fresh.services.context.volumes.map(
+    (volume: { target: string }) => volume.target,
+  ),
+  ["/app/data"],
+);
+assert.equal(
+  readBackupConfig(fresh.services.context.environment).directory,
+  "/app/data/backups",
+);
+assert.equal(
+  readBackupConfig(fresh.services.context.environment).target.kind,
+  "none",
+);
+console.log(
+  "New-install compose: published image, one area, processor off, data volume passed",
+);

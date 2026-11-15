@@ -27,4 +27,29 @@ jobs:
       - name: Validate base and Traefik Compose configurations (no daemon)
         run: node dist/test/validate-compose.js
       - run: docker build -t context:ci .
-      - run: pnpm run test:container
+      - name: Smoke the image (init, tools/list, search)
+        run: pnpm run test:container
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
+      - name: Build and push
+        run: |
+          image=ghcr.io/hmbanan666/context
+          docker build \
+            --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
+            -t "$image:${{ github.sha }}" \
+            -t "$image:latest" \
+            .
+          docker push "$image:${{ github.sha }}"
+          docker push "$image:latest"
