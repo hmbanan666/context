@@ -58,8 +58,18 @@ OAuth consent does not set a project. No startup rewrite of stored credentials
 is required. See [ADR 0017](adr/0017-project-scoped-tokens.md).
 
 `search` maps query/k/date inputs to the existing context package and points
-follow-up reads to `read`. `read` returns originals, file bytes or knowledge plus
-bounded incident relations in the authorized area. `timeline` uses the existing
+follow-up reads to `read`. Optional `kind: "doc"` and `docType` limit that
+search to the current revision of an ADR, spec or note. Older revisions stay
+out of the candidate set. Accepted ADRs and active specs rank above an equal
+match; superseded, rejected and obsolete documents rank lower.
+`read` returns originals, file bytes or knowledge plus
+bounded incident relations in the authorized area. A document id
+`doc:<project>:<type>:<key>` reads the current revision, and `@<revision>`
+reads an older one. `remember` with `doc` appends a revision for one project
+and records the token name on the status.
+See [ADR 0018](adr/0018-documents-are-versioned-sources.md).
+
+`timeline` uses the existing
 bounded source timeline, newest first by creation date else capture date; derived
 suggestions are not separate source events. See the [tool table](../README.md#mcp-tools).
 `memory.ts` pages original evidence; `context-package.ts` builds bounded evidence

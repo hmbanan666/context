@@ -166,6 +166,14 @@ export function createContextMcp(
       );
       const onlyArea = (areas: readonly string[] | undefined) =>
         areas?.length === 1 ? areas[0] : undefined;
+      let tokenLabel = "local";
+      if (credential && stores.auth) {
+        try {
+          tokenLabel = stores.auth.client(credential.clientId).name;
+        } catch {
+          tokenLabel = credential.clientId;
+        }
+      }
       registerSurfaceTools(
         server,
         store,
@@ -179,6 +187,7 @@ export function createContextMcp(
         onlyArea(grants?.read) ?? personalDataScope,
         grants?.project,
         grants?.read,
+        tokenLabel,
       );
       return server;
     },

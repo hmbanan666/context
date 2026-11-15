@@ -37,8 +37,8 @@ context import markdown fixtures/curated/mira-quill --area studio --project mira
 `CONTEXT_DB_PATH` and `CONTEXT_AREAS` select the database and the legal
 areas. Import does not need `CONTEXT_PUBLIC_URL`. The command walks `*.md`
 recursively. The relative path is the stable key. Optional YAML front matter
-may set `title`, `project`, `date`, and `tags`. Details and limits are in
-[Imports](imports.md).
+may set `title`, `project`, `date`, and `tags`. `type`, `key` and `status`
+mark an ADR, spec or note. Details and limits are in [Imports](imports.md).
 
 Running the import again skips unchanged files and writes a new revision for
 files that changed. The summary reports `added`, `updated`, and `skipped`.
@@ -63,6 +63,30 @@ client's `Authorization` header the same way as the [quick start](QUICKSTART.md)
 
 `remember` then returns an authorization error. `search`, `read`, and
 `timeline` stay available.
+
+## ADRs and specs
+
+A project folder can include architecture notes the assistant should quote.
+Add front matter and import the folder with the same command:
+
+```yaml
+---
+type: adr
+key: "0012"
+status: accepted
+title: Keep the amber index
+---
+```
+
+`type` is `adr`, `spec` or `note`. ADR status is `proposed`, `accepted`,
+`superseded` or `rejected`. Spec status is `draft`, `active` or `obsolete`.
+The relative path is still the import key. Importing the file again after an
+edit stores the next revision. Read the current text with
+`doc:<project>:<type>:<key>`, or `@1` for the first revision. Search returns
+the current revision only. An accepted ADR or an active spec ranks above an
+equal superseded document. The read-only token can search and read these; it
+cannot write a new revision. A write token uses `remember` with `doc` instead
+of a fifth tool. See [ADR 0018](adr/0018-documents-are-versioned-sources.md).
 
 ## When to say "I don't know"
 

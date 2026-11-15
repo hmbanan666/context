@@ -113,6 +113,37 @@ calls Context is not a save. `read` opens one result by id. `timeline` lists
 recent notes. Capture and search work with no LLM. To turn interpretation
 on, see [LLM providers](llm-providers.md).
 
+## Store an ADR or a spec
+
+An architect token can write the current ADR or spec for a project. Create
+the project first (`context init --project` or `context project create`).
+The token needs write access to the project's area. `--project` binds the
+token so `remember` does not have to repeat the id.
+
+Ask the client to remember the decision as a document. The call is still
+`remember`. `doc.type` is `adr`, `spec` or `note`. `doc.key` is stable
+(`0012`, `adr:0012` or a slug). `doc.title` is the heading. ADR status is
+`proposed`, `accepted`, `superseded` or `rejected`. Spec status is `draft`,
+`active` or `obsolete`. A later remember with the same key stores the next
+revision and records the token's name on that status. It does not approve a
+distilled fact or decision. That remains `context project review`.
+
+Read the current text with `doc:<project>:<adr|spec|note>:<key>`. Add `@1`
+for the first revision. The reply lists every revision. Search returns the
+current revision only. `kind: "doc"` limits the results to documents, and
+`docType` narrows the type. An accepted ADR or an active spec outranks an
+equal older status. A superseded document still reads by id.
+
+A folder of markdown can load the same records. Put `type`, `key` and
+`status` in the front matter and import it:
+
+```sh
+context import markdown ./docs --area projects --project notes
+```
+
+Quote a numeric key (`key: "0012"`) so leading zeros stay. Details are in
+[Imports](imports.md) and [ADR 0018](adr/0018-documents-are-versioned-sources.md).
+
 ## Curated read-only instance
 
 A website assistant (cases, resume, specialist info) can use its own Context

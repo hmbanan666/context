@@ -4,6 +4,7 @@ import {
   nonblankText as nonblank,
   scopeSchema,
 } from "./contracts.js";
+import type { SourceDocument } from "./documents.js";
 import type { ImportProvenance } from "./import-format.js";
 import type { Source } from "./store.js";
 
@@ -130,6 +131,7 @@ export interface Material {
   readonly import?: ImportProvenance;
   readonly metadata: MaterialMetadata;
   readonly file?: MaterialFileDescriptor;
+  readonly doc?: SourceDocument;
 }
 
 export interface MaterialFile extends MaterialFileDescriptor {

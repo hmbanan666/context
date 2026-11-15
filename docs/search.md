@@ -399,3 +399,11 @@ ranked items. The response includes `bytesUsed` and `budgetBytes`.
 `budgetBytes` for a pack is 512–65536 and defaults to 8192. The pack trims
 whole items and whole profile sentences to stay inside that UTF-8 budget. A
 header names what was included or omitted. No processor runs at query time.
+
+A document is a source ([ADR 0018](adr/0018-documents-are-versioned-sources.md)).
+Search returns its current revision only. `kind: "doc"` and `docType`
+(`adr`, `spec` or `note`) filter to those rows. An accepted ADR or an active
+spec scores one point above an equal match, so a task pack can keep it in the
+two source slots. A superseded, rejected or obsolete document scores half.
+Read `doc:<project>:<type>:<key>` for the current text and `@<revision>` for
+an older one. Pack mode does not take `kind` or `docType`.

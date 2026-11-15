@@ -25,13 +25,22 @@ The walk is recursive, `*.md` only, and does not follow symlinks or enter
 the relative path (`cases/lantern.md`). The title is front matter `title`,
 else the first heading, else the filename. Optional YAML front matter may
 also set `project`, `date` (`YYYY-MM-DD` or an ISO timestamp with a timezone),
-and `tags` (a string or a list). `--project` is the default; a front-matter
+and `tags` (a string or a list). `type` (`adr`, `spec` or `note`), `key` and
+`status` store that file as a document under the project
+([ADR 0018](adr/0018-documents-are-versioned-sources.md)). The path stays the
+import key. The document key is unique per project and type. Quote it
+(`key: "0012"`) so a numeric value does not drop leading zeros. ADR status is
+`proposed`, `accepted`, `superseded` or `rejected`. Spec status is `draft`,
+`active` or `obsolete`. A note's status is `active`. A second file with the
+same key is rejected. A document that needs more than one source chunk is
+rejected. `--project` is the default; a front-matter
 `project` overrides it and must already exist. `--area` defaults to `inbox`
 when that area is configured, otherwise to the only configured area.
 
 Re-importing an unchanged file is `skipped`. A changed body, title, date,
-tags, area or project writes a new immutable revision and is `updated`. The
-first save is `added`. Stdout is JSONL, one object per stored source, then:
+tags, area, project or document status writes a new immutable revision and is
+`updated`. The first save is `added`. Stdout is JSONL, one object per stored
+source, then:
 
 ```json
 {"type":"summary","added":1,"updated":0,"skipped":2,"rejected":0}
