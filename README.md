@@ -69,6 +69,8 @@ The client must call Context and confirm success; a chat reply alone isn't a sav
 Context stores immutable sources with provenance, dates and checksums after
 pattern-based secret redaction. The same filter covers MCP text/files, derived
 knowledge and [JSONL imports](docs/imports.md), including GitHub and Codex collectors.
+A folder of markdown can seed a read-only website assistant; see
+[Curated instance](docs/curated-instance.md).
 It is best-effort detection, not a guarantee against arbitrary unlabeled secrets.
 An area is an access boundary: every client has explicit read/write rights.
 Changing providers does not move your memory or widen those rights.

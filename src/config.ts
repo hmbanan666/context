@@ -1,9 +1,14 @@
 import type { OAuthConfig } from "./auth.js";
 import { personalDataScope, scopeSchema } from "./contracts.js";
+import {
+  readGroundingThresholds,
+  type GroundingThresholds,
+} from "./grounding.js";
 
 export interface Config {
   readonly port: number;
   readonly databasePath: string;
+  readonly grounding?: GroundingThresholds;
   readonly localMcpScopes?: readonly string[];
   readonly oauth?: OAuthConfig;
 }
@@ -29,6 +34,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   if (!databasePath.trim() || databasePath === ":memory:") {
     throw new Error("CONTEXT_DB_PATH must name a persistent SQLite file");
   }
+  const grounding = readGroundingThresholds(env);
   // Keep the old explicit selector accepted for existing installations.
   if (env.CONTEXT_AUTH !== undefined && env.CONTEXT_AUTH !== "oauth")
     throw new Error("Only built-in OAuth is supported");
@@ -50,6 +56,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     return {
       port: Number(port),
       databasePath,
+      grounding,
       oauth: {
         resource: resource.href,
         issuer: resource.origin,
@@ -62,9 +69,10 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   if (env.NODE_ENV === "production")
     throw new Error("Configure CONTEXT_PUBLIC_URL for protected access");
   const mode = env.CONTEXT_LOCAL_MCP;
-  if (mode === undefined) return { port: Number(port), databasePath };
+  if (mode === undefined)
+    return { port: Number(port), databasePath, grounding };
   if (mode !== "enabled") {
     throw new Error("CONTEXT_LOCAL_MCP must explicitly be enabled");
   }
-  return { port: Number(port), databasePath, localMcpScopes: areas };
+  return { port: Number(port), databasePath, grounding, localMcpScopes: areas };
 }

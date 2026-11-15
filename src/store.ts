@@ -283,6 +283,7 @@ export class SourceStore {
   importMaterial(
     input: CaptureMaterialInput,
     provenance: ImportProvenance,
+    projectIds?: readonly string[],
   ): { source: Source; duplicate: boolean; changed: boolean } {
     const request = captureMaterialSchema.parse(
       redactFields(captureMaterialSchema.parse(input)),
@@ -308,7 +309,14 @@ export class SourceStore {
         ]),
       )
       .digest("hex");
-    const saved = this.#capture(request, fingerprint, { metadata }, imported);
+    const saved = this.#capture(
+      request,
+      fingerprint,
+      { metadata },
+      imported,
+      undefined,
+      projectIds,
+    );
     return { ...saved, changed: saved.changed ?? false };
   }
 
@@ -824,6 +832,7 @@ export class SourceStore {
       matchOffsets: new Map<string, number>(),
       scores: new Map<string, number>(),
       termHits: new Map<string, TermHit>(),
+      queryTermMatches: 0,
       materials: rows.map((row) => {
         const material = this.findMaterial(String(row.id), input.scope);
         if (!material) throw new Error("Missing source candidate");

@@ -1,0 +1,93 @@
+area: studio
+project: mira
+questions:
+  - id: en-amber
+    kind: on
+    lang: en
+    question: What is the amber index Mira Quill designed for the Lantern Archive?
+    path: cases/lantern-archive.md
+  - id: en-glyphs
+    kind: on
+    lang: en
+    question: What are the tide glyphs Mira Quill painted for the Brassharbor quay?
+    path: cases/harbor-glyphs.md
+  - id: en-pears
+    kind: on
+    lang: en
+    question: What did Mira Quill hang in the Glass Orchard?
+    path: cases/glass-orchard.md
+  - id: en-wool
+    kind: on
+    lang: en
+    question: How does Quiet Station point people to the waiting room?
+    path: cases/quiet-station.md
+  - id: en-cedar
+    kind: on
+    lang: en
+    question: What do the cedar routes do at the Paper Kite festival?
+    path: cases/paper-kite.md
+  - id: ru-amber
+    kind: on
+    lang: ru
+    question: Что такое янтарный указатель Фонарного архива?
+    path: cases/lantern-archive.md
+  - id: ru-glyphs
+    kind: on
+    lang: ru
+    question: Для чего приливные знаки Миры Квилл?
+    path: cases/harbor-glyphs.md
+  - id: ru-pears
+    kind: on
+    lang: ru
+    question: Что висит в Стеклянном саду?
+    path: cases/glass-orchard.md
+  - id: ru-wool
+    kind: on
+    lang: ru
+    question: Какие сигналы висят на Тихой станции?
+    path: cases/quiet-station.md
+  - id: ru-cedar
+    kind: on
+    lang: ru
+    question: Куда ведут кедровые тропы на празднике Бумажный змей?
+    path: cases/paper-kite.md
+  - id: en-weather
+    kind: off
+    lang: en
+    question: What is the weather in Kazan tomorrow?
+  - id: en-election
+    kind: off
+    lang: en
+    question: Who won the 2024 regional election?
+  - id: en-bread
+    kind: off
+    lang: en
+    question: How do I bake a sourdough loaf?
+  - id: en-ada
+    kind: off
+    lang: en
+    question: When is Ada Lovelace's birthday?
+  - id: en-python
+    kind: off
+    lang: en
+    question: How do I reverse a linked list in Python?
+  - id: ru-weather
+    kind: off
+    lang: ru
+    question: Какая погода будет в Казани завтра?
+  - id: ru-election
+    kind: off
+    lang: ru
+    question: Кто победил на выборах в 2024 году?
+  - id: ru-soup
+    kind: off
+    lang: ru
+    question: Как сварить борщ с капустой?
+  - id: ru-tolstoy
+    kind: off
+    lang: ru
+    question: Когда родился Лев Толстой?
+  - id: ru-code
+    kind: off
+    lang: ru
+    question: Как отсортировать массив на питоне?
