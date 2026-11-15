@@ -53,3 +53,8 @@ cases are the synthetic questions in
 [the eval doc](../evals.md#project-memory-cases), including a proposed decision
 older than unrelated newer facts and a Russian task. Private questions stay
 private (ADR 0006).
+
+Amended by [ADR 0015](0015-pack-profile-share-and-glossary-phrases.md): the
+profile takes at most 20% of the budget, a raw source yields to the distilled
+item that cites it, and a one-concept neighbour is omitted once a two-concept
+hit exists.

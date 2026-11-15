@@ -46,12 +46,25 @@ context project glossary set --id context --term дистилляция --synony
 context project glossary unset --id context --term дистилляция
 ```
 
+A term is one to four words. A multi-word synonym is one FTS phrase. Matching
+uses Snowball stems, and one inserted о, е or ё still matches, so список meets
+списка and покупок meets покупки. ночную and ночная already share a stem.
 A built-in RU→EN list (backup, distill, nightly, embedding, and similar) applies
 when the project has no entry for that stem. Expanded concepts use FTS weight
 0.35 against weight 1 for the caller's own words. Two or more synonym concepts
 rank above a vector hit that matched only one of them, and below any hit on the
-original words. One synonym does not. The embedding string is not expanded.
+original words. One synonym does not. In a pack, that one-concept neighbour is
+omitted once a two-concept hit exists. The embedding string is not expanded.
 Timeline is not expanded.
+
+Phrases the previous one-token check rejected are set again, with the phrase
+in quotes:
+
+```sh
+context project glossary set --id context --term "ночная уборка" --synonyms "nightly tidy"
+context project glossary set --id context --term "список покупок" --synonyms "shopping list"
+context project glossary set --id context --term "источник истины" --synonyms "source of truth"
+```
 
 ## Recovery and progress
 
@@ -331,13 +344,19 @@ on a whole sentence when one fits, so a card after a journal does not open
 mid-sentence. Source excerpts stay anchored on the match.
 The owner sets that status with `context project review`; distillation does
 not. `search` with `mode: "pack"` returns one task pack for a project and a
-task query (ADR 0013). Decisions and facts, proposed and approved, are ranked
-by that project's hybrid search. An approved row is boosted by 1.25. Recency
-breaks ties. Superseded and rejected rows stay out, and a row with no hybrid
-hit is not added to fill the budget. About 25% of `budgetBytes` is held for at
-most two uncited raw sources, excerpted on a sentence boundary, and about 15%
-for at most two journals that match the task. Unused reserved bytes go back to
-the ranked items. The response includes `bytesUsed` and `budgetBytes`.
+task query (ADR 0013, amended by ADR 0015). Decisions and facts, proposed and
+approved, are ranked by that project's hybrid search. An approved row is
+boosted by 1.25. Recency breaks ties. Superseded and rejected rows stay out,
+and a row with no hybrid hit is not added to fill the budget. When a
+two-concept glossary hit exists, a row that matches neither the caller's words
+nor two concepts is left out. The rendered profile is at most 20% of
+`budgetBytes` (purpose, rules, pinned sentences that fit, then a trimmed
+project glossary). The stored profile is what `read` returns for
+`profile:<id>`. About 25% of `budgetBytes` is held for at most two raw sources
+that no included item cites, excerpted on a sentence boundary, and about 15%
+for at most two journals that match the task. A distilled decision or fact is
+preferred to the raw source it cites. Unused reserved bytes go back to the
+ranked items. The response includes `bytesUsed` and `budgetBytes`.
 `budgetBytes` for a pack is 512–65536 and defaults to 8192. The pack trims
 whole items and whole profile sentences to stay inside that UTF-8 budget. A
 header names what was included or omitted. No processor runs at query time.

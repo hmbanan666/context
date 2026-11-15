@@ -79,10 +79,12 @@ each project's profile with `context project profile`; tidy writes the journal
 ([ADR 0012](docs/adr/0012-project-profile-journal-and-task-pack.md)).
 The owner approves or rejects proposals with `context project review`.
 `context search --mode pack --project <id> --scope <area> --query "<task>" --budget-bytes <n>`
-returns one task pack for that project. A project glossary
+returns one task pack for that project. The pack keeps the profile to about a
+fifth of the budget. A project glossary
 (`context project glossary set|show`) plus a small built-in RU→EN list expands
-query words into search and pack; see
-[ADR 0014](docs/adr/0014-cross-lingual-project-search.md). Hard delete
+query words, including phrases, into search and pack; see
+[ADR 0014](docs/adr/0014-cross-lingual-project-search.md) and
+[ADR 0015](docs/adr/0015-pack-profile-share-and-glossary-phrases.md). Hard delete
 remains [planned](docs/roadmap.md).
 Run `context tidy` once to distill a capped batch, or `context tidy --dry-run`
 to preview it. See [Nightly tidy](docs/deployment.md#nightly-tidy).

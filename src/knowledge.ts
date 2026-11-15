@@ -732,6 +732,34 @@ export class KnowledgeStore {
     return { total, items, matchOffsets: new Map<string, number>() };
   }
 
+  // Facts and decisions in this project that cite one of the sources.
+  // Used to swap a raw pack source for its shorter distilled item.
+  memoryCiting(
+    scope: string,
+    projectId: string,
+    sourceIds: readonly string[],
+  ): KnowledgeItem[] {
+    scopeSchema.parse(scope);
+    projectIdSchema.parse(projectId);
+    if (!sourceIds.length) return [];
+    if (sourceIds.length > 101) throw new Error("Invalid candidate bound");
+    for (const id of sourceIds) identifier.parse(id);
+    const placeholders = sourceIds.map(() => "?").join(",");
+    return this.#database
+      .prepare(
+        `${itemSelection}
+         WHERE k.scope = ?
+           AND k.kind IN ('fact', 'decision')
+           AND ${linkedProjectSql("knowledge", "k.id")}
+           AND EXISTS (
+             SELECT 1 FROM json_each(k.source_refs) ref
+             WHERE json_extract(ref.value, '$.sourceId') IN (${placeholders})
+           )`,
+      )
+      .all(scope, projectId, ...sourceIds)
+      .map(decodeItem);
+  }
+
   // Hybrid ranks for one project's facts and decisions together, or for its
   // journals. Only rows the query matched. Scores are the shared RRF of exact
   // FTS, stemmed FTS and embedding hits; this method does not sort by date.

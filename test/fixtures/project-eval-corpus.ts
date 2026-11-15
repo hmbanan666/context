@@ -103,6 +103,28 @@ export function seedProjectEvalCorpus(path: string) {
     };
     save("context", contextNotes);
     save("expi", expiNotes);
+    const matrix = sources.captureMaterial(
+      {
+        version: 1,
+        scope: "projects",
+        origin: "synthetic:project-eval",
+        idempotencyKey: "expi-matrix-pr",
+        text: "Добавить таймфрейм на график Matrix. matrix-window-pr discusses the control.",
+        metadata: {
+          title: "expi matrix",
+          createdAt: "2026-04-01T00:00:00.000Z",
+        },
+      },
+      undefined,
+      ["expi"],
+    ).material.source;
+    knowledge.addDistilled({
+      scope: "projects",
+      sourceId: matrix.id,
+      kind: "decision",
+      text: "Ship the saved window control on that panel.",
+      createdAt: "2026-04-01T00:00:00.000Z",
+    });
   } finally {
     knowledge.close();
     sources.close();

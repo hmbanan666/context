@@ -10,6 +10,7 @@ import {
 import { test } from "vite-plus/test";
 import {
   buildTaskPack,
+  packProfileShare,
   packRelevance,
   profileSection,
   rankPackItems,
@@ -814,6 +815,156 @@ test("matching facts do not consume the share reserved for a raw source", async 
     assert.equal(JSON.stringify(pack).includes("lamp preamble"), false);
     assert.ok(pack.bytesUsed <= 1800);
     assert.equal(pack.budgetBytes, 1800);
+  } finally {
+    await mcp.close();
+  }
+});
+
+function fatRules(purpose: string, target = 1700): string {
+  const sentence = "Keep the fictional notes in this synthetic profile.";
+  let rules = sentence;
+  while (Buffer.byteLength(`${purpose}\n${rules} ${sentence}`, "utf8") < target)
+    rules = `${rules} ${sentence}`;
+  return rules;
+}
+
+test("a 4096 pack caps a large profile and drops the backup neighbour", async () => {
+  const mcp = await open("prod-context");
+  try {
+    const purpose = "Hold fictional context notes.";
+    const rules = fatRules(purpose);
+    mcp.sources.setProfile({
+      projectId: "observatory",
+      purpose,
+      rules,
+    });
+    mcp.sources.setGlossaryTerm({
+      projectId: "observatory",
+      term: "дистилляция",
+      synonyms: ["distill", "distillation", "tidy"],
+    });
+    const notes = [
+      "ADR-0011 nightly tidy distills each source into a short proposed fact.",
+      "Nightly distillation keeps a cursor and resumes the next tidy pass.",
+      "The tidy distill pass skips an eighty character prose span.",
+      "Distillation stores proposed facts before the nightly journal rewrite.",
+      "Nightly off-host backups copy a SQLite snapshot to S3 or SFTP.",
+    ];
+    notes.forEach((text, index) => {
+      const source = capture(
+        mcp.sources,
+        `prod-context-${index}`,
+        text,
+        `2026-11-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+        "observatory",
+      );
+      mcp.knowledge.addDistilled({
+        scope,
+        sourceId: source.id,
+        kind: "decision",
+        text,
+        createdAt: `2026-11-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+      });
+    });
+    const pack = buildTaskPack(mcp.sources, mcp.knowledge, {
+      scope,
+      projectId: "observatory",
+      question: "улучшить ночную дистилляцию",
+      budgetBytes: 4096,
+    });
+    const profile = pack.items[0];
+    assert.equal(profile?.kind, "profile");
+    assert.match(profile?.excerpt.text ?? "", /^Hold fictional context notes/);
+    assert.ok(
+      Buffer.byteLength(profile?.excerpt.text ?? "", "utf8") <=
+        Math.floor(4096 * packProfileShare),
+    );
+    const decisions = pack.items.filter((item) => item.kind === "decision");
+    assert.ok(
+      decisions.length >= 3 && decisions.length <= 5,
+      `decisions ${decisions.length}`,
+    );
+    assert.equal(JSON.stringify(pack).includes("distills each source"), true);
+    assert.equal(JSON.stringify(pack).includes("off-host backups"), false);
+    assert.ok(pack.bytesUsed <= 4096);
+    const stored = mcp.sources.profile("observatory");
+    assert.equal(stored?.rules, rules);
+    assert.ok(Buffer.byteLength(profileSection(stored!), "utf8") > 1600);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("a relevant raw source is swapped for its distilled decision", async () => {
+  const mcp = await open("prod-expi");
+  try {
+    const purpose = "Hold fictional expi notes.";
+    const rules = fatRules(purpose);
+    mcp.sources.setProfile({
+      projectId: "observatory",
+      purpose,
+      rules,
+    });
+    const pr = capture(
+      mcp.sources,
+      "matrix-pr",
+      "Добавить таймфрейм на график Matrix. matrix-window-pr discusses the control.",
+      "2026-04-01T00:00:00Z",
+      "observatory",
+    );
+    mcp.knowledge.addDistilled({
+      scope,
+      sourceId: pr.id,
+      kind: "decision",
+      text: "Ship the saved window control on that panel.",
+      createdAt: "2026-04-01T00:00:00Z",
+    });
+    const notes = [
+      "Таймфрейм на графике Matrix сохраняет выбранное окно.",
+      "График Matrix показывает один таймфрейм.",
+      "Новый таймфрейм графика Matrix включается из настроек.",
+      "Еженедельная заметка перечисляет цвета ламп.",
+    ];
+    notes.forEach((text, index) => {
+      const source = capture(
+        mcp.sources,
+        `matrix-${index}`,
+        text,
+        `2026-05-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+        "observatory",
+      );
+      mcp.knowledge.addDistilled({
+        scope,
+        sourceId: source.id,
+        kind: "decision",
+        text,
+        createdAt: `2026-05-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+      });
+    });
+    const pack = buildTaskPack(mcp.sources, mcp.knowledge, {
+      scope,
+      projectId: "observatory",
+      question: "добавить таймфрейм на график Matrix",
+      budgetBytes: 4096,
+    });
+    const profile = pack.items[0];
+    assert.equal(profile?.kind, "profile");
+    assert.ok(
+      Buffer.byteLength(profile?.excerpt.text ?? "", "utf8") <=
+        Math.floor(4096 * packProfileShare),
+    );
+    const body = JSON.stringify(pack);
+    assert.equal(body.includes("saved window control"), true);
+    assert.equal(body.includes("matrix-window-pr"), false);
+    assert.equal(body.includes("цвета ламп"), false);
+    const decisions = pack.items.filter((item) => item.kind === "decision");
+    assert.ok(
+      decisions.length >= 3 && decisions.length <= 5,
+      `decisions ${decisions.length}: ${decisions.map((item) => item.excerpt.text).join(" | ")}`,
+    );
+    assert.ok(pack.bytesUsed <= 4096);
+    const full = mcp.sources.readProfile("profile:observatory", scope);
+    assert.equal(full?.rules, rules);
   } finally {
     await mcp.close();
   }

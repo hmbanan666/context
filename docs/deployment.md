@@ -209,8 +209,20 @@ context project glossary set --id context --term дистилляция --synony
 context project glossary show --id context
 ```
 
-That does not write an expi glossary. Add expi terms the same way if a private
-eval needs them. The synthetic expi list in the fixture is fictional.
+ADR 0015 does not migrate the database and does not reindex embeddings.
+Phrases the one-token check rejected were never stored. Set them again, with
+the phrase quoted:
+
+```sh
+context project glossary set --id context --term "ночная уборка" --synonyms "nightly tidy"
+context project glossary set --id context --term "список покупок" --synonyms "shopping list"
+context project glossary set --id context --term "источник истины" --synonyms "source of truth"
+context project glossary show --id context
+```
+
+Repeat `set` for each project that owns the phrase. `unset` takes the same
+term string. That does not write an expi glossary. Add expi terms the same way
+if a private eval needs them. The synthetic expi list in the fixture is fictional.
 
 ## Retrieval evaluation
 

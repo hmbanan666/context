@@ -83,3 +83,7 @@ Pack and project search change order only for queries that hit the glossary.
 Area-wide search uses the built-in list the same way. The private 34-question
 hybrid numbers in the search doc were measured without this glossary and are
 not re-run here.
+
+Amended by [ADR 0015](0015-pack-profile-share-and-glossary-phrases.md): a term
+may be a phrase of up to four words, matched by stem plus one fleeting vowel,
+and the public expi set has one more pack question.

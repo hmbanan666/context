@@ -26,6 +26,10 @@ export interface VectorHit {
   id: string;
   offset: number;
 }
+export interface TermHit {
+  original: boolean;
+  concepts: number;
+}
 
 const searchFunctions = new WeakSet<DatabaseSync>();
 export function registerSearchFunctions(db: DatabaseSync): void {
@@ -329,6 +333,12 @@ export function lexicalCandidates(
       scores.set(id, score + band);
     }
   }
+  const termHits = new Map<string, TermHit>();
+  for (const id of scores.keys())
+    termHits.set(id, {
+      original: originalIds.has(id),
+      concepts: conceptCounts.get(id) ?? 0,
+    });
   return {
     total,
     ids: [...scores]
@@ -337,5 +347,6 @@ export function lexicalCandidates(
       .map(([id]) => id),
     matchOffsets: offsets,
     scores,
+    termHits,
   };
 }

@@ -60,7 +60,7 @@ suggestions are not separate source events. See the [tool table](../README.md#mc
 from sources/knowledge and one-hop relations. Both enforce area restrictions.
 Search combines exact and RU/EN stemmed FTS with local multilingual E5 small
 embeddings. A project glossary, plus a small built-in RU→EN list, expands query
-tokens into a lower-weight FTS list before search and pack. The embedding text
+words and phrases into a lower-weight FTS list before search and pack. The embedding text
 stays the original question. Vectors store the model id and are never compared
 across ids. The image includes the model; startup and writes backfill derived
 vectors in the background, with lexical fallback on model failure. Area/date
@@ -162,11 +162,15 @@ and a date bound ranks journals, then decisions, then facts in that window
 even when the query does not match them, ahead of uncited raw sources.
 Slice 4e records owner approval in `knowledge_reviews`
 and, for a suggested project name, creates or links the project. Approval
-does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012, amended by ADR 0013):
+does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012, amended by ADR 0013 and ADR 0015):
 one budgeted pack with the profile, then decisions and facts ranked by the
-task, including proposed decisions labelled `proposed`. Rows the query does
-not match are left out. About a quarter of the budget is held for at most two
-uncited raw sources, and a smaller share for at most two matching journals.
+task, including proposed decisions labelled `proposed`. The rendered profile
+is at most a fifth of the budget; `read` of `profile:<id>` returns the stored
+profile. Rows the query does not match are left out, and a one-concept
+glossary neighbour is left out once a two-concept hit exists. A raw source
+cited by an included decision or fact is omitted in favour of that item.
+About a quarter of the budget is held for at most two uncited raw sources,
+and a smaller share for at most two matching journals.
 The pack reports `bytesUsed` and `budgetBytes`. `context search --mode pack`
 returns the same pack. No fifth MCP tool is added.
 Hard delete remains a later slice. None of that is complete stage 4 acceptance.

@@ -79,7 +79,9 @@ is a field on the discovered `search` tool. Hidden `context_package` modes stay
 
 Amended by [ADR 0013](0013-rank-the-task-pack-by-the-query.md): a pack ranks
 proposed and approved decisions and facts by the task, drops rows the query
-does not match, and reserves part of the budget for raw sources.
+does not match, and reserves part of the budget for raw sources. Amended by
+[ADR 0015](0015-pack-profile-share-and-glossary-phrases.md): the pack renders
+at most 20% of the budget as profile text. The stored profile is unchanged.
 
 ## Consequences
 

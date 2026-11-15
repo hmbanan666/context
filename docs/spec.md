@@ -255,19 +255,26 @@ implemented and not deployed.
 - A task pack is `search` with `mode: "pack"`, a project and a task query.
   Optional `budgetBytes` is 512–65536 and defaults to 8192. The pack returns
   the profile, then proposed and approved decisions and facts ranked by the
-  hybrid project search against the task (ADR 0013). Approved rows get a 1.25
-  score boost. Recency breaks ties. Superseded and rejected rows are omitted.
-  A row the query does not match is omitted rather than used to fill the
-  budget. About 25% of the budget is held for at most two uncited raw sources,
-  and about 15% for at most two journals that match the task (newest weeks
-  first). Unused reserved bytes go back to the ranked items. A source excerpt
-  starts at a sentence boundary. Pinned decisions are not repeated. Proposed
-  decisions are labelled `proposed`. Whole items and whole profile sentences
-  are kept; if the profile alone exceeds the budget, the response is a prefix
-  of the profile. The pack reports `bytesUsed` and `budgetBytes`. A header
-  lists what was included or omitted. The server does not measure tokens and
-  does not call the processor. No fifth discovered tool is added.
-  `context search --mode pack` returns the same pack.
+  hybrid project search against the task (ADR 0013, amended by ADR 0015).
+  Approved rows get a 1.25 score boost. Recency breaks ties. Superseded and
+  rejected rows are omitted. A row the query does not match is omitted rather
+  than used to fill the budget. When any candidate matches two glossary
+  concepts, a row that matches neither the caller's words nor two concepts is
+  omitted too. The rendered profile is at most 20% of the budget: purpose,
+  then rules, then pinned sentences that fit, then the project glossary
+  trimmed at term boundaries. `read` of `profile:<id>` still returns the
+  stored profile. About 25% of the budget is held for at most two raw sources
+  that no included item cites, and about 15% for at most two journals that
+  match the task (newest weeks first). A raw source that a returned decision
+  or fact cites is omitted; the distilled item is preferred. Unused reserved
+  bytes go back to the ranked items. A source excerpt starts at a sentence
+  boundary. Pinned decisions already shown in the profile are not repeated.
+  Proposed decisions are labelled `proposed`. Whole items and whole profile
+  sentences are kept; if the capped profile card exceeds the budget, the
+  response is a prefix of that card. The pack reports `bytesUsed` and
+  `budgetBytes`. A header lists what was included or omitted. The server does
+  not measure tokens and does not call the processor. No fifth discovered
+  tool is added. `context search --mode pack` returns the same pack.
 - The removed `project_context` tool is not restored.
 
 ### Search and processing

@@ -15,6 +15,7 @@ questions:
       - substring: off-host backups
     forbidden_substrings:
       - fictional violet
+      - off-host backups
     tags: [ru, pack, glossary]
   - id: context_backup
     question: как устроен ночной бэкап
@@ -192,6 +193,18 @@ questions:
     expected:
       - substring: synthetic refund
     tags: [ru, glossary]
+  - id: expi_matrix_pack
+    question: добавить таймфрейм на график Matrix
+    areas: [projects]
+    read_areas: [projects]
+    mode: pack
+    project: expi
+    budget_bytes: 4096
+    expected:
+      - substring: saved window control
+    forbidden_substrings:
+      - matrix-window-pr
+    tags: [ru, pack, swap]
   - id: expi_pack
     question: разобрать вопрос биллинга
     areas: [projects]

@@ -11,7 +11,11 @@ import {
 } from "@modelcontextprotocol/client";
 import { EmbeddingIndex } from "../src/embedding-index.js";
 import { e5Prefixed } from "../src/embedding-model.js";
-import { expandQueryTerms, builtinGlossary } from "../src/glossary.js";
+import {
+  expandQueryTerms,
+  builtinGlossary,
+  glossaryWordsMatch,
+} from "../src/glossary.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
@@ -45,6 +49,27 @@ test("glossary expansion follows stems and drops terms already in the query", ()
     ],
   );
   assert.deepEqual(overridden, ["tidy"]);
+  assert.equal(glossaryWordsMatch("ночную", "ночная"), true);
+  assert.equal(glossaryWordsMatch("уборку", "уборка"), true);
+  assert.equal(glossaryWordsMatch("списка", "список"), true);
+  assert.equal(glossaryWordsMatch("покупки", "покупок"), true);
+  assert.equal(glossaryWordsMatch("истины", "истина"), true);
+  assert.equal(glossaryWordsMatch("ночник", "ночная"), false);
+  assert.equal(glossaryWordsMatch("графина", "график"), false);
+  assert.deepEqual(
+    expandQueryTerms(
+      ["запустить", "ночную", "уборку"],
+      [{ term: "ночная уборка", synonyms: ["nightly tidy"] }],
+    ),
+    ["nightly tidy"],
+  );
+  assert.deepEqual(
+    expandQueryTerms(
+      ["проверить", "списка", "покупок"],
+      [{ term: "список покупок", synonyms: ["shopping list"] }],
+    ),
+    ["shopping list"],
+  );
 });
 
 async function open(name: string) {
@@ -160,7 +185,7 @@ test("project glossary is owner-editable and a Russian task outranks the backup 
         text.includes("off-host backups"),
       );
       assert.ok(distill >= 0, texts.join("\n"));
-      assert.ok(backup > distill, texts.join("\n"));
+      assert.equal(backup, -1, texts.join("\n"));
       const tidy = await client.callTool({
         name: "search",
         arguments: {
@@ -251,6 +276,111 @@ test("an original term outranks a two-synonym English neighbour", async () => {
   }
 });
 
+test("a multi-word glossary phrase matches an inflected Russian query", async () => {
+  const f = await open("glossary-phrase");
+  try {
+    f.sources.setGlossaryTerm({
+      projectId: "context",
+      term: "ночная уборка",
+      synonyms: ["nightly tidy"],
+    });
+    f.sources.setGlossaryTerm({
+      projectId: "context",
+      term: "список покупок",
+      synonyms: ["shopping list"],
+    });
+    f.sources.setGlossaryTerm({
+      projectId: "context",
+      term: "источник истины",
+      synonyms: ["source of truth"],
+    });
+    decision(
+      f.sources,
+      f.knowledge,
+      "tidy",
+      "The nightly tidy clears the fictional lane.",
+    );
+    decision(
+      f.sources,
+      f.knowledge,
+      "list",
+      "The shopping list is a fictional ledger.",
+    );
+    decision(
+      f.sources,
+      f.knowledge,
+      "truth",
+      "The source of truth is the fictional ledger.",
+    );
+    decision(
+      f.sources,
+      f.knowledge,
+      "backup",
+      "Nightly backups copy a SQLite snapshot.",
+    );
+    const mcp = createContextMcp(f.sources, ["projects"], false, {
+      knowledge: f.knowledge,
+    });
+    const client = new Client({ name: "glossary-phrase", version: "1" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
+        fetch: async (input, init) => mcp.fetch(new Request(input, init)),
+      }),
+    );
+    try {
+      const pack = await client.callTool({
+        name: "search",
+        arguments: {
+          scope: "projects",
+          project: "context",
+          mode: "pack",
+          query: "запустить ночную уборку",
+          budgetBytes: 4096,
+        },
+      });
+      const texts = (
+        pack.structuredContent as { items: { excerpt: { text: string } }[] }
+      ).items.map((item) => item.excerpt.text);
+      assert.ok(texts.some((text) => text.includes("nightly tidy")));
+      assert.equal(
+        texts.some((text) => text.includes("SQLite snapshot")),
+        false,
+      );
+      const list = await client.callTool({
+        name: "search",
+        arguments: {
+          scope: "projects",
+          project: "context",
+          query: "проверить списка покупок",
+          k: 5,
+        },
+      });
+      assert.ok(
+        JSON.stringify(list.structuredContent).includes("shopping list"),
+      );
+      const truth = await client.callTool({
+        name: "search",
+        arguments: {
+          scope: "projects",
+          project: "context",
+          query: "где источник истины",
+          k: 5,
+        },
+      });
+      assert.ok(
+        JSON.stringify(truth.structuredContent).includes("source of truth"),
+      );
+    } finally {
+      await client.close();
+      await mcp.close();
+    }
+  } finally {
+    f.knowledge.close();
+    f.sources.close();
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
 test("project glossary CLI sets, shows and unsets one term", () => {
   const directory = mkdtempSync(join(tmpdir(), "context-glossary-cli-"));
   const path = join(directory, "context.db");
@@ -311,6 +441,49 @@ test("project glossary CLI sets, shows and unsets one term", () => {
     );
     assert.equal(
       run(["project", "glossary", "show", "--id", "missing"]).status,
+      1,
+    );
+    const phrase = run([
+      "project",
+      "glossary",
+      "set",
+      "--id",
+      "context",
+      "--term",
+      "ночная уборка",
+      "--synonyms",
+      "nightly tidy",
+    ]);
+    assert.equal(phrase.status, 0, phrase.stderr);
+    assert.deepEqual(
+      JSON.parse(run(["project", "glossary", "show", "--id", "context"]).stdout)
+        .terms,
+      [{ term: "ночная уборка", synonyms: ["nightly tidy"] }],
+    );
+    assert.equal(
+      run([
+        "project",
+        "glossary",
+        "unset",
+        "--id",
+        "context",
+        "--term",
+        "ночная уборка",
+      ]).status,
+      0,
+    );
+    assert.equal(
+      run([
+        "project",
+        "glossary",
+        "set",
+        "--id",
+        "context",
+        "--term",
+        "one two three four five",
+        "--synonyms",
+        "too many",
+      ]).status,
       1,
     );
   } finally {
