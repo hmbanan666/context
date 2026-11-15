@@ -64,3 +64,7 @@ evidence search unchanged, apart from phrase expansion when the query hits
 the glossary. Area-wide search uses the same phrase match. Timeline does not.
 The public project fixture covers the distillation pack and a synthetic
 matrix pack. Private questions stay private (ADR 0006).
+
+Amended by [ADR 0016](0016-merged-hybrid-rank.md): a glossary concept in the
+floor is a query word matched by that word or by a synonym. Two synonyms of
+one word are still one concept.

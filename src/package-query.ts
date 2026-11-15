@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { captureSchema, personalDataScope, scopeSchema } from "./contracts.js";
+import type { ExpandedTerm } from "./search-lexical.js";
 
 export const contextPackageSchema = z
   .strictObject({
@@ -24,8 +25,8 @@ export type PackageSelection = Pick<
   terms: readonly string[];
   limit: number;
   vectors?: readonly import("./search-lexical.js").VectorHit[];
-  /** Glossary synonyms. They are a lower-weight FTS list, not extra query terms. */
-  expansion?: readonly string[];
+  /** Glossary synonyms and the query words they came from. Lower-weight FTS lists. */
+  expansion?: readonly ExpandedTerm[];
   projectId?: string;
 };
 // Small explicit question-word list. Glossary expansion happens after this.

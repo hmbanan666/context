@@ -16,6 +16,7 @@ import {
   builtinGlossary,
   glossaryWordsMatch,
 } from "../src/glossary.js";
+import { conceptCoverage } from "../src/search-lexical.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
@@ -33,12 +34,16 @@ test("glossary expansion follows stems and drops terms already in the query", ()
     ["улучшить", "ночную", "дистилляцию"],
     builtinGlossary,
   );
-  assert.deepEqual(expanded, ["nightly", "distill", "distillation"]);
-  assert.deepEqual(
+  assert.deepEqual(expanded, [
+    { term: "nightly", from: [1] },
+    { term: "distill", from: [2] },
+    { term: "distillation", from: [2] },
+  ]);
+  assert.equal(
     expandQueryTerms(
       ["бэкап"],
       [...builtinGlossary, { term: "дистилляция", synonyms: ["tidy"] }],
-    ).includes("tidy"),
+    ).some((entry) => entry.term === "tidy"),
     false,
   );
   const overridden = expandQueryTerms(
@@ -48,7 +53,7 @@ test("glossary expansion follows stems and drops terms already in the query", ()
       { term: "дистилляция", synonyms: ["tidy"] },
     ],
   );
-  assert.deepEqual(overridden, ["tidy"]);
+  assert.deepEqual(overridden, [{ term: "tidy", from: [0] }]);
   assert.equal(glossaryWordsMatch("ночную", "ночная"), true);
   assert.equal(glossaryWordsMatch("уборку", "уборка"), true);
   assert.equal(glossaryWordsMatch("списка", "список"), true);
@@ -61,15 +66,30 @@ test("glossary expansion follows stems and drops terms already in the query", ()
       ["запустить", "ночную", "уборку"],
       [{ term: "ночная уборка", synonyms: ["nightly tidy"] }],
     ),
-    ["nightly tidy"],
+    [{ term: "nightly tidy", from: [1, 2] }],
   );
   assert.deepEqual(
     expandQueryTerms(
       ["проверить", "списка", "покупок"],
       [{ term: "список покупок", synonyms: ["shopping list"] }],
     ),
-    ["shopping list"],
+    [{ term: "shopping list", from: [1, 2] }],
   );
+  const covered = conceptCoverage(
+    "Nightly distillation stores the proposed fact.",
+    ["улучшить", "ночную", "дистилляцию"],
+    expanded,
+  );
+  const oneWord = conceptCoverage(
+    "Ночную резервную копию хранит отдельный снимок.",
+    ["улучшить", "ночную", "дистилляцию"],
+    expanded,
+  );
+  assert.equal(covered.concepts, 2);
+  assert.equal(covered.exact, false);
+  assert.equal(oneWord.concepts, 1);
+  assert.equal(oneWord.exact, true);
+  assert.ok(covered.concepts > oneWord.concepts);
 });
 
 async function open(name: string) {
@@ -212,15 +232,6 @@ test("project glossary is owner-editable and a Russian task outranks the backup 
 
 test("an original term outranks a two-synonym English neighbour", async () => {
   const f = await open("glossary-original");
-  const embedder = {
-    version: "synthetic-glossary-v2",
-    async embed(text: string, purpose: "query" | "passage") {
-      if (purpose === "query" || text.includes("backup snapshot"))
-        return Float32Array.from([1, 0, 0, 0]);
-      return Float32Array.from([0, 1, 0, 0]);
-    },
-  };
-  const index = new EmbeddingIndex(f.path, embedder);
   try {
     decision(
       f.sources,
@@ -234,10 +245,8 @@ test("an original term outranks a two-synonym English neighbour", async () => {
       "en",
       "The backup snapshot is stored for the fictional host.",
     );
-    await index.reindexEmbeddings(4, () => {});
     const mcp = createContextMcp(f.sources, ["projects"], false, {
       knowledge: f.knowledge,
-      embeddings: index,
     });
     const client = new Client({ name: "glossary-original", version: "1" });
     await client.connect(
@@ -264,6 +273,91 @@ test("an original term outranks a two-synonym English neighbour", async () => {
       );
       assert.ok(russian >= 0, texts.join("\n"));
       assert.ok(english > russian, texts.join("\n"));
+    } finally {
+      await client.close();
+      await mcp.close();
+    }
+  } finally {
+    f.knowledge.close();
+    f.sources.close();
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
+test("two query concepts outrank one exact original word", async () => {
+  const f = await open("glossary-concepts");
+  const embedder = {
+    version: "synthetic-glossary-concepts",
+    async embed(text: string, purpose: "query" | "passage") {
+      if (purpose === "query" || text.includes("Ночную"))
+        return Float32Array.from([1, 0, 0, 0]);
+      return Float32Array.from([0, 1, 0, 0]);
+    },
+  };
+  const index = new EmbeddingIndex(f.path, embedder);
+  try {
+    decision(
+      f.sources,
+      f.knowledge,
+      "one-word",
+      "Ночную резервную копию хранит отдельный снимок.",
+    );
+    decision(
+      f.sources,
+      f.knowledge,
+      "two-concepts",
+      "Nightly distillation stores the proposed fact.",
+    );
+    await index.reindexEmbeddings(4, () => {});
+    const mcp = createContextMcp(f.sources, ["projects"], false, {
+      knowledge: f.knowledge,
+      embeddings: index,
+    });
+    const client = new Client({ name: "glossary-concepts", version: "1" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
+        fetch: async (input, init) => mcp.fetch(new Request(input, init)),
+      }),
+    );
+    try {
+      assert.deepEqual(
+        (await client.listTools()).tools.map((tool) => tool.name).sort(),
+        ["read", "remember", "search", "timeline"],
+      );
+      const searched = await client.callTool({
+        name: "search",
+        arguments: {
+          scope: "projects",
+          project: "context",
+          query: "улучшить ночную дистилляцию",
+          k: 5,
+        },
+      });
+      const texts = (
+        searched.structuredContent as { items: { excerpt: { text: string } }[] }
+      ).items.map((item) => item.excerpt.text);
+      const focused = texts.findIndex((text) => text.includes("distillation"));
+      const broad = texts.findIndex((text) => text.includes("Ночную"));
+      assert.ok(focused >= 0, texts.join("\n"));
+      assert.ok(broad > focused, texts.join("\n"));
+      const pack = await client.callTool({
+        name: "search",
+        arguments: {
+          scope: "projects",
+          project: "context",
+          mode: "pack",
+          query: "улучшить ночную дистилляцию",
+          budgetBytes: 4096,
+        },
+      });
+      const packed = (
+        pack.structuredContent as { items: { excerpt: { text: string } }[] }
+      ).items.map((item) => item.excerpt.text);
+      assert.ok(
+        packed.findIndex((text) => text.includes("distillation")) <
+          packed.findIndex((text) => text.includes("Ночную")),
+        packed.join("\n"),
+      );
     } finally {
       await client.close();
       await mcp.close();

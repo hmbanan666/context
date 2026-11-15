@@ -27,7 +27,15 @@ export const evalQuestionSchema = z
     until: z.iso.datetime({ offset: true }).optional(),
     mode: z.enum(["pack"]).optional(),
     budget_bytes: z.number().int().min(512).max(65536).optional(),
-    expected: z.array(matcher).max(100),
+    expected: z.array(matcher).max(100).default([]),
+    expected_any: z
+      .array(z.string().min(1).max(128))
+      .min(1)
+      .max(100)
+      .refine((ids) => new Set(ids).size === ids.length, {
+        message: "expected_any ids must be unique",
+      })
+      .optional(),
     outranks: z.array(matcher).min(1).max(100).optional(),
     forbidden_areas: areas.default([]),
     forbidden_substrings: z
@@ -42,8 +50,11 @@ export const evalQuestionSchema = z
     (q) =>
       (q.placeholder ||
         q.expected.length > 0 ||
+        (q.expected_any?.length ?? 0) > 0 ||
         q.forbidden_areas.length > 0) &&
-      (!q.outranks || q.expected.length > 0),
+      (!q.outranks ||
+        q.expected.length > 0 ||
+        (q.expected_any?.length ?? 0) > 0),
   )
   .refine(
     (q) => !q.since || !q.until || Date.parse(q.since) < Date.parse(q.until),

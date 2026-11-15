@@ -57,14 +57,15 @@ questions:
 | `question` | Nonblank natural-language RU/EN question, up to 512 characters. Search validity follows the current MCP implementation. |
 | `areas` | Ordered array of 1–8 distinct areas to search. It grants no access. |
 | `read_areas` | Simulated client's read rights, 0–8 distinct areas. Write/process rights are always empty. |
-| `expected` | Up to 100 acceptable evidence matchers; any one match is a hit. Each object has exactly one of `source_external_id`, `source_id`, or `substring`. A source can satisfy several matchers. |
-| `outranks` | Optional nonempty list of the same matchers: the first expected hit must rank above every returned matching historical hit. Requires `expected`. Missing history is allowed; missing expected evidence fails. Results add only `outranks_pass`, with no text. |
+| `expected` | Up to 100 evidence matchers. Any one match is a hit for retrieval metrics. Each object has exactly one of `source_external_id`, `source_id`, `item_id`, or `substring`. A source can satisfy several matchers. Project recall counts each matcher separately. | 
+| `expected_any` | Optional list of 1–100 distinct ids. The group is one extra matcher: it hits when any returned card id is in the list. Use it when several item or source ids are acceptable. `item_id` inside `expected` still matches one id. A question may set either field, or both. |
+| `outranks` | Optional nonempty list of the same matchers: the first expected hit must rank above every returned matching historical hit. Requires `expected` or `expected_any`. The first hit is the best rank among `expected` matchers and the `expected_any` group. Missing history is allowed; missing expected evidence fails. Results add only `outranks_pass`, with no text. |
 | `forbidden_areas` | Optional distinct areas whose results must never appear, default `[]`. These areas are also probed directly with the same client rights. |
 | `tags` | Optional labels such as `inflection`, `paraphrase`, `ru`, `en`; kept in the private file, not the results. |
 | `placeholder` | Optional boolean, default false. True skips the question completely, with null metrics and pass state. |
 
 All mentioned areas must be configured by the existing `CONTEXT_AREAS`. A
-non-placeholder needs at least one expected matcher or a forbidden area.
+non-placeholder needs at least one expected matcher, an `expected_any` list, or a forbidden area.
 `expected: []` with `forbidden_areas` is an isolation-only case; it does not enter
 retrieval-quality averages. Searching an area outside `read_areas` must produce
 an MCP access denial, even if that area appears in `areas`.
@@ -256,7 +257,8 @@ prod set is run. `--k` is 1–20 and defaults to 10. `--json` prints the report
 only. Question text, matchers and excerpts are not stored.
 
 Recall@k for a question is the fraction of its expected matchers found in the
-top k (or in the pack, still capped at k cards). Pack-hit rate is the fraction
+top k (or in the pack, still capped at k cards). `expected_any` counts as one
+matcher and is found when any listed id is returned. Pack-hit rate is the fraction
 of `mode: pack` questions that found every matcher, respected `outranks` and
 forbidden substrings, and had no isolation violation. Both are macro-averaged
 per project and overall. A question needs a `project`. `item_id` matches a

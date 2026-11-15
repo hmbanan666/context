@@ -69,6 +69,7 @@ import {
   installSearchIndex,
   lexicalCandidates,
   registerSearchFunctions,
+  type ExpandedTerm,
   type TermHit,
 } from "./search-lexical.js";
 
@@ -936,7 +937,7 @@ export class SourceStore {
     unsetProjectGlossaryTerm(this.#database, projectId, term);
   }
 
-  expandedTerms(terms: readonly string[], projectId?: string): string[] {
+  expandedTerms(terms: readonly string[], projectId?: string): ExpandedTerm[] {
     return expandQueryTerms(terms, this.glossary(projectId));
   }
 

@@ -87,3 +87,7 @@ not re-run here.
 Amended by [ADR 0015](0015-pack-profile-share-and-glossary-phrases.md): a term
 may be a phrase of up to four words, matched by stem plus one fleeting vowel,
 and the public expi set has one more pack question.
+
+Amended by [ADR 0016](0016-merged-hybrid-rank.md): the original-term rank band
+is removed. The score adds one for each query word matched by that word or by
+a synonym, and an exact original word only breaks ties.

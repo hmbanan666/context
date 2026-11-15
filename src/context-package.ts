@@ -1,6 +1,10 @@
 import type { z } from "zod";
 import type { SemanticHits } from "./embedding-index.js";
-import { journalExcerpt } from "./journal.js";
+import {
+  datedJournalExcerpt,
+  journalExcerpt,
+  undatedJournalExcerpt,
+} from "./journal.js";
 import type {
   KnowledgeItem,
   KnowledgeRelation,
@@ -122,6 +126,7 @@ function itemCard(
   supersededBy?: string,
   sourceLinks?: { id: string; url?: string }[],
   citedIds?: readonly string[],
+  journalMaximum = datedJournalExcerpt,
 ) {
   return {
     id: k.id,
@@ -132,7 +137,7 @@ function itemCard(
     creator: k.creator,
     excerpt:
       k.kind === "journal"
-        ? journalExcerpt(k.text)
+        ? journalExcerpt(k.text, journalMaximum)
         : knowledgeExcerpt(k.text, matchOffset, 480),
     sourceIds: k.sourceRefs.map((r) => r.sourceId),
     ...(sourceLinks ? { sourceLinks } : {}),
@@ -183,6 +188,7 @@ export function buildContextPackage(
   projectId?: string,
 ): ContextPackage {
   const request = contextPackageSchema.parse(input);
+  const dated = request.from !== undefined || request.until !== undefined;
   const terms =
     request.mode === "timeline" ? [] : questionTerms(request.question);
   const expansion = terms.length ? sources.expandedTerms(terms, projectId) : [];
@@ -355,6 +361,7 @@ export function buildContextPackage(
             k.kind === "journal"
               ? knowledge.journalCitations(k.id)?.citedIds
               : undefined,
+            dated ? datedJournalExcerpt : undatedJournalExcerpt,
           ),
         ),
       ],
@@ -388,7 +395,8 @@ export function buildContextPackage(
     return true;
   };
   // Interleave the independently ranked lists; raw BM25 scores are not comparable across indexes.
-  // Project search puts journals, then decisions, then facts ahead of raw sources.
+  // Project search order is already applied: one hybrid list without dates, kind
+  // order when since or until is set. Raw sources follow those rows.
   const candidates: Array<{
     source?: Material;
     item?: KnowledgeItem;

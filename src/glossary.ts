@@ -1,4 +1,4 @@
-import { stemText } from "./search-lexical.js";
+import { type ExpandedTerm, stemText } from "./search-lexical.js";
 
 export interface GlossaryEntry {
   readonly term: string;
@@ -94,15 +94,16 @@ function phraseAt(
 }
 
 /**
- * Synonyms for query tokens, in query order. A single word matches by stem,
- * including one fleeting vowel. A multi-word term matches a run of query
- * words the same way, and its synonym is kept as a phrase for FTS. Terms
- * already in the query are omitted. Capped so an OR-query cannot grow.
+ * Synonyms for query tokens, in query order, each tagged with the query-word
+ * indexes it came from. A single word matches by stem, including one fleeting
+ * vowel. A multi-word term matches a run of query words the same way, and its
+ * synonym is kept as a phrase for FTS. Terms already in the query are omitted.
+ * Capped so an OR-query cannot grow.
  */
 export function expandQueryTerms(
   terms: readonly string[],
   entries: readonly GlossaryEntry[],
-): string[] {
+): ExpandedTerm[] {
   const indexed: IndexedEntry[] = entries.map((entry) => ({
     stems: phraseWords(entry.term).map((word) => wordStem(word)),
     synonyms: entry.synonyms,
@@ -114,9 +115,12 @@ export function expandQueryTerms(
   const queryStems = terms.map((term) => wordStem(term));
   const original = new Set(terms.map((term) => term.toLowerCase()));
   const originalStems = new Set(queryStems);
-  const expanded: string[] = [];
-  const seen = new Set<string>();
-  const add = (synonyms: readonly string[]): boolean => {
+  const expanded: ExpandedTerm[] = [];
+  const seen = new Map<string, number[]>();
+  const add = (
+    synonyms: readonly string[],
+    from: readonly number[],
+  ): boolean => {
     for (const synonym of synonyms) {
       const token = synonym.toLowerCase();
       const words = phraseWords(token);
@@ -127,24 +131,31 @@ export function expandQueryTerms(
         )
       )
         continue;
-      if (seen.has(token)) continue;
+      const prior = seen.get(token);
+      if (prior) {
+        for (const index of from) if (!prior.includes(index)) prior.push(index);
+        continue;
+      }
       if (expanded.length >= maxExpandedTerms) return false;
-      expanded.push(token);
-      seen.add(token);
+      const indexes = [...from];
+      seen.set(token, indexes);
+      expanded.push({ term: token, from: indexes });
     }
     return true;
   };
   for (let index = 0; index < terms.length; index++) {
     for (const phrase of phrases) {
       if (!phraseAt(queryStems, index, phrase.stems)) continue;
-      if (!add(phrase.synonyms)) return expanded;
+      const from = phrase.stems.map((_, offset) => index + offset);
+      if (!add(phrase.synonyms, from)) return expanded;
     }
     const stem = queryStems[index] ?? "";
     const exact = singles.filter((entry) => entry.stems[0] === stem);
     const chosen = exact.length
       ? exact
       : singles.filter((entry) => stemsMatch(stem, entry.stems[0] ?? ""));
-    for (const entry of chosen) if (!add(entry.synonyms)) return expanded;
+    for (const entry of chosen)
+      if (!add(entry.synonyms, [index])) return expanded;
   }
   return expanded;
 }

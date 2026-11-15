@@ -89,11 +89,33 @@ export function evalHitMatches(
     return hit.externalIds.includes(expected.source_external_id);
   return hit.excerpts.some((excerpt) => excerpt.includes(expected.substring));
 }
+export function hasExpectations(question: {
+  expected: readonly unknown[];
+  expected_any?: readonly string[] | undefined;
+}): boolean {
+  return (
+    question.expected.length > 0 || (question.expected_any?.length ?? 0) > 0
+  );
+}
+
+/** Ranks of each expected matcher, then one rank for expected_any if it is set. */
+export function matcherRanks(
+  question: EvalQuestion,
+  hits: readonly EvalHit[],
+): number[] {
+  const ranks = question.expected.map(
+    (expected) => hits.findIndex((hit) => evalHitMatches(expected, hit)) + 1,
+  );
+  if (question.expected_any?.length) {
+    const ids = new Set(question.expected_any);
+    ranks.push(hits.findIndex((hit) => ids.has(hit.id)) + 1);
+  }
+  return ranks;
+}
+
 export function scoreEval(question: EvalQuestion, hits: EvalHit[]) {
   const matches = evalHitMatches;
-  const ranks = question.expected.map(
-    (expected) => hits.findIndex((hit) => matches(expected, hit)) + 1,
-  );
+  const ranks = matcherRanks(question, hits);
   const found = ranks.filter((rank) => rank > 0);
   return {
     ...(question.outranks
@@ -174,6 +196,8 @@ export async function evaluate(
       if (q.placeholder) continue;
       let violationKeys: string[] = [];
       let hybridScores: (number | null)[] = [];
+      const flags = (hits: EvalHit[]) =>
+        matcherRanks(q, hits).map((rank) => (rank > 0 ? 1 : 0));
       const start = performance.now();
       try {
         const retrieved = await retrieveForEval(
@@ -185,19 +209,14 @@ export async function evaluate(
         semanticUsed ||= retrieved.semanticUsed;
         semanticUnavailable ||= retrieved.semanticUnavailable;
         Object.assign(result, scoreEval(q, retrieved.hits));
-        hybridScores = q.expected.map(
-          (expected) =>
-            scoreEval({ ...q, expected: [expected] }, retrieved.hits).hit_at_k,
-        );
+        hybridScores = flags(retrieved.hits);
         violationKeys = retrieved.violationKeys;
         result.isolation_violations = retrieved.isolationViolations;
         result.status = retrieved.failed ? "failed" : "completed";
         if (retrieved.failed) run.outcome = "failed";
         const packComplete =
           q.mode !== "pack" ||
-          q.expected.every((expected) =>
-            retrieved.hits.some((hit) => evalHitMatches(expected, hit)),
-          );
+          matcherRanks(q, retrieved.hits).every((rank) => rank > 0);
         result.pass =
           !retrieved.failed &&
           packComplete &&
@@ -212,13 +231,13 @@ export async function evaluate(
         result.pass = false;
         if (q.outranks) result.outranks_pass = false;
         run.outcome = "failed";
-        if (q.expected.length)
+        if (hasExpectations(q))
           Object.assign(result, { hit_at_1: 0, hit_at_k: 0, mrr: 0 });
       }
       result.latency_ms = performance.now() - start;
       // The control uses the identical protected MCP path without vector candidates.
       // Keep its work out of the primary retrieval latency and quality metrics.
-      if (embeddings && q.expected.length && result.status === "completed") {
+      if (embeddings && hasExpectations(q) && result.status === "completed") {
         try {
           const lexical = await retrieveForEval(
             options.databasePath,
@@ -233,10 +252,7 @@ export async function evaluate(
           if (lexical.failed) throw new Error("Lexical control failed");
           // Compare each expected matcher, so a question with several sources can
           // contribute even when another expected source is found on both paths.
-          const controlScores = q.expected.map(
-            (expected) =>
-              scoreEval({ ...q, expected: [expected] }, lexical.hits).hit_at_k,
-          );
+          const controlScores = flags(lexical.hits);
           run.diagnostics.compared_questions++;
           lexicalScores.push(scoreEval(q, lexical.hits));
           if (

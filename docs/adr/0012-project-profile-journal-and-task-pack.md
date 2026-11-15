@@ -79,7 +79,11 @@ is a field on the discovered `search` tool. Hidden `context_package` modes stay
 
 Amended by [ADR 0013](0013-rank-the-task-pack-by-the-query.md): a pack ranks
 proposed and approved decisions and facts by the task, drops rows the query
-does not match, and reserves part of the budget for raw sources. Amended by
+does not match, and reserves part of the budget for raw sources.
+
+Amended by [ADR 0016](0016-merged-hybrid-rank.md): without `since` or `until`,
+journals, decisions and facts are one hybrid ranking and the package keeps at
+most two journals. A dated search keeps the kind order above. Amended by
 [ADR 0015](0015-pack-profile-share-and-glossary-phrases.md): the pack renders
 at most 20% of the budget as profile text. The stored profile is unchanged.
 

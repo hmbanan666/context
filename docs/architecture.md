@@ -157,9 +157,11 @@ previous week rewrite or the next pass. A failed processor call is logged
 with its class (`timeout`, `rate_limit`, `nonzero_exit`, `parse`,
 `unavailable`), exit code and a redacted stderr tail. Timeout, rate limit and
 non-zero exit are retried within the call cap. One such failure does not mark
-the run `unavailable`. Search with a project id
-and a date bound ranks journals, then decisions, then facts in that window
-even when the query does not match them, ahead of uncited raw sources.
+the run `unavailable`. Search with a project id and no dates ranks journals, decisions and facts as
+one hybrid list and keeps at most two journals (ADR 0016). A journal card is
+then at most 240 characters. With a date bound, journals, then decisions, then
+facts in that window come first even when the query does not match them, ahead
+of uncited raw sources, and a journal card stays up to 480 characters.
 Slice 4e records owner approval in `knowledge_reviews`
 and, for a suggested project name, creates or links the project. Approval
 does not write supersedes. Slice 4f adds `search` mode `pack` (ADR 0012, amended by ADR 0013 and ADR 0015):
