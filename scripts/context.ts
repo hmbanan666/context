@@ -2,6 +2,7 @@
 import { AuthStore } from "../src/auth-store.js";
 import { readConfig } from "../src/config.js";
 import { evalCommand } from "../src/eval-cli.js";
+import { groundingCommand } from "../src/grounding-cli.js";
 import { runIndexCommand } from "../src/index-command.js";
 import { initCommand } from "../src/init-command.js";
 import { runReindexCommand } from "../src/reindex-command.js";
@@ -74,6 +75,10 @@ async function main() {
   }
   if (process.argv[2] === "search") {
     searchCommand(process.argv.slice(3), process.env);
+    return;
+  }
+  if (process.argv[2] === "grounding") {
+    await groundingCommand(process.argv.slice(3), process.env);
     return;
   }
   if (process.argv[2] === "reindex") {
@@ -196,7 +201,7 @@ async function main() {
       return;
     }
     throw new Error(
-      "Usage: context init [--project <id> --name <name>] | owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d] | token list|revoke <id> | import jsonl --source <name> [--area <a>] [--file <path>] | import markdown <dir> [--area <a>] [--project <id>] | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>]",
+      "Usage: context init [--project <id> --name <name>] | owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d] | token list|revoke <id> | import jsonl --source <name> [--area <a>] [--file <path>] | import markdown <dir> [--area <a>] [--project <id>] | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>] | grounding explain (--query <text> | --file <questions.yaml>) [--area <a>] [--project <id>] [--json]",
     );
   } finally {
     store.close();
@@ -207,6 +212,7 @@ void main().catch((error: unknown) => {
   if (
     process.argv[2] === "project" ||
     process.argv[2] === "search" ||
+    process.argv[2] === "grounding" ||
     process.argv[2] === "reindex" ||
     process.argv[2] === "eval" ||
     process.argv[2] === "init"
