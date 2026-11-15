@@ -174,10 +174,11 @@ implemented and not deployed.
   sentences, so that mix of raw results stays as it is. With a `project`
   filter and no `since` or `until`, search ranks that project's journals,
   decisions and facts as one hybrid list and returns at most two journals. A
-  journal card is then at most 240 characters. With `since` or `until`, journals,
-  then decisions, then facts in that window come first, including rows the query
-  does not match. A match ranks ahead of the other rows of the same kind, and a
-  journal card stays up to 480 characters. Search omits a raw source cited by a
+  journal card is then at most 240 characters. With `since` or `until`, every
+  weekly journal whose week overlaps that window comes first, oldest week
+  first, with no two-journal cap, then decisions, then facts, including rows
+  the query does not match. A match ranks ahead of the other decisions and
+  facts. A journal card stays up to 480 characters. Search omits a raw source cited by a
   returned item. Each distilled item keeps its stored status:
   `proposed`, or `approved` when a review says so. Optional `budgetBytes`
   (2048–65536) overrides the package budget; the default stays 8192. A missing
@@ -246,10 +247,10 @@ implemented and not deployed.
   processor and does not spend the distillation or inbox call caps. `read`
   returns the paragraph by
   id. Search without `project` stays area-wide and omits journals.
-- Period questions use `search` with `project` and dates. The project's journal
-  entries whose week overlaps the range, then its decisions, then its facts for
-  the period, come before raw excerpts even when the question shares no words
-  with them. A decision or fact excerpt starts at a sentence boundary and is
+- Period questions use `search` with `project` and dates. Every weekly journal
+  whose week overlaps the range comes first, oldest week first, then that
+  period's decisions, then its facts, before raw excerpts even when the
+  question shares no words with them. A decision or fact excerpt starts at a sentence boundary and is
   trimmed at the end, on a whole sentence when one fits. It does not open
   mid-sentence. A raw source cited by a returned item is omitted. Uncited sources
   appear only when the byte budget still has room. The public October fixture
@@ -260,9 +261,10 @@ implemented and not deployed.
   hybrid project search against the task (ADR 0013, amended by ADR 0015).
   Approved rows get a 1.25 score boost. Recency breaks ties. Superseded and
   rejected rows are omitted. A row the query does not match is omitted rather
-  than used to fill the budget. When any candidate matches two glossary
-  concepts, a row that matches neither the caller's words nor two concepts is
-  omitted too. The rendered profile is at most 20% of the budget: purpose,
+  than used to fill the budget. When the query hits the glossary, a row more
+  than one concept below the best coverage, or below half the query concepts,
+  is omitted if a stronger row exists. Otherwise a row below half the top
+  hybrid score is omitted. A short query is not emptied. The rendered profile is at most 20% of the budget: purpose,
   then rules, then pinned sentences that fit, then the project glossary
   trimmed at term boundaries. `read` of `profile:<id>` still returns the
   stored profile. About 25% of the budget is held for at most two raw sources

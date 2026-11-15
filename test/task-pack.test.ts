@@ -10,6 +10,7 @@ import {
 import { test } from "vite-plus/test";
 import {
   buildTaskPack,
+  packFloor,
   packProfileShare,
   packRelevance,
   profileSection,
@@ -827,6 +828,116 @@ function fatRules(purpose: string, target = 1700): string {
     rules = `${rules} ${sentence}`;
   return rules;
 }
+
+test("pack floor drops a one-concept backup when distillation covers two", () => {
+  const hits = new Map([
+    ["distill", { original: false, concepts: 2 }],
+    ["cursor", { original: false, concepts: 2 }],
+    ["backup", { original: true, concepts: 1 }],
+  ]);
+  const scores = new Map([
+    ["distill", 2.04],
+    ["cursor", 2.02],
+    ["backup", 1.08],
+  ]);
+  const items = [
+    { id: "distill", status: "proposed" },
+    { id: "cursor", status: "proposed" },
+    { id: "backup", status: "proposed" },
+  ];
+  assert.deepEqual(
+    packFloor(items, hits, {
+      scores,
+      queryConcepts: 3,
+      glossary: true,
+    }).map((item) => item.id),
+    ["distill", "cursor"],
+  );
+  assert.deepEqual(
+    packFloor(items, hits, {
+      scores,
+      queryConcepts: 1,
+      glossary: true,
+    }).map((item) => item.id),
+    ["distill", "cursor", "backup"],
+  );
+  assert.deepEqual(
+    packFloor(
+      [
+        { id: "strong", status: "proposed" },
+        { id: "weak", status: "proposed" },
+      ],
+      new Map([
+        ["strong", { original: true, concepts: 0 }],
+        ["weak", { original: false, concepts: 0 }],
+      ]),
+      {
+        scores: new Map([
+          ["strong", 1],
+          ["weak", 0.2],
+        ]),
+        queryConcepts: 2,
+        glossary: false,
+      },
+    ).map((item) => item.id),
+    ["strong"],
+  );
+});
+
+test("a distillation pack drops the nightly backup that covers one concept", async () => {
+  const mcp = await open("floor");
+  try {
+    mcp.sources.setGlossaryTerm({
+      projectId: "observatory",
+      term: "дистилляция",
+      synonyms: ["distill", "distillation", "tidy"],
+    });
+    const notes = [
+      "Nightly distillation keeps a cursor and resumes the next tidy pass.",
+      "Nightly tidy stores the proposed distillation fact.",
+      "Ночную резервную копию хранит отдельный снимок.",
+    ];
+    notes.forEach((text, index) => {
+      const source = capture(
+        mcp.sources,
+        `floor-${index}`,
+        text,
+        `2026-11-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+        "observatory",
+      );
+      mcp.knowledge.addDistilled({
+        scope,
+        sourceId: source.id,
+        kind: "decision",
+        text,
+        createdAt: `2026-11-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+      });
+    });
+    const pack = buildTaskPack(mcp.sources, mcp.knowledge, {
+      scope,
+      projectId: "observatory",
+      question: "улучшить ночную дистилляцию",
+      budgetBytes: 4096,
+    });
+    const body = JSON.stringify(pack);
+    assert.equal(body.includes("Nightly distillation keeps a cursor"), true);
+    assert.equal(body.includes("proposed distillation fact"), true);
+    assert.equal(body.includes("резервную копию"), false);
+    const short = buildTaskPack(mcp.sources, mcp.knowledge, {
+      scope,
+      projectId: "observatory",
+      question: "дистилляция",
+      budgetBytes: 4096,
+    });
+    assert.equal(
+      JSON.stringify(short).includes("Nightly distillation keeps a cursor"),
+      true,
+    );
+    assert.ok(short.items.some((item) => item.kind === "decision"));
+  } finally {
+    await mcp.close();
+  }
+});
 
 test("a 4096 pack caps a large profile and drops the backup neighbour", async () => {
   const mcp = await open("prod-context");

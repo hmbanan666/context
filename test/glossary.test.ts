@@ -354,8 +354,12 @@ test("two query concepts outrank one exact original word", async () => {
         pack.structuredContent as { items: { excerpt: { text: string } }[] }
       ).items.map((item) => item.excerpt.text);
       assert.ok(
-        packed.findIndex((text) => text.includes("distillation")) <
-          packed.findIndex((text) => text.includes("Ночную")),
+        packed.some((text) => text.includes("distillation")),
+        packed.join("\n"),
+      );
+      assert.equal(
+        packed.some((text) => text.includes("Ночную")),
+        false,
         packed.join("\n"),
       );
     } finally {

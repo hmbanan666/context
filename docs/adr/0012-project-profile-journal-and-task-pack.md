@@ -83,7 +83,8 @@ does not match, and reserves part of the budget for raw sources.
 
 Amended by [ADR 0016](0016-merged-hybrid-rank.md): without `since` or `until`,
 journals, decisions and facts are one hybrid ranking and the package keeps at
-most two journals. A dated search keeps the kind order above. Amended by
+most two journals. A dated search lists every overlapping week oldest first,
+then decisions, then facts. Amended by
 [ADR 0015](0015-pack-profile-share-and-glossary-phrases.md): the pack renders
 at most 20% of the budget as profile text. The stored profile is unchanged.
 

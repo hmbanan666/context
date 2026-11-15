@@ -662,8 +662,10 @@ export class KnowledgeStore {
         return materialize(found.ids, found.total, found.matchOffsets);
       }
       // Undated project search ranks journals, decisions and facts together and
-      // keeps at most two journals. A date bound keeps kind order and recalls
-      // in-window rows that share no terms; matches stay ahead within a kind.
+      // keeps at most two journals. A date bound does not use that cap or the
+      // 240-character excerpt. It lists every overlapping week oldest first,
+      // then decisions, then facts. A match still ranks ahead inside decisions
+      // and facts; journals stay chronological even when they share no terms.
       if (input.from === undefined && input.until === undefined) {
         const merged = matches("k.kind IN ('journal', 'decision', 'fact')");
         const rest = matches("k.kind NOT IN ('fact', 'decision', 'journal')");
@@ -690,17 +692,20 @@ export class KnowledgeStore {
       const decisions = matches("k.kind = 'decision'");
       const facts = matches("k.kind = 'fact'");
       const rest = matches("k.kind NOT IN ('fact', 'decision', 'journal')");
-      const dated = (kindSql: string) => {
+      const dated = (kindSql: string, chronological: boolean) => {
         const where = [...conditions, kindSql].filter(Boolean).join(" AND ");
         const total = Number(
           this.#database
             .prepare(`SELECT count(*) n FROM (${itemSelection} WHERE ${where})`)
             .get(...params)?.n,
         );
+        const order = chronological
+          ? "createdAt ASC, id ASC"
+          : "createdAt DESC, id DESC";
         const ids = (
           this.#database
             .prepare(
-              `SELECT id FROM (${itemSelection} WHERE ${where}) ORDER BY createdAt DESC, id LIMIT ?`,
+              `SELECT id FROM (${itemSelection} WHERE ${where}) ORDER BY ${order} LIMIT ?`,
             )
             .all(...params, input.limit) as { id: string }[]
         ).map((row) => row.id);
@@ -711,13 +716,15 @@ export class KnowledgeStore {
         for (const id of extra) if (!ids.includes(id)) ids.push(id);
         return ids;
       };
-      const journalWindow = dated("k.kind = 'journal'");
-      const decisionWindow = dated("k.kind = 'decision'");
-      const factWindow = dated("k.kind = 'fact'");
+      // Week overlap is already in `conditions`. Do not prepend lexical hits:
+      // that put a low-scoring straddling week after the byte budget.
+      const journalWindow = dated("k.kind = 'journal'", true);
+      const decisionWindow = dated("k.kind = 'decision'", false);
+      const factWindow = dated("k.kind = 'fact'", false);
       const ids = [
-        ...prefer(journals.ids, journalWindow?.ids ?? []),
-        ...prefer(decisions.ids, decisionWindow?.ids ?? []),
-        ...prefer(facts.ids, factWindow?.ids ?? []),
+        ...journalWindow.ids,
+        ...prefer(decisions.ids, decisionWindow.ids),
+        ...prefer(facts.ids, factWindow.ids),
       ];
       for (const id of rest.ids) if (!ids.includes(id)) ids.push(id);
       const matchOffsets = new Map(rest.matchOffsets);
