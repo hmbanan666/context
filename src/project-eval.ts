@@ -4,7 +4,12 @@ import type { EmbeddingIndex } from "./embedding-index.js";
 import { E5_VERSION } from "./embedding-model.js";
 import { readEvalQuestions } from "./eval-questions.js";
 import { retrieveForEval } from "./eval-retrieval.js";
-import { evalHitMatches, scoreEval, type EvalOptions } from "./eval-runner.js";
+import {
+  hasExpectations,
+  matcherRanks,
+  scoreEval,
+  type EvalOptions,
+} from "./eval-runner.js";
 
 export interface ProjectEvalQuestionResult {
   id: string;
@@ -110,11 +115,9 @@ export async function evaluateProjects(
       semanticUsed ||= retrieved.semanticUsed;
       semanticUnavailable ||= retrieved.semanticUnavailable;
       const scored = scoreEval(question, retrieved.hits);
-      const found = question.expected.filter((expected) =>
-        retrieved.hits.some((hit) => evalHitMatches(expected, hit)),
-      ).length;
-      const recall = question.expected.length
-        ? found / question.expected.length
+      const ranks = matcherRanks(question, retrieved.hits);
+      const recall = ranks.length
+        ? ranks.filter((rank) => rank > 0).length / ranks.length
         : null;
       const outranks = scored.outranks_pass;
       if (outranks !== undefined) result.outranks_pass = outranks;
@@ -135,7 +138,7 @@ export async function evaluateProjects(
     } catch {
       result.status = "failed";
       result.pass = false;
-      result.recall = question.expected.length ? 0 : null;
+      result.recall = hasExpectations(question) ? 0 : null;
       result.pack_hit = question.mode === "pack" ? false : null;
       if (question.outranks) result.outranks_pass = false;
       report.outcome = "failed";

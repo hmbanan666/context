@@ -50,11 +50,14 @@ A term is one to four words. A multi-word synonym is one FTS phrase. Matching
 uses Snowball stems, and one inserted о, е or ё still matches, so список meets
 списка and покупок meets покупки. ночную and ночная already share a stem.
 A built-in RU→EN list (backup, distill, nightly, embedding, and similar) applies
-when the project has no entry for that stem. Expanded concepts use FTS weight
-0.35 against weight 1 for the caller's own words. Two or more synonym concepts
-rank above a vector hit that matched only one of them, and below any hit on the
-original words. One synonym does not. In a pack, that one-concept neighbour is
-omitted once a two-concept hit exists. The embedding string is not expanded.
+when the project has no entry for that stem. Expanded synonyms use FTS weight
+0.35 against weight 1 for the caller's own words. When the query expands, the
+score adds one for each query word matched by that word or by a synonym of it.
+Two synonyms of one word count once. An exact original word only breaks ties.
+A query that matches no glossary entry keeps reciprocal-rank fusion, so a
+vector hit can still outrank one lexical token. In a pack, a row that
+matches neither the caller's own words nor two query concepts is omitted once a
+two-concept hit exists. The embedding string is not expanded.
 Timeline is not expanded.
 
 Phrases the previous one-token check rejected are set again, with the phrase
@@ -330,10 +333,12 @@ optional `project` id, and `search` with `listProjects: true` returns at most
 64 ids and names without searching. See
 [ADR 0010](adr/0010-projects-in-the-understanding-layer.md). Nightly distillation
 stores proposed facts and decisions (ADR 0011). Area-wide search still omits
-those sentences, and `timeline` stays a source list. With a project id, search
-ranks that project's journals, then decisions, then facts in the requested dates
-ahead of raw sources. With `since` or `until`, those in-window rows are included
-even when the query shares no words with them. Each item is labelled with its
+those sentences, and `timeline` stays a source list. With a project id and no
+dates, search ranks that project's journals, decisions and facts as one hybrid
+list and returns at most two journals. A journal card is then at most 240
+characters. With `since` or `until`, journals, then decisions, then facts in
+that window come first, including rows the query does not match, and a journal
+card stays up to 480 characters. Each item is labelled with its
 stored status, `proposed` or `approved`, and carries the source id and URL. A
 raw source cited by a returned item is omitted. `budgetBytes` (2048–65536)
 overrides the 8192-byte package budget. Journal paragraphs are the week's

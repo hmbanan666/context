@@ -172,11 +172,13 @@ implemented and not deployed.
   Capture does not wait. Slice 4b stores each sentence with status `proposed`.
   `read` returns it by id. Area-wide `search` and `timeline` omit these
   sentences, so that mix of raw results stays as it is. With a `project`
-  filter, search ranks that project's weekly journal, then decisions, then facts
-  in the requested dates ahead of raw sources and omits a raw source cited by a
-  returned item. When `project` and `since` or `until` are set, those in-window
-  rows are included even if the query does not match them. A match ranks ahead
-  of the other rows of the same kind. Each distilled item keeps its stored status:
+  filter and no `since` or `until`, search ranks that project's journals,
+  decisions and facts as one hybrid list and returns at most two journals. A
+  journal card is then at most 240 characters. With `since` or `until`, journals,
+  then decisions, then facts in that window come first, including rows the query
+  does not match. A match ranks ahead of the other rows of the same kind, and a
+  journal card stays up to 480 characters. Search omits a raw source cited by a
+  returned item. Each distilled item keeps its stored status:
   `proposed`, or `approved` when a review says so. Optional `budgetBytes`
   (2048–65536) overrides the package budget; the default stays 8192. A missing
   or failed processor skips distillation and still runs dedup, inbox sorting

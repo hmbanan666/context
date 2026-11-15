@@ -462,3 +462,43 @@ test("outranks requires an expected hit before every matched historical hit and 
   assert.equal(scoreEval(question, [current]).outranks_pass, true);
   assert.equal(scoreEval(question, []).outranks_pass, false);
 });
+
+test("expected_any accepts any listed id and item_id still matches one id", () => {
+  const any = evalQuestionSchema.parse({
+    id: "any",
+    question: "agents",
+    areas: ["garden"],
+    read_areas: ["garden"],
+    expected_any: ["kept", "also"],
+  });
+  const hit = { id: "also", externalIds: [], excerpts: ["note"] };
+  const miss = { id: "other", externalIds: [], excerpts: ["note"] };
+  assert.equal(scoreEval(any, [miss, hit]).hit_at_k, 1);
+  assert.equal(scoreEval(any, [miss, hit]).mrr, 0.5);
+  assert.equal(scoreEval(any, [miss]).hit_at_k, 0);
+  const one = evalQuestionSchema.parse({
+    id: "one",
+    question: "agents",
+    areas: ["garden"],
+    read_areas: ["garden"],
+    expected: [{ item_id: "kept" }],
+  });
+  assert.equal(
+    scoreEval(one, [hit, { id: "kept", externalIds: [], excerpts: [] }])
+      .hit_at_1,
+    0,
+  );
+  assert.equal(
+    scoreEval(one, [{ id: "kept", externalIds: [], excerpts: [] }]).hit_at_k,
+    1,
+  );
+  assert.throws(() =>
+    evalQuestionSchema.parse({
+      id: "dup",
+      question: "agents",
+      areas: ["garden"],
+      read_areas: ["garden"],
+      expected_any: ["kept", "kept"],
+    }),
+  );
+});

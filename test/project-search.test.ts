@@ -485,3 +485,134 @@ test("the public October project question and pack cases pass", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("undated search keeps a full-query fact in the top 3 and period recall stays in kind order", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-merged-rank-"));
+  const path = join(directory, "context.db");
+  const sources = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  const area = "lab";
+  try {
+    sources.createProject({
+      id: "observatory",
+      name: "Observatory",
+      homeArea: area,
+    });
+    const repeated = Array.from({ length: 20 }, () => "cobalt lantern").join(
+      " ",
+    );
+    const long = `The ${repeated} stays packed in the fictional hall.`;
+    const capture = (
+      key: string,
+      text: string,
+      createdAt: string,
+      kind: "decision" | "fact",
+    ) => {
+      const source = sources.captureMaterial(
+        {
+          version: 1,
+          scope: area,
+          origin: "synthetic:merged-rank",
+          idempotencyKey: key,
+          text,
+          metadata: { createdAt },
+        },
+        undefined,
+        ["observatory"],
+      ).material.source;
+      return knowledge.addDistilled({
+        scope: area,
+        sourceId: source.id,
+        kind,
+        text,
+        createdAt,
+      }).item;
+    };
+    for (const [index, createdAt] of [
+      "2026-01-05T00:00:00.000Z",
+      "2026-01-19T00:00:00.000Z",
+      "2026-02-02T00:00:00.000Z",
+      "2026-02-16T00:00:00.000Z",
+      "2026-03-02T00:00:00.000Z",
+      "2026-03-16T00:00:00.000Z",
+    ].entries())
+      capture(`week-${index}`, long, createdAt, "decision");
+    knowledge.refreshJournals({
+      areas: [area],
+      now: new Date("2026-11-14T00:00:00.000Z"),
+      timeZone: "UTC",
+      dryRun: false,
+      backfillLimit: 24,
+    });
+    for (let index = 0; index < 15; index++) {
+      const day = String(index + 1).padStart(2, "0");
+      capture(
+        `common-${index}`,
+        "The cobalt lantern stays in the fictional hall.",
+        `2026-04-${day}T00:00:00.000Z`,
+        "decision",
+      );
+    }
+    const fact = capture(
+      "whole",
+      "The cobalt mirror shipment is logged for the dock.",
+      "2026-03-20T00:00:00.000Z",
+      "fact",
+    );
+    const undated = buildContextPackage(
+      sources,
+      knowledge,
+      {
+        version: 1,
+        scope: area,
+        question: "cobalt mirror shipment",
+        limit: 10,
+        maxBytes: 8192,
+      },
+      undefined,
+      "observatory",
+    );
+    assert.ok(Buffer.byteLength(JSON.stringify(undated), "utf8") <= 8192);
+    const factAt = undated.items.findIndex((item) => item.id === fact.id);
+    assert.ok(
+      factAt >= 0 && factAt < 3,
+      undated.items
+        .map((item) => `${item.kind}:${item.excerpt.text}`)
+        .join("\n"),
+    );
+    const journals = undated.items.filter((item) => item.kind === "journal");
+    assert.equal(journals.length, 2);
+    assert.ok(journals.every((item) => item.excerpt.text.length <= 240));
+    const period = buildContextPackage(
+      sources,
+      knowledge,
+      {
+        version: 1,
+        scope: area,
+        question: "violetmarker",
+        from: "2026-01-01T00:00:00.000Z",
+        until: "2026-04-01T00:00:00.000Z",
+        limit: 20,
+        maxBytes: 65536,
+      },
+      undefined,
+      "observatory",
+    );
+    const kinds = period.items.map((item) => item.kind);
+    assert.ok(
+      kinds.filter((kind) => kind === "journal").length > 2,
+      kinds.join(","),
+    );
+    const lastJournal = kinds.lastIndexOf("journal");
+    const firstDecision = kinds.indexOf("decision");
+    const factIndex = period.items.findIndex((item) => item.id === fact.id);
+    assert.ok(firstDecision > lastJournal);
+    assert.ok(factIndex > firstDecision);
+    const periodJournal = period.items.find((item) => item.kind === "journal");
+    assert.ok((periodJournal?.excerpt.text.length ?? 0) > 240);
+  } finally {
+    knowledge.close();
+    sources.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

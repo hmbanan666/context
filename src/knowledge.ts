@@ -661,14 +661,35 @@ export class KnowledgeStore {
         const found = matches("");
         return materialize(found.ids, found.total, found.matchOffsets);
       }
-      // Journals, then decisions, then facts, ahead of other notes.
-      // A project plus a date bound also keeps in-window rows that share no
-      // terms with the query. Matches stay ahead of those rows.
+      // Undated project search ranks journals, decisions and facts together and
+      // keeps at most two journals. A date bound keeps kind order and recalls
+      // in-window rows that share no terms; matches stay ahead within a kind.
+      if (input.from === undefined && input.until === undefined) {
+        const merged = matches("k.kind IN ('journal', 'decision', 'fact')");
+        const rest = matches("k.kind NOT IN ('fact', 'decision', 'journal')");
+        const matchOffsets = new Map(rest.matchOffsets);
+        for (const [id, offset] of merged.matchOffsets)
+          matchOffsets.set(id, offset);
+        const ordered = materialize(
+          [...merged.ids, ...rest.ids.filter((id) => !merged.ids.includes(id))],
+          merged.total + rest.total,
+          matchOffsets,
+        );
+        let journals = 0;
+        const items: KnowledgeItem[] = [];
+        for (const item of ordered.items) {
+          if (item.kind === "journal") {
+            if (journals >= 2) continue;
+            journals += 1;
+          }
+          items.push(item);
+        }
+        return { ...ordered, items: items.slice(0, input.limit) };
+      }
       const journals = matches("k.kind = 'journal'");
       const decisions = matches("k.kind = 'decision'");
       const facts = matches("k.kind = 'fact'");
       const rest = matches("k.kind NOT IN ('fact', 'decision', 'journal')");
-      const recall = input.from !== undefined || input.until !== undefined;
       const dated = (kindSql: string) => {
         const where = [...conditions, kindSql].filter(Boolean).join(" AND ");
         const total = Number(
@@ -690,9 +711,9 @@ export class KnowledgeStore {
         for (const id of extra) if (!ids.includes(id)) ids.push(id);
         return ids;
       };
-      const journalWindow = recall ? dated("k.kind = 'journal'") : undefined;
-      const decisionWindow = recall ? dated("k.kind = 'decision'") : undefined;
-      const factWindow = recall ? dated("k.kind = 'fact'") : undefined;
+      const journalWindow = dated("k.kind = 'journal'");
+      const decisionWindow = dated("k.kind = 'decision'");
+      const factWindow = dated("k.kind = 'fact'");
       const ids = [
         ...prefer(journals.ids, journalWindow?.ids ?? []),
         ...prefer(decisions.ids, decisionWindow?.ids ?? []),

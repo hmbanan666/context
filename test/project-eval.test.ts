@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vite-plus/test";
+import { evaluate } from "../src/eval-runner.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { appendProjectEval, evaluateProjects } from "../src/project-eval.js";
 import { SourceStore } from "../src/store.js";
@@ -92,6 +93,23 @@ test("project eval accepts an item id from a caller-supplied questions file", as
     project: context
     expected:
       - item_id: ${item.id}
+  - id: by_any
+    question: улучшить ночную дистилляцию
+    areas: [lab]
+    read_areas: [lab]
+    project: context
+    expected: []
+    expected_any:
+      - ${item.id}
+      - missing-item
+  - id: by_miss
+    question: улучшить ночную дистилляцию
+    areas: [lab]
+    read_areas: [lab]
+    project: context
+    expected: []
+    expected_any:
+      - missing-item
 `,
     );
     sources.setGlossaryTerm({
@@ -106,9 +124,29 @@ test("project eval accepts an item id from a caller-supplied questions file", as
       questionsPath: questions,
       k: 5,
     });
-    assert.equal(report.questions[0]?.pass, true);
-    assert.equal(report.questions[0]?.recall, 1);
-    assert.equal(report.recall_at_k, 1);
+    const question = (id: string) =>
+      report.questions.find((entry) => entry.id === id);
+    assert.equal(question("by_item")?.pass, true);
+    assert.equal(question("by_item")?.recall, 1);
+    assert.equal(question("by_any")?.pass, true);
+    assert.equal(question("by_any")?.recall, 1);
+    assert.equal(question("by_miss")?.pass, false);
+    assert.equal(question("by_miss")?.recall, 0);
+    const retrieval = await evaluate({
+      databasePath: path,
+      directory,
+      areas: ["lab"],
+      questionsPath: questions,
+      k: 5,
+    });
+    const retrieved = (id: string) =>
+      retrieval.questions.find((entry) => entry.id === id);
+    assert.equal(retrieved("by_item")?.pass, true);
+    assert.equal(retrieved("by_item")?.hit_at_k, 1);
+    assert.equal(retrieved("by_any")?.pass, true);
+    assert.equal(retrieved("by_any")?.hit_at_k, 1);
+    assert.equal(retrieved("by_miss")?.pass, false);
+    assert.equal(retrieved("by_miss")?.hit_at_k, 0);
   } finally {
     knowledge.close();
     sources.close();

@@ -285,8 +285,13 @@ export function readJournalCitations(
   };
 }
 
+/** A dated project search keeps this much of a journal card. */
+export const datedJournalExcerpt = 480;
+/** An undated project search keeps a shorter journal card. */
+export const undatedJournalExcerpt = 240;
+
 /** Search cards show whole sentences. They do not cut a journal mid-sentence. */
-export function journalExcerpt(text: string, maximum = 480) {
+export function journalExcerpt(text: string, maximum = datedJournalExcerpt) {
   if (text.length <= maximum)
     return { text, start: 0, end: text.length, truncated: false as const };
   const slice = text.slice(0, maximum);

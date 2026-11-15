@@ -237,7 +237,7 @@ semantic availability and its contribution against lexical search.
 
 `context eval projects --questions /app/data/evals/projects.yaml --k 10` is the
 per-project run. The file is private, same schema as the other eval plus
-optional `item_id`, and each question names a project. Metrics are recall@k and
+optional `item_id` and `expected_any` (any one of those ids is a hit), and each question names a project. Metrics are recall@k and
 pack-hit rate per project. Ids and numbers append to
 `/app/data/evals/projects-history.jsonl`. Misses exit 0. This command is not on
 the nightly schedule. See [evals](evals.md).

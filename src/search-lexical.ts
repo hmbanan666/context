@@ -8,8 +8,14 @@ const russian = newStemmer("russian");
 const VECTOR_RRF_WEIGHT = 5;
 // Below either original lexical list (weight 1). See lexicalCandidates.
 export const EXPANSION_RRF_WEIGHT = 0.35;
-const ORIGINAL_MATCH_BAND = 2;
-const MULTI_EXPANSION_BAND = 1;
+// Smaller than one rank step of the lightest list (0.35 / (61*62)).
+const EXACT_MATCH_EPSILON = 1e-6;
+
+/** A glossary synonym and the query-word indexes it was expanded from. */
+export interface ExpandedTerm {
+  term: string;
+  from: readonly number[];
+}
 export function stemText(text: string): string {
   return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
     .map((word) =>
@@ -210,6 +216,49 @@ export function reciprocalRanks(lists: readonly (readonly string[])[]) {
     .map(([id]) => id);
 }
 
+function wordsOf(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/**
+ * One concept per query word, matched by that word or by a synonym expanded
+ * from it. Two synonyms of one word still count once. `exact` is an original
+ * token, used only to break ties.
+ */
+export function conceptCoverage(
+  text: string,
+  terms: readonly string[],
+  expansion: readonly ExpandedTerm[] = [],
+): { concepts: number; original: boolean; exact: boolean } {
+  const words = wordsOf(text);
+  const stems = words.map((word) => stemText(word));
+  const exactWords = new Set(words);
+  let concepts = 0;
+  let original = false;
+  let exact = false;
+  for (let index = 0; index < terms.length; index++) {
+    const term = (terms[index] ?? "").toLowerCase();
+    const ownExact = exactWords.has(term);
+    const ownStem = stems.includes(stemText(term));
+    const synonym = expansion.some((entry) => {
+      if (!entry.from.includes(index)) return false;
+      const phrase = wordsOf(entry.term);
+      if (!phrase.length) return false;
+      const phraseStems = phrase.map((word) => stemText(word));
+      const needle = phraseStems[0] ?? "";
+      if (phraseStems.length === 1) return stems.includes(needle);
+      return stems.some((_, start) =>
+        phraseStems.every((part, offset) => stems[start + offset] === part),
+      );
+    });
+    if (!ownExact && !ownStem && !synonym) continue;
+    concepts += 1;
+    if (ownExact || ownStem) original = true;
+    if (ownExact) exact = true;
+  }
+  return { concepts, original, exact };
+}
+
 export function lexicalCandidates(
   db: DatabaseSync,
   table: SearchTable,
@@ -218,11 +267,12 @@ export function lexicalCandidates(
   terms: readonly string[],
   limit: number,
   vectors: readonly VectorHit[] = [],
-  expansion: readonly string[] = [],
+  expansion: readonly ExpandedTerm[] = [],
 ) {
   const exact = `${table}_fts`,
     stemmed = `${table}_stemmed`;
   const offsets = new Map<string, number>();
+  const texts = new Map<string, string>();
   const lists: string[][] = [];
   const weights: number[] = [];
   const matched = (
@@ -243,6 +293,7 @@ export function lexicalCandidates(
         table === "sources"
           ? visibleSourceText(String(row.text))
           : String(row.text);
+      if (!texts.has(id)) texts.set(id, comparable);
       if (!offsets.has(id))
         offsets.set(
           id,
@@ -257,20 +308,18 @@ export function lexicalCandidates(
     lists.push(ids);
     weights.push(weight);
   };
-  // Original tokens outrank glossary synonyms. Each synonym concept is its own
-  // lower-weight list, grouped by stem so distill/distillation count once.
+  // Each synonym stem is its own lower-weight list, so distill/distillation
+  // share one list. Concept coverage is counted separately, by query word.
   const exactOriginal = matched(exact, terms, true, terms);
   push(exactOriginal, 1);
   const originalStems = matched(stemmed, terms.map(stemText), false, terms);
   push(originalStems, 1);
-  const originalIds = new Set([...exactOriginal, ...originalStems]);
-  const conceptCounts = new Map<string, number>();
   const groups = new Map<string, string[]>();
-  for (const term of expansion) {
-    const key = stemText(term);
+  for (const entry of expansion) {
+    const key = stemText(entry.term);
     const surfaces = groups.get(key);
-    if (surfaces) surfaces.push(term);
-    else groups.set(key, [term]);
+    if (surfaces) surfaces.push(entry.term);
+    else groups.set(key, [entry.term]);
   }
   for (const surfaces of groups.values()) {
     const exactIds = matched(exact, surfaces, true, surfaces);
@@ -282,8 +331,6 @@ export function lexicalCandidates(
     );
     push(exactIds, EXPANSION_RRF_WEIGHT);
     push(stemIds, EXPANSION_RRF_WEIGHT);
-    for (const id of new Set([...exactIds, ...stemIds]))
-      conceptCounts.set(id, (conceptCounts.get(id) ?? 0) + 1);
   }
   if (vectors.length > 101) throw new Error("Invalid vector candidate bound");
   const placeholders = vectors.map(() => "?").join(",");
@@ -305,7 +352,9 @@ export function lexicalCandidates(
       }),
     VECTOR_RRF_WEIGHT,
   );
-  const lexicalTerms = [...new Set([...terms, ...expansion])];
+  const lexicalTerms = [
+    ...new Set([...terms, ...expansion.map((entry) => entry.term)]),
+  ];
   const queries = [
     ftsTerms(lexicalTerms),
     ftsTerms(lexicalTerms.map(stemText)),
@@ -318,27 +367,41 @@ export function lexicalCandidates(
       .get(...params, ...queries, ...vectorIds)?.n,
   );
   const scores = reciprocalRankScores(lists, weights);
-  // Bands apply only when a glossary actually expanded the query, so ordinary
-  // hybrid search keeps vector weight 5. An original-term hit stays above every
-  // synonym hit. Two or more synonym concepts stay above a vector neighbour
-  // that matched only one of them (the nightly-backup vs distillation case).
-  // A single synonym stays on the RRF scale and cannot flood past the original.
-  if (expansion.length) {
-    for (const [id, score] of scores) {
-      const band = originalIds.has(id)
-        ? ORIGINAL_MATCH_BAND
-        : (conceptCounts.get(id) ?? 0) >= 2
-          ? MULTI_EXPANSION_BAND
-          : 0;
-      scores.set(id, score + band);
+  const missing = [...scores.keys()].filter((id) => !texts.has(id));
+  if (missing.length) {
+    const found = db
+      .prepare(
+        `SELECT id, text FROM (${eligible}) WHERE id IN (${missing.map(() => "?").join(",")})`,
+      )
+      .all(...params, ...missing);
+    for (const row of found) {
+      const id = String(row.id);
+      texts.set(
+        id,
+        table === "sources"
+          ? visibleSourceText(String(row.text))
+          : String(row.text),
+      );
     }
   }
+  // With a glossary expansion, each matched query word is added to the RRF
+  // score, so two concepts beat one original token. Without an expansion the
+  // score stays RRF and a vector hit can still outrank one lexical token.
+  // Exact surface form is only a tie-break, smaller than one rank step.
   const termHits = new Map<string, TermHit>();
-  for (const id of scores.keys())
+  for (const [id, score] of scores) {
+    const covered = conceptCoverage(texts.get(id) ?? "", terms, expansion);
+    scores.set(
+      id,
+      score +
+        (expansion.length ? covered.concepts : 0) +
+        (covered.exact ? EXACT_MATCH_EPSILON : 0),
+    );
     termHits.set(id, {
-      original: originalIds.has(id),
-      concepts: conceptCounts.get(id) ?? 0,
+      original: covered.original,
+      concepts: covered.concepts,
     });
+  }
   return {
     total,
     ids: [...scores]
