@@ -59,6 +59,14 @@ interface PackSource {
   id: string;
   sourceDate: string;
   excerpt: ReturnType<typeof knowledgeExcerpt>;
+  doc?: {
+    type: string;
+    key: string;
+    title: string;
+    status: string;
+    revision: number;
+    projectId: string;
+  };
 }
 export interface TaskPack {
   version: 1;
@@ -326,6 +334,18 @@ function sourceCard(material: Material, offset = 0): PackSource {
     id: material.source.id,
     sourceDate: sourceDate(material),
     excerpt: knowledgeExcerpt(material.source.text, offset),
+    ...(material.doc
+      ? {
+          doc: {
+            type: material.doc.type,
+            key: material.doc.key,
+            title: material.doc.title,
+            status: material.doc.status,
+            revision: material.doc.revision,
+            projectId: material.doc.projectId,
+          },
+        }
+      : {}),
   };
 }
 

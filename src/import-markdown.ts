@@ -2,6 +2,12 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
+import {
+  type DocType,
+  docTypes,
+  documentInputSchema,
+  importDocumentActor,
+} from "./documents.js";
 import { maxImportTextLength } from "./import-format.js";
 import { projectIdSchema } from "./projects.js";
 import { redact, redactMetadata } from "./redaction.js";
@@ -14,7 +20,15 @@ export const markdownImportSource = "markdown";
 const frontMatterPattern = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 const headingPattern = /^#{1,6}[ \t]+(.+?)\s*#*\s*$/;
 const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
-const allowedKeys = new Set(["title", "project", "date", "tags"]);
+const allowedKeys = new Set([
+  "title",
+  "project",
+  "date",
+  "tags",
+  "type",
+  "key",
+  "status",
+]);
 
 export interface MarkdownImportOptions {
   readonly areas: readonly string[];
@@ -40,12 +54,19 @@ export interface MarkdownImportSummary {
 
 export type MarkdownImportResult = MarkdownImportItem | MarkdownImportSummary;
 
+interface ParsedDoc {
+  readonly type: DocType;
+  readonly key: string;
+  readonly status: string;
+}
+
 interface ParsedNote {
   readonly title: string;
   readonly body: string;
   readonly project?: string;
   readonly createdAt?: string;
   readonly tags?: string;
+  readonly doc?: ParsedDoc;
 }
 
 export function splitMarkdownBody(
@@ -143,6 +164,40 @@ function parseTags(value: unknown): string | undefined {
   return joined;
 }
 
+function frontMatterKey(value: unknown): string {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0)
+    return String(value);
+  if (typeof value !== "string") throw new Error("invalid_front_matter");
+  return value.trim();
+}
+
+function parseDoc(
+  data: Record<string, unknown> | undefined,
+): ParsedDoc | undefined {
+  if (!data) return undefined;
+  const present =
+    data.type !== undefined ||
+    data.key !== undefined ||
+    data.status !== undefined;
+  if (!present) return undefined;
+  if (typeof data.type !== "string" || !docTypes.includes(data.type as DocType))
+    throw new Error("invalid_front_matter");
+  const type = data.type as DocType;
+  const key = frontMatterKey(data.key);
+  const status =
+    data.status === undefined && type === "note" ? "active" : data.status;
+  if (typeof status !== "string") throw new Error("invalid_front_matter");
+  const parsed = documentInputSchema.safeParse({
+    type,
+    key,
+    title: "Document",
+    status,
+  });
+  if (!parsed.success || !parsed.data.status)
+    throw new Error("invalid_front_matter");
+  return { type, key, status: parsed.data.status };
+}
+
 function parseNote(raw: string, filename: string): ParsedNote {
   let text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
   let data: Record<string, unknown> | undefined;
@@ -185,12 +240,14 @@ function parseNote(raw: string, filename: string): ParsedNote {
     throw new Error("invalid_front_matter");
   const createdAt = parseDate(data?.date);
   const tags = parseTags(data?.tags);
+  const doc = parseDoc(data);
   return {
     title,
     body: text,
     ...(projectValue ? { project: projectValue } : {}),
     ...(createdAt ? { createdAt } : {}),
     ...(tags ? { tags } : {}),
+    ...(doc ? { doc } : {}),
   };
 }
 
@@ -263,6 +320,35 @@ export async function importMarkdown(
         await reject(key, "unknown_project");
         continue;
       }
+      if (note.doc && !project) {
+        await reject(key, "document_needs_project");
+        continue;
+      }
+      if (
+        note.doc &&
+        (redact(note.doc.key) !== note.doc.key ||
+          redact(note.doc.status) !== note.doc.status)
+      ) {
+        await reject(key, "unsafe_identity");
+        continue;
+      }
+      if (note.doc && project) {
+        const current = store.currentDocument(
+          project,
+          note.doc.type,
+          note.doc.key,
+        );
+        if (current) {
+          const prior = store.findMaterial(current, area);
+          const same =
+            prior?.import?.source === markdownImportSource &&
+            prior.import.externalId === key;
+          if (!same) {
+            await reject(key, "duplicate_key");
+            continue;
+          }
+        }
+      }
       const body = redact(note.body);
       if (!body.trim()) {
         await reject(key, "empty");
@@ -275,6 +361,10 @@ export async function importMarkdown(
         parts.some((part) => part.length > maxImportTextLength)
       ) {
         await reject(key, "empty");
+        continue;
+      }
+      if (note.doc && (!title.trim() || parts.length !== 1)) {
+        await reject(key, parts.length !== 1 ? "document_too_long" : "empty");
         continue;
       }
       for (const [index, part] of parts.entries()) {
@@ -305,9 +395,26 @@ export async function importMarkdown(
                 path: key,
                 ...(note.tags ? { tags: note.tags } : {}),
                 ...(parts.length > 1 ? { chunk: String(index + 1) } : {}),
+                ...(note.doc
+                  ? {
+                      docType: note.doc.type,
+                      docKey: note.doc.key,
+                      docStatus: note.doc.status,
+                    }
+                  : {}),
               }),
             },
             project ? [project] : undefined,
+            note.doc && project
+              ? {
+                  projectId: project,
+                  type: note.doc.type,
+                  key: note.doc.key,
+                  title,
+                  status: note.doc.status,
+                  setBy: importDocumentActor,
+                }
+              : undefined,
           );
           const status = saved.duplicate
             ? "skipped"

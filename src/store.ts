@@ -4,6 +4,19 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type CaptureInput, captureSchema } from "./contracts.js";
 import {
+  adjustDocumentScore,
+  currentDocumentSourceSql,
+  type DocumentInput,
+  type DocumentRef,
+  type DocumentRevisionSummary,
+  type DocumentWrite,
+  documentRefCandidates,
+  installDocuments,
+  parseDocument,
+  type SourceDocument,
+  staleDocumentSourceSql,
+} from "./documents.js";
+import {
   builtinGlossary,
   expandQueryTerms,
   mergeGlossary,
@@ -221,6 +234,7 @@ export class SourceStore {
         COMMIT;
       `);
       installProjects(this.#database);
+      installDocuments(this.#database);
       installSearchIndex(this.#database, "sources");
       ensureVisibleSourceIndex(this.#database);
     } catch (error) {
@@ -279,11 +293,78 @@ export class SourceStore {
     return { material, duplicate: saved.duplicate };
   }
 
+  captureDocument(
+    input: CaptureMaterialInput,
+    document: DocumentInput,
+    setBy: string,
+    projectId: string,
+  ): { material: Material; duplicate: boolean } {
+    const request = captureMaterialSchema.parse(
+      redactFields(captureMaterialSchema.parse(input)),
+    );
+    const parsed = parseDocument(document);
+    const title = redact(parsed.title).trim();
+    const key = redact(parsed.key);
+    const status = redact(parsed.status);
+    const actor = setBy.trim();
+    if (
+      !title ||
+      title.length > 256 ||
+      key !== parsed.key ||
+      status !== parsed.status ||
+      actor.length < 1 ||
+      actor.length > 128 ||
+      actor.includes("\0")
+    )
+      throw new Error("Invalid document identity");
+    const written: DocumentWrite = {
+      projectId,
+      type: parsed.type,
+      key,
+      title,
+      status,
+      setBy: actor,
+    };
+    const metadata = materialMetadata(
+      {
+        ...request.metadata,
+        type: written.type === "note" ? "note" : "document",
+        title,
+      },
+      written.type === "note" ? "note" : "document",
+    );
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify([
+          this.#materialFingerprint("material", request, metadata),
+          written.projectId,
+          written.type,
+          written.key,
+          written.status,
+          written.title,
+        ]),
+      )
+      .digest("hex");
+    const saved = this.#capture(
+      request,
+      fingerprint,
+      { metadata },
+      undefined,
+      undefined,
+      [projectId],
+      written,
+    );
+    const material = this.findMaterial(saved.source.id, request.scope);
+    if (!material?.doc) throw new Error("Missing saved document");
+    return { material, duplicate: saved.duplicate };
+  }
+
   // Only the validated, redacted import boundary calls this owner-local writer.
   importMaterial(
     input: CaptureMaterialInput,
     provenance: ImportProvenance,
     projectIds?: readonly string[],
+    document?: DocumentWrite,
   ): { source: Source; duplicate: boolean; changed: boolean } {
     const request = captureMaterialSchema.parse(
       redactFields(captureMaterialSchema.parse(input)),
@@ -316,6 +397,7 @@ export class SourceStore {
       imported,
       undefined,
       projectIds,
+      document,
     );
     return { ...saved, changed: saved.changed ?? false };
   }
@@ -395,6 +477,7 @@ export class SourceStore {
     imported?: ImportProvenance,
     supersession?: CaptureSupersession,
     projectIds?: readonly string[],
+    document?: DocumentWrite,
   ): { source: Source; duplicate: boolean; changed?: boolean } {
     // Omit projects from the hash unless the client sent them, so older retries match.
     const sortedProjects = projectIds
@@ -497,6 +580,32 @@ export class SourceStore {
               file.bytes,
             );
         }
+      }
+      if (document) {
+        const current = this.#database
+          .prepare(
+            `SELECT COALESCE(MAX(revision), 0) AS revision FROM source_docs
+             WHERE project_id = ? AND doc_type = ? AND doc_key = ?`,
+          )
+          .get(document.projectId, document.type, document.key) as
+          | { revision?: number }
+          | undefined;
+        this.#database
+          .prepare(
+            `INSERT INTO source_docs
+              (source_id, project_id, doc_type, doc_key, title, status, revision, set_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            source.id,
+            document.projectId,
+            document.type,
+            document.key,
+            document.title,
+            document.status,
+            Number(current?.revision ?? 0) + 1,
+            document.setBy,
+          );
       }
       if (imported) {
         this.#database
@@ -639,6 +748,7 @@ export class SourceStore {
     const imported = this.#database
       .prepare("SELECT provenance FROM source_imports WHERE source_id = ?")
       .get(id);
+    const doc = this.#document(id);
     return {
       source,
       metadata,
@@ -648,7 +758,24 @@ export class SourceStore {
             import: JSON.parse(String(imported.provenance)) as ImportProvenance,
           }
         : {}),
+      ...(doc ? { doc } : {}),
     };
+  }
+
+  #document(id: string): SourceDocument | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT project_id AS projectId, doc_type AS type, doc_key AS key,
+                title, status, revision, set_by AS setBy
+         FROM source_docs WHERE source_id = ?`,
+      )
+      .get(id) as SourceDocument | undefined;
+    if (
+      !row ||
+      (row.type !== "adr" && row.type !== "spec" && row.type !== "note")
+    )
+      return undefined;
+    return row;
   }
 
   #fileDescriptor(id: string): MaterialFileDescriptor | undefined {
@@ -794,6 +921,11 @@ export class SourceStore {
       conditions.push(linkedProjectSql("source", "s.id"));
       params.push(input.projectId);
     }
+    conditions.push(`NOT (${staleDocumentSourceSql})`);
+    if (input.documentsOnly || input.docType) {
+      conditions.push(currentDocumentSourceSql(input.docType !== undefined));
+      if (input.docType) params.push(input.docType);
+    }
     if (input.terms.length) {
       const found = lexicalCandidates(
         this.#database,
@@ -805,14 +937,28 @@ export class SourceStore {
         input.vectors,
         input.expansion,
       );
-      return {
-        ...found,
-        materials: found.ids.map((id) => {
-          const material = this.findMaterial(id, input.scope);
-          if (!material) throw new Error("Missing source candidate");
-          return material;
-        }),
-      };
+      const materials = found.ids.map((id) => {
+        const material = this.findMaterial(id, input.scope);
+        if (!material) throw new Error("Missing source candidate");
+        return material;
+      });
+      const scores = new Map(found.scores);
+      for (const material of materials) {
+        if (!material.doc) continue;
+        const score = scores.get(material.source.id);
+        if (score === undefined || score <= 0) continue;
+        scores.set(
+          material.source.id,
+          adjustDocumentScore(score, material.doc),
+        );
+      }
+      materials.sort((a, b) => {
+        const delta =
+          (scores.get(b.source.id) ?? 0) - (scores.get(a.source.id) ?? 0);
+        if (delta !== 0) return delta;
+        return a.source.id.localeCompare(b.source.id);
+      });
+      return { ...found, scores, materials };
     }
     const from =
       "FROM sources s LEFT JOIN source_metadata m ON m.source_id = s.id";
@@ -965,6 +1111,106 @@ export class SourceStore {
 
   readProfile(id: string, scope: string): ProjectProfile | undefined {
     return readProjectProfile(this.#database, id, scope);
+  }
+
+  currentDocument(
+    projectId: string,
+    type: SourceDocument["type"],
+    key: string,
+  ): string | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT source_id FROM source_docs
+         WHERE project_id = ? AND doc_type = ? AND doc_key = ?
+           AND revision = (
+             SELECT MAX(revision) FROM source_docs
+             WHERE project_id = ? AND doc_type = ? AND doc_key = ?
+           )`,
+      )
+      .get(projectId, type, key, projectId, type, key) as
+      | { source_id?: string }
+      | undefined;
+    return typeof row?.source_id === "string" ? row.source_id : undefined;
+  }
+
+  documentRevisions(
+    projectId: string,
+    type: SourceDocument["type"],
+    key: string,
+    scope: string,
+  ): DocumentRevisionSummary[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT d.revision, d.source_id AS id, d.status, d.title,
+                d.set_by AS setBy, s.captured_at AS capturedAt
+         FROM source_docs d JOIN sources s ON s.id = d.source_id
+         WHERE d.project_id = ? AND d.doc_type = ? AND d.doc_key = ?
+           AND s.scope = ?
+         ORDER BY d.revision DESC`,
+      )
+      .all(projectId, type, key, scope) as unknown as DocumentRevisionSummary[];
+    return rows;
+  }
+
+  resolveDocument(
+    id: string,
+    scope: string,
+  ): { material: Material; revisions: DocumentRevisionSummary[] } | undefined {
+    const hits: { material: Material; revisions: DocumentRevisionSummary[] }[] =
+      [];
+    const seen = new Set<string>();
+    for (const ref of documentRefCandidates(id)) {
+      const found = this.#findDocument(ref, scope);
+      if (!found || seen.has(found.material.source.id)) continue;
+      seen.add(found.material.source.id);
+      hits.push(found);
+    }
+    return hits.length === 1 ? hits[0] : undefined;
+  }
+
+  #findDocument(
+    ref: DocumentRef,
+    scope: string,
+  ): { material: Material; revisions: DocumentRevisionSummary[] } | undefined {
+    const row = (
+      ref.revision === undefined
+        ? this.#database
+            .prepare(
+              `SELECT source_id FROM source_docs
+               WHERE project_id = ? AND doc_type = ? AND doc_key = ?
+                 AND revision = (
+                   SELECT MAX(revision) FROM source_docs
+                   WHERE project_id = ? AND doc_type = ? AND doc_key = ?
+                 )`,
+            )
+            .get(
+              ref.projectId,
+              ref.type,
+              ref.key,
+              ref.projectId,
+              ref.type,
+              ref.key,
+            )
+        : this.#database
+            .prepare(
+              `SELECT source_id FROM source_docs
+               WHERE project_id = ? AND doc_type = ? AND doc_key = ?
+                 AND revision = ?`,
+            )
+            .get(ref.projectId, ref.type, ref.key, ref.revision)
+    ) as { source_id?: string } | undefined;
+    if (typeof row?.source_id !== "string") return undefined;
+    const material = this.findMaterial(row.source_id, scope);
+    if (!material?.doc) return undefined;
+    return {
+      material,
+      revisions: this.documentRevisions(
+        material.doc.projectId,
+        material.doc.type,
+        material.doc.key,
+        scope,
+      ),
+    };
   }
 
   checkHealth(): void {

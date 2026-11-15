@@ -28,6 +28,9 @@ export type PackageSelection = Pick<
   /** Glossary synonyms and the query words they came from. Lower-weight FTS lists. */
   expansion?: readonly ExpandedTerm[];
   projectId?: string;
+  /** Limit to the current revision of a document. */
+  documentsOnly?: boolean;
+  docType?: "adr" | "spec" | "note";
 };
 // Small explicit question-word list, including the RU prepositions с/со/к/ко.
 // Glossary expansion happens after this.

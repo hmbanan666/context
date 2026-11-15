@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { DocType } from "./documents.js";
 import type { SemanticHits } from "./embedding-index.js";
 import {
   assessGrounding,
@@ -122,6 +123,19 @@ function sourceCard(m: Material, matchOffset = 0, supersededBy?: string) {
     capturedAt: m.source.capturedAt,
     sourceDate: m.metadata.createdAt ?? m.source.capturedAt,
     excerpt: excerpt(m.source.text, matchOffset),
+    ...(m.doc
+      ? {
+          doc: {
+            type: m.doc.type,
+            key: m.doc.key,
+            title: m.doc.title,
+            status: m.doc.status,
+            revision: m.doc.revision,
+            setBy: m.doc.setBy,
+            projectId: m.doc.projectId,
+          },
+        }
+      : {}),
   };
 }
 function leadingKind(kind: KnowledgeItem["kind"]) {
@@ -243,6 +257,7 @@ export function buildContextPackage(
   input: z.input<typeof contextPackageSchema>,
   semantic?: SemanticHits,
   projectId?: string,
+  documents?: { readonly type?: DocType },
 ): ContextPackage {
   const request = contextPackageSchema.parse(input);
   const dated = request.from !== undefined || request.until !== undefined;
@@ -257,6 +272,12 @@ export function buildContextPackage(
     ...(request.from ? { from: request.from } : {}),
     ...(request.until ? { until: request.until } : {}),
     ...(projectId ? { projectId } : {}),
+    ...(documents
+      ? {
+          documentsOnly: true,
+          ...(documents.type ? { docType: documents.type } : {}),
+        }
+      : {}),
   };
   const original = sources.packageCandidates({
     ...selection,

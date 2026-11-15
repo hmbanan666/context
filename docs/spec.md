@@ -169,6 +169,16 @@ implemented and not deployed.
   project. `remember` from a project-bound token tags that project and rejects
   any other id. The catalog is not the project profile. `tools/call` accepts
   only `search`, `remember`, `read` and `timeline`.
+- An ADR, spec or note is a source with `doc` (`type`, `key`, `title`,
+  `status`) on one project ([ADR 0018](adr/0018-documents-are-versioned-sources.md)).
+  `remember` appends a revision. `read` of `doc:<project>:<type>:<key>` returns
+  the current revision, and `@<revision>` returns an older one, with a revision
+  summary. Any write token may set status; the token name is stored. That
+  status does not approve a distilled fact or decision. Search returns the
+  current revision only. `kind: "doc"` and `docType` filter it. An accepted ADR
+  or an active spec ranks above an equal match. A superseded, rejected or
+  obsolete document ranks lower and remains readable. Markdown import copies
+  front matter `type`, `key` and `status` onto the same fields.
 - The configured processor distills a source revision into one proposed sentence
   (`fact` or `decision`) with its project, date and source link. A source date
   with a numeric offset is accepted and stored on the item as UTC. When the
