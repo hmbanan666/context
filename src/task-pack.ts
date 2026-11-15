@@ -592,6 +592,10 @@ export function buildTaskPack(
       bestCosine(input.semantic?.sources),
       bestCosine(input.semantic?.items),
     ),
+    ...(input.semantic?.available === true
+      ? { backgroundCosine: input.semantic.background ?? 0 }
+      : {}),
+    protectedTerms: sources.projectIdentityTerms(input.projectId),
   });
 
   const render = (

@@ -30,40 +30,59 @@ next chunk by 64. Query terms count only when they co-occur inside that
 window, exact or stemmed. Terms scattered across a long note do not add up.
 Glossary synonyms do not count.
 
-Each content term is weighted by inverse document frequency over the sources
-in the searched area, or in the project when the search is project-scoped.
-Older revisions of a document are left out of that count. A `kind: "doc"`
-search counts only the current documents that filter returns.
-A term is common when that corpus has at least 40 sources
+Each content term is weighted by inverse document frequency over the same
+pool the search can match. That pool is the current sources in the area, or
+in the project when the search is project-scoped, plus the knowledge rows
+that search returns. A project pool includes journals, decisions and facts,
+so a word that occurs only in a journal is not document frequency 0. An area
+pool leaves those three kinds out. Older revisions of a document are left
+out. A `kind: "doc"` search counts only the current documents that filter
+returns and does not count knowledge. A date window does not shrink the
+count.
+A term is common when that corpus has at least 40 records
 (`CONTEXT_GROUNDING_COMMON_CORPUS`), the stem occurs in at least 8
-(`CONTEXT_GROUNDING_COMMON_MIN_DF`), and those sources are at least 5% of
+(`CONTEXT_GROUNDING_COMMON_MIN_DF`), and those records are at least 5% of
 the corpus (`CONTEXT_GROUNDING_COMMON_RATE`). Common terms stay in the
 denominator and do not count toward `strong`. A note that only contains
 ordinary words such as "weather" or "2018" is not strong evidence. On a
-smaller corpus nothing is common, so a specific note still counts.
+smaller corpus nothing is common, so a specific note still counts. The
+project's id, its name, and its glossary terms are never common, even when
+they occur throughout that project. Glossary synonyms are not protected.
 
 The uncommon share is the IDF of the uncommon terms matched in the best
 window, divided by the IDF of every content term. With embeddings, that
 share must reach `CONTEXT_GROUNDING_LEXICAL_STRONG` (default `0.5`) and the
-cosine of that same window must reach `CONTEXT_GROUNDING_COSINE_STRONG`
-(default `0.92`). With no embeddings, the share must reach the stricter
-`CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`). A lower rare-term
-share is `weak`.
+margin must reach `CONTEXT_GROUNDING_MARGIN_STRONG` (default `0.08`). The
+margin is the evidence cosine minus the cosine of the query against a
+cached centroid of the passage vectors in that area, or in that project
+when the search is project-scoped. The centroid is the mean of those
+normalized chunk vectors, normalized again, and it is recomputed when the
+chunk set changes. With no embeddings, the share must reach the stricter
+`CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`) and the margin is
+not used.
 
-If no passage matches a rare term, common words are not evidence. The best
-cosine, including a neighbour that matched no query term, decides: below
-`CONTEXT_GROUNDING_COSINE_WEAK` (default `0.84`) is `none`, and at or above
-that floor is `weak`. Cosine alone reaches `strong` only when no query term
-matched at all and the cosine reaches `0.92`. On the public curated fixture,
-off-topic neighbours stayed under 0.80 and on-topic cosine was at least
-0.853. When a passage does contain a rare query term, cosine is read from
-that passage, not from a different card. The field is not charged against
-the evidence byte budget.
+If no passage matches a rare term, common words are not evidence. The margin
+of the best cosine, including a neighbour that matched no query term,
+decides: below `CONTEXT_GROUNDING_MARGIN_WEAK` (default `0.03`) is `none`,
+and at or above that floor is `weak`. Margin alone reaches `strong` only
+when no query term matched at all and the margin reaches `0.08`. When a
+passage does contain a rare query term, the margin is read from that
+passage, not from a different card. On the public curated fixture with
+multilingual-e5-small, on-topic margin was 0.014–0.081 (median 0.032) and
+off-topic margin was negative, because those neighbours stayed under the
+0.80 retrieval floor. On the mixed corpus, off-topic margin reached 0.109
+(median 0.069) while absolute cosine reached 0.928, so a cosine cut does
+not separate the classes. `0.03` / `0.08` keep that fixture's off-topic
+rows at `none` or `weak`. A large private corpus compresses E5 cosines
+further. Calibrate the two margin variables with
+`context grounding explain --file` on the database you search. The field is
+not charged against the evidence byte budget.
 
 `context grounding explain` runs this same search and prints the label, the
-best cosine, the rare-term share, the rare terms that matched, the common
-terms dropped, the corpus size and document frequencies, and the top hit id
-and title. It does not write thresholds.
+best cosine, the background cosine, the margin, the rare-term share, the
+rare terms that matched, the common terms dropped, the corpus size and
+document frequencies, and the top hit id and title. It does not write
+thresholds.
 
 ```sh
 context grounding explain --query "where is the lantern" --area studio
@@ -71,9 +90,13 @@ context grounding explain --file questions.yaml --area studio --json
 ```
 
 `questions.yaml` is a list of `query`, optional `project`, and
-`expect: on` or `off`. The file report adds the on/off distribution of
-cosine and rare-term share, and the single cosine cut, rare-share cut, and
-combined rule that separate the two classes. Defaults stay as above.
+`expect: on` or `off`. Each question can name its own project; a question
+that omits `project` uses `--project` when that flag is set. The file
+report adds the on/off distribution of cosine, rare-term share, and margin,
+and the single cosine cut, rare-share cut, margin cut, and combined
+rare-share and margin rule that separate the two classes. Use that margin
+cut to choose `CONTEXT_GROUNDING_MARGIN_WEAK` and
+`CONTEXT_GROUNDING_MARGIN_STRONG`. Defaults stay as above.
 
 When `grounding` is `none`, the agent should say it does not know. Similarity
 and rank are not permission to answer from an unrelated page.

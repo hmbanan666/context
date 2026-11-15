@@ -27,6 +27,7 @@ import {
   KnowledgeNotFound,
   KnowledgeStore,
   knowledgeCreatorSchema,
+  knowledgeMatchStatusSql,
   supersedesSchema,
 } from "./knowledge.js";
 import {
@@ -54,6 +55,7 @@ import {
   getProjectProfile,
   findProject,
   hasProject,
+  projectIdentityWords,
   installProjects,
   isLinkedToProject,
   linkClientProjects,
@@ -988,35 +990,85 @@ export class SourceStore {
     };
   }
 
-  // Corpus size for grounding. Common words are common in this area, or in
-  // this project when the search is project-scoped. Other areas do not count.
-  // Older revisions of a document do not count. A document filter counts only
-  // the current revisions that filter would return.
+  // Corpus size for grounding. The count is the pool search can match:
+  // current sources in this area, or in this project, plus the knowledge rows
+  // that same search returns. A project includes journals, decisions and
+  // facts. An area leaves those three kinds out. A document filter counts
+  // only the current documents and no knowledge. Other areas do not count.
+  // Older revisions of a document do not count. A date window does not
+  // shrink this corpus.
   documentFrequency(
     scope: string,
     terms: readonly string[],
     projectId?: string,
     documents?: { readonly type?: "adr" | "spec" | "note" },
   ): { documents: number; counts: Map<string, number> } {
-    const conditions = ["s.scope = ?"];
+    const source = this.#frequencyPool(
+      "sources",
+      scope,
+      terms,
+      projectId,
+      documents,
+    );
+    const knowledge = documents
+      ? undefined
+      : this.#frequencyPool("knowledge", scope, terms, projectId);
+    const counts = new Map<string, number>();
+    for (const term of terms) {
+      counts.set(
+        term,
+        (source.counts.get(term) ?? 0) + (knowledge?.counts.get(term) ?? 0),
+      );
+    }
+    return {
+      documents: source.documents + (knowledge?.documents ?? 0),
+      counts,
+    };
+  }
+
+  #frequencyPool(
+    pool: "sources" | "knowledge",
+    scope: string,
+    terms: readonly string[],
+    projectId?: string,
+    documents?: { readonly type?: "adr" | "spec" | "note" },
+  ): { documents: number; counts: Map<string, number> } {
+    const counts = new Map<string, number>();
+    if (pool === "knowledge" && !this.#hasKnowledgeIndex())
+      return { documents: 0, counts };
+    const conditions = [pool === "sources" ? "s.scope = ?" : "k.scope = ?"];
     const params: (string | number)[] = [scope];
     if (projectId) {
-      conditions.push(linkedProjectSql("source", "s.id"));
+      conditions.push(
+        linkedProjectSql(
+          pool === "sources" ? "source" : "knowledge",
+          pool === "sources" ? "s.id" : "k.id",
+        ),
+      );
       params.push(projectId);
     }
-    if (documents) {
-      conditions.push(currentDocumentSourceSql(documents.type !== undefined));
-      if (documents.type) params.push(documents.type);
-    } else conditions.push(`NOT (${staleDocumentSourceSql})`);
+    if (pool === "sources") {
+      if (documents) {
+        conditions.push(currentDocumentSourceSql(documents.type !== undefined));
+        if (documents.type) params.push(documents.type);
+      } else conditions.push(`NOT (${staleDocumentSourceSql})`);
+    } else {
+      conditions.push(`${knowledgeMatchStatusSql} <> 'rejected'`);
+      if (!projectId)
+        conditions.push("k.kind NOT IN ('fact', 'decision', 'journal')");
+    }
     const where = conditions.join(" AND ");
+    const table = pool === "sources" ? "sources s" : "knowledge_items k";
+    const stemmed =
+      pool === "sources" ? "sources_stemmed" : "knowledge_items_stemmed";
+    const rowid = pool === "sources" ? "s.rowid" : "k.rowid";
     const corpus = Number(
       this.#database
-        .prepare(`SELECT COUNT(*) n FROM sources s WHERE ${where}`)
+        .prepare(`SELECT COUNT(*) n FROM ${table} WHERE ${where}`)
         .get(...params)?.n,
     );
-    const counts = new Map<string, number>();
     const countStem = this.#database.prepare(
-      `SELECT COUNT(*) n FROM sources_stemmed JOIN sources s ON s.rowid = sources_stemmed.rowid WHERE ${where} AND sources_stemmed MATCH ?`,
+      `SELECT COUNT(*) n FROM ${stemmed} JOIN ${table} ON ${rowid} = ${stemmed}.rowid WHERE ${where} AND ${stemmed} MATCH ?`,
     );
     for (const term of terms) {
       const stem = stemText(term);
@@ -1026,6 +1078,26 @@ export class SourceStore {
       );
     }
     return { documents: corpus, counts };
+  }
+
+  #hasKnowledgeIndex(): boolean {
+    return Boolean(
+      this.#database
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE name = 'knowledge_items_stemmed'",
+        )
+        .get(),
+    );
+  }
+
+  /** Id, name, and glossary terms for this project. Synonyms are not included. */
+  projectIdentityTerms(projectId: string): string[] {
+    const project = this.findProject(projectId);
+    return projectIdentityWords(
+      projectId,
+      project?.name ?? "",
+      this.projectGlossary(projectId).map((entry) => entry.term),
+    );
   }
 
   createProject(input: {

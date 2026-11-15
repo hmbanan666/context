@@ -32,6 +32,8 @@ export interface SemanticHits {
   sources: VectorHit[];
   items: VectorHit[];
   reasons: string[];
+  /** Cosine of the query to the cached area or project centroid. */
+  background?: number;
 }
 export class EmbeddingIndex {
   readonly #db: DatabaseSync;
@@ -42,6 +44,12 @@ export class EmbeddingIndex {
   #timer: NodeJS.Timeout | undefined;
   #active: Promise<unknown> | undefined;
   #stopping = false;
+  // Centroid of the passage vectors for one area or project. The stamp is the
+  // chunk count and max rowid, so a rewrite recomputes it.
+  #centroids = new Map<
+    string,
+    { stamp: string; vector: Float32Array | null }
+  >();
 
   constructor(
     path: string,
@@ -363,10 +371,12 @@ export class EmbeddingIndex {
           );
         }),
       ]);
+      const background = await this.#backgroundCosine(input, query);
       const sources = await this.#nearest("sources", input, query);
       const items = await this.#nearest("knowledge_items", input, query);
       return {
         available: true,
+        background,
         sources: sources.hits,
         items: items.hits,
         reasons: [
@@ -380,11 +390,8 @@ export class EmbeddingIndex {
     }
   }
 
-  async #nearest(
-    table: SearchTable,
-    input: SemanticSelection,
-    query: Float32Array,
-  ) {
+  // Same rows nearest will score. Sources and knowledge use different filters.
+  #chunkFrom(table: SearchTable, input: SemanticSelection) {
     // c.model is the stored embedder id. A different id never enters the cosine.
     const conditions = [
       "c.scope=?",
@@ -426,6 +433,96 @@ export class EmbeddingIndex {
       params.push(input.projectId);
     }
     const from = `FROM embedding_chunks c JOIN ${table} r ON r.id=c.record_id ${table === "sources" ? "LEFT JOIN source_metadata m ON m.source_id=r.id" : ""} WHERE ${conditions.join(" AND ")}`;
+    return { from, params };
+  }
+
+  async #backgroundCosine(
+    input: SemanticSelection,
+    query: Float32Array,
+  ): Promise<number> {
+    const vector = await this.#centroid(input);
+    if (!vector || vector.length !== query.length) return 0;
+    let score = 0;
+    for (let i = 0; i < query.length; i++)
+      score += (query[i] ?? 0) * (vector[i] ?? 0);
+    return Number.isFinite(score) ? score : 0;
+  }
+
+  async #centroid(input: SemanticSelection): Promise<Float32Array | null> {
+    const key = [
+      this.#embedder.version,
+      input.scope,
+      input.projectId ?? "",
+      input.from ?? "",
+      input.until ?? "",
+    ].join("\0");
+    const pools = [
+      this.#chunkFrom("sources", input),
+      this.#chunkFrom("knowledge_items", input),
+    ];
+    const stamp = pools
+      .map((pool) => {
+        const row = this.#db
+          .prepare(
+            `SELECT COUNT(*) n, COALESCE(MAX(c.rowid), 0) hi ${pool.from}`,
+          )
+          .get(...pool.params) as { n?: number; hi?: number } | undefined;
+        return `${Number(row?.n ?? 0)}:${Number(row?.hi ?? 0)}`;
+      })
+      .join("|");
+    const cached = this.#centroids.get(key);
+    if (cached?.stamp === stamp) return cached.vector;
+    let sum: Float64Array | undefined;
+    let count = 0;
+    let scanned = 0;
+    for (const pool of pools) {
+      let cursor = 0;
+      while (scanned < MAX_CHUNKS) {
+        const rows = this.#db
+          .prepare(
+            `SELECT c.rowid,c.vector ${pool.from} AND c.rowid>? ORDER BY c.rowid LIMIT ?`,
+          )
+          .all(...pool.params, cursor, Math.min(256, MAX_CHUNKS - scanned));
+        if (!rows.length) break;
+        for (const row of rows) {
+          cursor = Number(row.rowid);
+          scanned++;
+          if (
+            !(row.vector instanceof Uint8Array) ||
+            row.vector.byteLength % 4 !== 0
+          )
+            continue;
+          const blob = Buffer.from(row.vector);
+          const dimensions = blob.byteLength / 4;
+          if (!sum) sum = new Float64Array(dimensions);
+          if (dimensions !== sum.length) continue;
+          for (let i = 0; i < dimensions; i++)
+            sum[i] = (sum[i] ?? 0) + blob.readFloatLE(i * 4);
+          count++;
+        }
+        await yieldEventLoop();
+      }
+    }
+    let vector: Float32Array | null = null;
+    if (sum && count > 0) {
+      let norm = 0;
+      for (const value of sum) norm += value * value;
+      norm = Math.sqrt(norm);
+      if (norm > 0) {
+        vector = new Float32Array(sum.length);
+        for (let i = 0; i < sum.length; i++) vector[i] = (sum[i] ?? 0) / norm;
+      }
+    }
+    this.#centroids.set(key, { stamp, vector });
+    return vector;
+  }
+
+  async #nearest(
+    table: SearchTable,
+    input: SemanticSelection,
+    query: Float32Array,
+  ) {
+    const pool = this.#chunkFrom(table, input);
     const top = new Map<
       string,
       { id: string; offset: number; score: number }
@@ -435,9 +532,9 @@ export class EmbeddingIndex {
     while (scanned < MAX_CHUNKS) {
       const rows = this.#db
         .prepare(
-          `SELECT c.rowid,c.record_id,c.offset,c.vector ${from} AND c.rowid>? ORDER BY c.rowid LIMIT ?`,
+          `SELECT c.rowid,c.record_id,c.offset,c.vector ${pool.from} AND c.rowid>? ORDER BY c.rowid LIMIT ?`,
         )
-        .all(...params, cursor, Math.min(256, MAX_CHUNKS - scanned));
+        .all(...pool.params, cursor, Math.min(256, MAX_CHUNKS - scanned));
       if (!rows.length) break;
       for (const row of rows) {
         cursor = Number(row.rowid);

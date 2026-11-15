@@ -1,3 +1,4 @@
+import { phraseWords, stemsMatch } from "./glossary.js";
 import { textChunks } from "./embedding-model.js";
 import { stemText } from "./search-lexical.js";
 
@@ -6,18 +7,21 @@ import { stemText } from "./search-lexical.js";
 //
 // Terms count only when they co-occur in one passage. A passage is the same
 // chunk the embedding index stores (256 UTF-16 code units, 64 overlap), so a
-// cosine belongs to the window that actually matched. Glossary synonyms do
+// score belongs to the window that actually matched. Glossary synonyms do
 // not count; they expand the query, they are not the caller's words.
 //
-// Each term is weighted by inverse document frequency in the searched sources.
-// Common terms stay in the denominator and cannot by themselves reach strong.
-// On a small corpus nothing is common, so a specific note still grounds.
+// Each term is weighted by inverse document frequency in the same pool search
+// can match. Common terms stay in the denominator and cannot by themselves
+// reach strong. On a small corpus nothing is common, so a specific note still
+// grounds. A project's id, name, and glossary terms are never common.
 //
-// With embeddings, strong also needs the matched passage's cosine. With no
-// vectors, the lexical bar is stricter. A passage that matches only common
-// terms is not lexical evidence: if no passage matches a rare term and the
-// best cosine is below the weak floor, the result is none. Semantic cosine
-// still applies when no passage contains a query term.
+// With embeddings, strong also needs a margin: the evidence cosine minus the
+// cosine of the query to the cached area or project centroid. An absolute
+// cosine does not separate compressed E5 scores. With no vectors, the lexical
+// bar is stricter and the margin is not used. A passage that matches only
+// common terms is not lexical evidence: if no passage matches a rare term and
+// the margin is below the weak floor, the result is none. The margin still
+// applies when no passage contains a query term.
 
 export type Grounding = "strong" | "weak" | "none";
 
@@ -26,10 +30,10 @@ export interface GroundingThresholds {
   readonly lexicalStrong: number;
   /** Stricter uncommon IDF share when no embeddings are available. */
   readonly lexicalOnlyStrong: number;
-  /** Cosine that counts as weak when the query terms themselves do not match. */
-  readonly cosineWeak: number;
-  /** Cosine that counts as strong. Also required of the matched passage. */
-  readonly cosineStrong: number;
+  /** Margin that counts as weak when the query terms themselves do not match. */
+  readonly marginWeak: number;
+  /** Margin that counts as strong. Also required of a rare-term passage. */
+  readonly marginStrong: number;
   /** Minimum corpus size before a term can be common. */
   readonly commonCorpus: number;
   /** Minimum document frequency before a term can be common. */
@@ -41,10 +45,12 @@ export interface GroundingThresholds {
 export const defaultGroundingThresholds: GroundingThresholds = {
   lexicalStrong: 0.5,
   lexicalOnlyStrong: 0.75,
-  // Fixture measurement on multilingual-e5-small: off-topic neighbours stayed
-  // under the 0.80 retrieval floor, and on-topic cosine was at least 0.853.
-  cosineWeak: 0.84,
-  cosineStrong: 0.92,
+  // Public fixture, multilingual-e5-small. Curated on-topic margin was
+  // 0.014–0.081 (median 0.032) and off-topic margin was negative. On the mixed
+  // corpus, off-topic margin reached 0.109 while absolute cosine reached 0.928.
+  // Calibrate on a real database with `context grounding explain --file`.
+  marginWeak: 0.03,
+  marginStrong: 0.08,
   commonCorpus: 40,
   commonMinDf: 8,
   commonRate: 0.05,
@@ -98,15 +104,15 @@ export function readGroundingThresholds(
     defaultGroundingThresholds.lexicalOnlyStrong,
     "CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG",
   );
-  const cosineWeak = readUnit(
-    env.CONTEXT_GROUNDING_COSINE_WEAK,
-    defaultGroundingThresholds.cosineWeak,
-    "CONTEXT_GROUNDING_COSINE_WEAK",
+  const marginWeak = readUnit(
+    env.CONTEXT_GROUNDING_MARGIN_WEAK,
+    defaultGroundingThresholds.marginWeak,
+    "CONTEXT_GROUNDING_MARGIN_WEAK",
   );
-  const cosineStrong = readUnit(
-    env.CONTEXT_GROUNDING_COSINE_STRONG,
-    defaultGroundingThresholds.cosineStrong,
-    "CONTEXT_GROUNDING_COSINE_STRONG",
+  const marginStrong = readUnit(
+    env.CONTEXT_GROUNDING_MARGIN_STRONG,
+    defaultGroundingThresholds.marginStrong,
+    "CONTEXT_GROUNDING_MARGIN_STRONG",
   );
   const commonCorpus = readCount(
     env.CONTEXT_GROUNDING_COMMON_CORPUS,
@@ -125,14 +131,14 @@ export function readGroundingThresholds(
   );
   if (lexicalOnlyStrong < lexicalStrong)
     throw new Error("Invalid CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG");
-  if (cosineStrong < cosineWeak)
-    throw new Error("Invalid CONTEXT_GROUNDING_COSINE_STRONG");
+  if (marginStrong < marginWeak)
+    throw new Error("Invalid CONTEXT_GROUNDING_MARGIN_STRONG");
   if (commonRate <= 0) throw new Error("Invalid CONTEXT_GROUNDING_COMMON_RATE");
   return {
     lexicalStrong,
     lexicalOnlyStrong,
-    cosineWeak,
-    cosineStrong,
+    marginWeak,
+    marginStrong,
     commonCorpus,
     commonMinDf,
     commonRate,
@@ -156,6 +162,21 @@ function termIsCommon(
     documents > 0 &&
     df / documents >= thresholds.commonRate
   );
+}
+
+function identityStems(words: readonly string[]): string[] {
+  const stems: string[] = [];
+  for (const word of words) {
+    for (const piece of phraseWords(word)) {
+      const stem = stemText(piece);
+      if (stem) stems.push(stem);
+    }
+  }
+  return stems;
+}
+
+function isIdentity(stem: string, identity: readonly string[]): boolean {
+  return identity.some((item) => stemsMatch(item, stem));
 }
 
 function stemsOf(text: string): Set<string> {
@@ -201,6 +222,13 @@ export interface GroundingReport {
   readonly label: Grounding;
   /** Highest cosine on a passage window, or the unmatched hit when higher. */
   readonly cosine: number;
+  /** Cosine of the query to the cached area or project centroid. */
+  readonly background: number;
+  /**
+   * Evidence cosine minus `background`. Evidence cosine is the best passage
+   * when no rare term matched, and the rare-term window otherwise.
+   */
+  readonly margin: number;
   /** Uncommon IDF share of the best passage window. */
   readonly rareShare: number;
   /** Rare query terms that occur in at least one passage. */
@@ -229,6 +257,7 @@ function scorePassages(
   documentFrequency: ReadonlyMap<string, number>,
   documents: number,
   thresholds: GroundingThresholds,
+  identity: readonly string[],
 ): {
   readonly anyMatch: boolean;
   readonly anyRare: boolean;
@@ -240,11 +269,14 @@ function scorePassages(
 } {
   const info = terms.map((term) => {
     const df = documentFrequency.get(term) ?? 0;
+    const stem = stemText(term);
+    const common =
+      !isIdentity(stem, identity) && termIsCommon(df, documents, thresholds);
     return {
       term,
-      stem: stemText(term),
+      stem,
       weight: termWeight(df, documents),
-      common: termIsCommon(df, documents, thresholds),
+      common,
       df,
     };
   });
@@ -343,6 +375,11 @@ export function bestCosine(
   return best;
 }
 
+function unitCosine(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(-1, value));
+}
+
 /** Grounding from passage windows, with the features that produced the label. */
 export function explainStoredGrounding(input: {
   readonly terms: readonly string[];
@@ -351,6 +388,10 @@ export function explainStoredGrounding(input: {
   readonly documentFrequency: ReadonlyMap<string, number>;
   readonly vectorsAvailable: boolean;
   readonly unmatchedCosine?: number;
+  /** Cosine of the query to the cached centroid. Used only when vectors exist. */
+  readonly backgroundCosine?: number;
+  /** Project id, name, and glossary terms. Never classified as common. */
+  readonly protectedTerms?: readonly string[];
   readonly thresholds?: GroundingThresholds;
 }): GroundingReport {
   const thresholds = input.thresholds ?? readGroundingThresholds(process.env);
@@ -360,28 +401,40 @@ export function explainStoredGrounding(input: {
     input.documentFrequency,
     input.documents,
     thresholds,
+    identityStems(input.protectedTerms ?? []),
   );
   const cosine = Math.max(scored.bestCosine, input.unmatchedCosine ?? 0);
+  const background = input.vectorsAvailable
+    ? unitCosine(input.backgroundCosine)
+    : 0;
+  const evidenceCosine = scored.anyRare ? scored.best.cosine : cosine;
+  const margin = input.vectorsAvailable ? evidenceCosine - background : 0;
   let label: Grounding;
-  if (!scored.anyRare) {
-    // Common terms alone never reach strong. A low cosine is none.
-    if (cosine < thresholds.cosineWeak) label = "none";
-    else if (!scored.anyMatch && cosine >= thresholds.cosineStrong)
+  if (!input.vectorsAvailable) {
+    label =
+      scored.anyRare && scored.best.uncommon >= thresholds.lexicalOnlyStrong
+        ? "strong"
+        : scored.anyRare
+          ? "weak"
+          : "none";
+  } else if (!scored.anyRare) {
+    // Common terms alone never reach strong. A low margin is none.
+    if (margin < thresholds.marginWeak) label = "none";
+    else if (!scored.anyMatch && margin >= thresholds.marginStrong)
       label = "strong";
     else label = "weak";
   } else {
-    const bar = input.vectorsAvailable
-      ? thresholds.lexicalStrong
-      : thresholds.lexicalOnlyStrong;
     label =
-      scored.best.uncommon >= bar &&
-      (!input.vectorsAvailable || scored.best.cosine >= thresholds.cosineStrong)
+      scored.best.uncommon >= thresholds.lexicalStrong &&
+      margin >= thresholds.marginStrong
         ? "strong"
         : "weak";
   }
   return {
     label,
     cosine,
+    background,
+    margin,
     rareShare: scored.best.uncommon,
     matchedRare: scored.matchedRare,
     commonDropped: scored.commonDropped,

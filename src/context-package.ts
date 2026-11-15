@@ -321,6 +321,12 @@ export function buildContextPackage(
           bestCosine(semantic?.sources),
           bestCosine(semantic?.items),
         ),
+        ...(semantic?.available === true
+          ? { backgroundCosine: semantic.background ?? 0 }
+          : {}),
+        ...(projectId
+          ? { protectedTerms: sources.projectIdentityTerms(projectId) }
+          : {}),
       })
     : undefined;
   const grounding = explained?.label;

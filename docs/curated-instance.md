@@ -92,11 +92,11 @@ of a fifth tool. See [ADR 0018](adr/0018-documents-are-versioned-sources.md).
 
 Every `search` result includes `grounding`: `strong`, `weak`, or `none`.
 It is computed from uncommon query terms that co-occur in one passage and,
-when embeddings exist, from the cosine of that passage. Common words in a
-large corpus do not make a result strong. If no rare term matches and the
-best cosine is below the weak floor, the result is `none`. It is not the
-rank of the first card. A page can be the nearest stored page and still be
-`none`.
+when embeddings exist, from the margin of that passage over the area or
+project centroid. Common words in a large corpus do not make a result
+strong. If no rare term matches and the margin is below the weak floor, the
+result is `none`. It is not the rank of the first card. A page can be the
+nearest stored page and still be `none`.
 
 Instruct the agent:
 
@@ -106,15 +106,16 @@ Instruct the agent:
 
 Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
 a term is common from corpus size `40`, document frequency `8`, and rate
-`0.05`; cosine `0.84` / `0.92`) and can be set with
+`0.05`; margin `0.03` / `0.08`) and can be set with
 `CONTEXT_GROUNDING_LEXICAL_STRONG`,
 `CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG`,
 `CONTEXT_GROUNDING_COMMON_CORPUS`,
 `CONTEXT_GROUNDING_COMMON_MIN_DF`,
 `CONTEXT_GROUNDING_COMMON_RATE`,
-`CONTEXT_GROUNDING_COSINE_WEAK`, and
-`CONTEXT_GROUNDING_COSINE_STRONG`.
-See [Search](search.md#grounding).
+`CONTEXT_GROUNDING_MARGIN_WEAK`, and
+`CONTEXT_GROUNDING_MARGIN_STRONG`.
+Calibrate the margin on a real database with
+`context grounding explain --file`. See [Search](search.md#grounding).
 
 To inspect labels on a database that stays on this machine:
 
@@ -124,7 +125,8 @@ context grounding explain --file questions.yaml --area studio
 ```
 
 The file is a list of `query`, optional `project`, and `expect: on` or
-`off`. The report prints the features and, for a file, the cuts that
+`off`. A question's `project` overrides `--project`. The report prints the
+features and, for a file, the margin distributions and the cuts that
 separate on-topic from off-topic. It does not change thresholds.
 
 Check a checkout with the fictional corpus and a few hundred synthetic

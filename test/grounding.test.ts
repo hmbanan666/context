@@ -7,9 +7,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vite-plus/test";
-import { buildContextPackage } from "../src/context-package.js";
+import {
+  buildContextPackage,
+  searchGroundingReport,
+} from "../src/context-package.js";
 import {
   assessStoredGrounding,
+  explainStoredGrounding,
   readGroundingThresholds,
   type GroundingPassage,
 } from "../src/grounding.js";
@@ -34,6 +38,8 @@ function ground(
     documents?: number;
     documentFrequency?: ReadonlyMap<string, number>;
     unmatchedCosine?: number;
+    background?: number;
+    protectedTerms?: readonly string[];
   } = {},
 ) {
   const passages: GroundingPassage[] = text
@@ -55,19 +61,34 @@ function ground(
     ...(options.unmatchedCosine === undefined
       ? {}
       : { unmatchedCosine: options.unmatchedCosine }),
+    ...(options.background === undefined
+      ? {}
+      : { backgroundCosine: options.background }),
+    ...(options.protectedTerms
+      ? { protectedTerms: options.protectedTerms }
+      : {}),
     thresholds,
   });
 }
 
 test("grounding uses passage co-occurrence and idf, not rank", () => {
   const rare = ["rare", "other"];
+  const { marginWeak, marginStrong } = thresholds;
   assert.equal(ground("rare other", rare), "strong");
   assert.equal(
-    ground("rare other", rare, { vectorsAvailable: true, cosine: 0.5 }),
+    ground("rare other", rare, {
+      vectorsAvailable: true,
+      cosine: 0,
+      background: 0,
+    }),
     "weak",
   );
   assert.equal(
-    ground("rare other", rare, { vectorsAvailable: true, cosine: 0.93 }),
+    ground("rare other", rare, {
+      vectorsAvailable: true,
+      cosine: marginStrong,
+      background: 0,
+    }),
     "strong",
   );
   assert.equal(ground("rare", rare), "weak");
@@ -75,28 +96,52 @@ test("grounding uses passage co-occurrence and idf, not rank", () => {
   assert.equal(
     ground("common plain", ["common", "plain"], {
       vectorsAvailable: true,
-      cosine: 0.99,
+      cosine: marginWeak,
+      background: 0,
     }),
     "weak",
   );
   assert.equal(
     ground("common plain", ["common", "plain"], {
       vectorsAvailable: true,
-      cosine: 0.87,
+      cosine: marginStrong,
+      background: 0,
     }),
     "weak",
   );
   assert.equal(
     ground("common plain", ["common", "plain"], {
       vectorsAvailable: true,
-      cosine: 0.5,
+      cosine: 0,
+      background: 0,
     }),
     "none",
   );
   assert.equal(ground("common plain", ["common", "plain"]), "none");
-  assert.equal(ground("", ["rare"], { unmatchedCosine: 0.8 }), "none");
-  assert.equal(ground("", ["rare"], { unmatchedCosine: 0.87 }), "weak");
-  assert.equal(ground("", ["rare"], { unmatchedCosine: 0.93 }), "strong");
+  assert.equal(
+    ground("", ["rare"], {
+      vectorsAvailable: true,
+      unmatchedCosine: 0,
+      background: 0,
+    }),
+    "none",
+  );
+  assert.equal(
+    ground("", ["rare"], {
+      vectorsAvailable: true,
+      unmatchedCosine: marginWeak,
+      background: 0,
+    }),
+    "weak",
+  );
+  assert.equal(
+    ground("", ["rare"], {
+      vectorsAvailable: true,
+      unmatchedCosine: marginStrong,
+      background: 0,
+    }),
+    "strong",
+  );
   assert.equal(
     ground(
       "The cobalt lantern is in the blue cabinet.",
@@ -120,12 +165,12 @@ test("grounding uses passage co-occurrence and idf, not rank", () => {
   );
   assert.equal(readGroundingThresholds({}).lexicalOnlyStrong, 0.75);
   assert.throws(() =>
-    readGroundingThresholds({ CONTEXT_GROUNDING_COSINE_WEAK: "1.2" }),
+    readGroundingThresholds({ CONTEXT_GROUNDING_MARGIN_WEAK: "1.2" }),
   );
   assert.throws(() =>
     readGroundingThresholds({
-      CONTEXT_GROUNDING_COSINE_WEAK: "0.95",
-      CONTEXT_GROUNDING_COSINE_STRONG: "0.9",
+      CONTEXT_GROUNDING_MARGIN_WEAK: "0.5",
+      CONTEXT_GROUNDING_MARGIN_STRONG: "0.2",
     }),
   );
   assert.throws(() =>
@@ -158,6 +203,7 @@ function remember(
   });
   if (projectId)
     store.addClientAssociation("source", saved.source.id, [projectId]);
+  return saved;
 }
 
 function groundingFor(
@@ -262,6 +308,208 @@ test("document frequency stays inside the searched project and area", async () =
       "strong",
     );
   } finally {
+    knowledge.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("project identity stays rare and document frequency follows the match pool", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-grounding-pool-"));
+  const store = new SourceStore(join(directory, "context.db"));
+  const knowledge = new KnowledgeStore(join(directory, "context.db"));
+  try {
+    store.createProject({
+      id: "k39",
+      name: "K39 Desk",
+      homeArea: "personal",
+    });
+    store.setGlossaryTerm({
+      projectId: "k39",
+      term: "lantern",
+      synonyms: ["lamp"],
+    });
+    let host = "";
+    for (let index = 0; index < 40; index += 1) {
+      const saved = remember(
+        store,
+        "personal",
+        `desk-${index}`,
+        `k39 lantern lamp note ${index} about the desk.`,
+        "k39",
+      );
+      if (index === 0) host = saved.source.id;
+    }
+    knowledge.addDistilled({
+      scope: "personal",
+      sourceId: host,
+      kind: "fact",
+      text: "The таймфрейм on this desk is a fictional interval.",
+      createdAt: "2026-01-15T00:00:00.000Z",
+    });
+    const project = searchGroundingReport(
+      buildContextPackage(
+        store,
+        knowledge,
+        { version: 1, scope: "personal", question: "таймфрейм", limit: 8 },
+        undefined,
+        "k39",
+      ),
+    );
+    const timeframe = project?.documentFrequency.find(
+      (term) => term.term === "таймфрейм",
+    );
+    assert.ok(timeframe);
+    assert.equal(timeframe.df, 1);
+    assert.equal(timeframe.common, false);
+    assert.equal(project?.documents, 41);
+    const area = searchGroundingReport(
+      buildContextPackage(store, knowledge, {
+        version: 1,
+        scope: "personal",
+        question: "таймфрейм",
+        limit: 8,
+      }),
+    );
+    assert.equal(
+      area?.documentFrequency.find((term) => term.term === "таймфрейм")?.df,
+      0,
+    );
+    const named = searchGroundingReport(
+      buildContextPackage(
+        store,
+        knowledge,
+        {
+          version: 1,
+          scope: "personal",
+          question: "k39 lantern lamp",
+          limit: 8,
+        },
+        undefined,
+        "k39",
+      ),
+    );
+    const byTerm = new Map(
+      named?.documentFrequency.map((term) => [term.term, term]),
+    );
+    assert.equal(byTerm.get("k39")?.common, false);
+    assert.equal(byTerm.get("lantern")?.common, false);
+    assert.equal(byTerm.get("lamp")?.common, true);
+    assert.ok((named?.rareShare ?? 0) > 0);
+    assert.deepEqual(named?.commonDropped, ["lamp"]);
+    const protectedOnly = explainStoredGrounding({
+      terms: ["k39"],
+      passages: [{ text: "k39 appears on every page." }],
+      documents: 100,
+      documentFrequency: new Map([["k39", 80]]),
+      vectorsAvailable: false,
+      protectedTerms: ["k39"],
+      thresholds,
+    });
+    assert.equal(protectedOnly.documentFrequency[0]?.common, false);
+    assert.equal(protectedOnly.rareShare, 1);
+    assert.equal(protectedOnly.margin, 0);
+  } finally {
+    knowledge.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("margin is the best evidence cosine above the project centroid", async () => {
+  const { EmbeddingIndex } = await import("../src/embedding-index.js");
+  const directory = await mkdtemp(join(tmpdir(), "context-grounding-margin-"));
+  const path = join(directory, "context.db");
+  const store = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  const embedder = {
+    version: "synthetic-margin-v1",
+    async embed(text: string) {
+      return Float32Array.from(/cobalt lantern/u.test(text) ? [1, 0] : [0, 1]);
+    },
+  };
+  const index = new EmbeddingIndex(path, embedder);
+  try {
+    store.createProject({ id: "alpha", name: "Alpha", homeArea: "personal" });
+    store.createProject({ id: "beta", name: "Beta", homeArea: "personal" });
+    remember(
+      store,
+      "personal",
+      "lantern",
+      "The cobalt lantern is in the blue cabinet.",
+      "alpha",
+    );
+    for (let index = 0; index < 6; index += 1)
+      remember(
+        store,
+        "personal",
+        `filler-${index}`,
+        `Alpha filler note ${index} about ordinary weather.`,
+        "alpha",
+      );
+    for (let index = 0; index < 20; index += 1)
+      remember(
+        store,
+        "personal",
+        `beta-${index}`,
+        `Beta cobalt lantern leak ${index} should stay out of alpha.`,
+        "beta",
+      );
+    index.backfill();
+    while (await index.processOne()) {
+      /* drain the synthetic queue */
+    }
+    const on = await index.search({
+      scope: "personal",
+      question: "where is the cobalt lantern",
+      projectId: "alpha",
+    });
+    const off = await index.search({
+      scope: "personal",
+      question: "recipe for borscht",
+      projectId: "alpha",
+    });
+    assert.equal(on.available, true);
+    assert.ok((on.background ?? 0) < 0.4);
+    assert.ok((on.sources[0]?.score ?? 0) > 0.9);
+    const onPack = buildContextPackage(
+      store,
+      knowledge,
+      {
+        version: 1,
+        scope: "personal",
+        question: "where is the cobalt lantern",
+        limit: 8,
+      },
+      on,
+      "alpha",
+    );
+    const onReport = searchGroundingReport(onPack);
+    assert.equal(onPack.grounding, "strong");
+    assert.ok((onReport?.margin ?? 0) > 0.5);
+    const offPack = buildContextPackage(
+      store,
+      knowledge,
+      {
+        version: 1,
+        scope: "personal",
+        question: "recipe for borscht",
+        limit: 8,
+      },
+      off,
+      "alpha",
+    );
+    const offReport = searchGroundingReport(offPack);
+    assert.equal(offPack.grounding, "none");
+    assert.ok((offReport?.margin ?? 1) < thresholds.marginWeak);
+    const again = await index.search({
+      scope: "personal",
+      question: "where is the cobalt lantern",
+      projectId: "alpha",
+    });
+    assert.equal(again.background, on.background);
+  } finally {
+    await index.close();
     knowledge.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
