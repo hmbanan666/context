@@ -1,0 +1,204 @@
+# Synthetic Russian questions for fictional projects `context` and `expi`.
+# Prod runs point --questions at a private file that may use item_id or source_id.
+# This file uses required substrings only. No production notes.
+questions:
+  - id: context_nightly_distill
+    question: улучшить ночную дистилляцию
+    areas: [projects]
+    read_areas: [projects]
+    mode: pack
+    project: context
+    budget_bytes: 4096
+    expected:
+      - substring: distills each source
+    outranks:
+      - substring: off-host backups
+    forbidden_substrings:
+      - fictional violet
+    tags: [ru, pack, glossary]
+  - id: context_backup
+    question: как устроен ночной бэкап
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: off-host backups
+    tags: [ru, glossary]
+  - id: context_reindex
+    question: как продолжить переиндексацию эмбеддингов
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: reindex is resumable
+    tags: [ru, glossary]
+  - id: context_model
+    question: где хранится эмбеддинг модели
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: model id
+    tags: [ru, glossary]
+  - id: context_glossary
+    question: как править глоссарий
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: bilingual synonyms
+    tags: [ru, glossary]
+  - id: context_journal
+    question: что пишет недельный журнал
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: ISO week
+    tags: [ru, glossary]
+  - id: context_profile
+    question: что лежит в профиле
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: pinned decisions
+    tags: [ru, glossary]
+  - id: context_pack
+    question: как ранжируется пакет
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: ranks decisions
+    tags: [ru, glossary]
+  - id: context_prose
+    question: что пропускает ночная дистилляция
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: eighty character
+    tags: [ru, glossary]
+  - id: context_tools
+    question: сколько инструментов поиска
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: four tools
+    tags: [ru, glossary]
+  - id: context_cursor
+    question: откуда продолжается дистилляция
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: stored cursor
+    tags: [ru, glossary]
+  - id: context_bytes
+    question: что резервирует пакет
+    areas: [projects]
+    read_areas: [projects]
+    project: context
+    expected:
+      - substring: reserves bytes
+    tags: [ru, glossary]
+  - id: expi_catalog
+    question: что лежит в каталоге
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: lists prices
+    tags: [ru, glossary]
+  - id: expi_subscription
+    question: когда продлевается подписка
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: first day of the month
+    tags: [ru, glossary]
+  - id: expi_payment
+    question: что создаёт оплата
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: payment event
+    tags: [ru, glossary]
+  - id: expi_queue
+    question: как ведёт себя очередь биллинга
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: retries a failed
+    tags: [ru, glossary]
+  - id: expi_audience
+    question: кого считает аудитория
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: synthetic members
+    tags: [ru, glossary]
+  - id: expi_price
+    question: в какой валюте цена
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: price row
+    tags: [ru, glossary]
+  - id: expi_invoice
+    question: что отправляет инвойс
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: emails a receipt
+    tags: [ru, glossary]
+  - id: expi_entitlement
+    question: что выдаёт лицензия
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: feature flag
+    tags: [ru, glossary]
+  - id: expi_campaign
+    question: что суммирует кампания
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: fictional revenue
+    tags: [ru, glossary]
+  - id: expi_webhook
+    question: что хранит вебхук
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: webhook stores
+    tags: [ru, glossary]
+  - id: expi_refund
+    question: что пишет возврат
+    areas: [projects]
+    read_areas: [projects]
+    project: expi
+    expected:
+      - substring: synthetic refund
+    tags: [ru, glossary]
+  - id: expi_pack
+    question: разобрать вопрос биллинга
+    areas: [projects]
+    read_areas: [projects]
+    mode: pack
+    project: expi
+    budget_bytes: 4096
+    expected:
+      - substring: billing question
+    tags: [ru, pack, glossary]

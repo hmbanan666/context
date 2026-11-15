@@ -24,9 +24,11 @@ export type PackageSelection = Pick<
   terms: readonly string[];
   limit: number;
   vectors?: readonly import("./search-lexical.js").VectorHit[];
+  /** Glossary synonyms. They are a lower-weight FTS list, not extra query terms. */
+  expansion?: readonly string[];
   projectId?: string;
 };
-// Small explicit question-word list, not a language model, stemmer or synonym map.
+// Small explicit question-word list. Glossary expansion happens after this.
 const stop = new Set(
   "a an the what which who why how did does do was were is are of in on at to for and or my me about happened suitable что какие какой как почему кто где когда это у я мои моих меня в на для и или о об по из происходило подходит подходят известно".split(
     " ",
@@ -51,7 +53,9 @@ export function questionTerms(question: string): string[] {
   return terms;
 }
 export function ftsTerms(terms: readonly string[]): string {
-  if (!terms.length || terms.length > 32)
+  // Original questions are at most 32 words. Glossary expansion adds a bounded
+  // synonym list, so the combined OR stays under 64 quoted tokens.
+  if (!terms.length || terms.length > 64)
     throw new Error("Invalid search terms");
   return terms.map((t) => `"${t.replaceAll('"', '""')}"`).join(" OR ");
 }

@@ -21,7 +21,8 @@
     "check": "pnpm run lint && pnpm run typecheck && pnpm test",
     "context": "node dist/scripts/context.js",
     "backup": "node dist/scripts/backup.js",
-    "eval:retrieval": "pnpm run build && node dist/test/evaluate-retrieval.js"
+    "eval:retrieval": "pnpm run build && node dist/test/evaluate-retrieval.js",
+    "eval:projects": "pnpm run build && node dist/test/evaluate-projects.js"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

@@ -58,9 +58,13 @@ bounded source timeline, newest first by creation date else capture date; derive
 suggestions are not separate source events. See the [tool table](../README.md#mcp-tools).
 `memory.ts` pages original evidence; `context-package.ts` builds bounded evidence
 from sources/knowledge and one-hop relations. Both enforce area restrictions.
-Search combines exact and RU/EN stemmed FTS with local E5 embeddings. The image
-includes the model; startup and writes backfill derived vectors in the background,
-with lexical fallback on model failure. Area/date filters precede fusion.
+Search combines exact and RU/EN stemmed FTS with local multilingual E5 small
+embeddings. A project glossary, plus a small built-in RU→EN list, expands query
+tokens into a lower-weight FTS list before search and pack. The embedding text
+stays the original question. Vectors store the model id and are never compared
+across ids. The image includes the model; startup and writes backfill derived
+vectors in the background, with lexical fallback on model failure. Area/date
+filters precede fusion.
 See [search](search.md) for bounds, rebuild and measured resources. Relation-aware retrieval collapses duplicates and ranks superseded history last.
 
 `knowledge.ts` stores source-grounded suggestions and relations, redacting their

@@ -165,6 +165,14 @@ export function installProjects(db: DatabaseSync): void {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id)
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS project_glossary (
+      project_id TEXT NOT NULL,
+      term TEXT NOT NULL CHECK(length(term) BETWEEN 1 AND 64),
+      synonyms TEXT NOT NULL CHECK(length(synonyms) BETWEEN 2 AND 2048),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (project_id, term),
+      FOREIGN KEY (project_id) REFERENCES projects(id)
+    ) STRICT;
   `);
   migrateProjectTables(db);
   installJournalMeta(db);
@@ -882,6 +890,100 @@ export function clearProjectProfile(db: DatabaseSync, projectId: string): void {
   write(db, () => {
     if (!projectRow(db, id)) throw new UnknownProject([id]);
     db.prepare("DELETE FROM project_profiles WHERE project_id = ?").run(id);
+  });
+}
+export const maxGlossaryTerms = 32;
+export const maxGlossarySynonyms = 8;
+const glossaryToken = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[\p{L}\p{N}]+$/u, "Glossary tokens are letters or digits")
+  .transform((value) => value.toLowerCase());
+export interface ProjectGlossaryEntry {
+  readonly term: string;
+  readonly synonyms: readonly string[];
+}
+function parseSynonyms(stored: string): string[] {
+  const synonyms = z
+    .array(glossaryToken)
+    .min(1)
+    .max(maxGlossarySynonyms)
+    .parse(JSON.parse(stored));
+  if (new Set(synonyms).size !== synonyms.length)
+    throw new Error("Duplicate glossary synonym");
+  return synonyms;
+}
+export function listProjectGlossary(
+  db: DatabaseSync,
+  projectId: string,
+): ProjectGlossaryEntry[] {
+  const id = projectIdSchema.parse(projectId);
+  if (!projectRow(db, id)) throw new UnknownProject([id]);
+  return (
+    db
+      .prepare(
+        `SELECT term, synonyms FROM project_glossary
+         WHERE project_id = ? ORDER BY term`,
+      )
+      .all(id) as { term: string; synonyms: string }[]
+  ).map((row) => ({ term: row.term, synonyms: parseSynonyms(row.synonyms) }));
+}
+export function setProjectGlossaryTerm(
+  db: DatabaseSync,
+  input: { projectId: string; term: string; synonyms: readonly string[] },
+): ProjectGlossaryEntry {
+  const projectId = projectIdSchema.parse(input.projectId);
+  const term = glossaryToken.parse(input.term);
+  const synonyms = z
+    .array(glossaryToken)
+    .min(1)
+    .max(maxGlossarySynonyms)
+    .parse([...input.synonyms]);
+  if (new Set(synonyms).size !== synonyms.length)
+    throw new Error("Duplicate glossary synonym");
+  if (synonyms.includes(term)) throw new Error("Synonym repeats the term");
+  return write(db, () => {
+    if (!projectRow(db, projectId)) throw new UnknownProject([projectId]);
+    const existing = db
+      .prepare(
+        "SELECT 1 AS ok FROM project_glossary WHERE project_id = ? AND term = ?",
+      )
+      .get(projectId, term);
+    if (!existing) {
+      const count = Number(
+        db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM project_glossary WHERE project_id = ?",
+          )
+          .get(projectId)?.n,
+      );
+      if (count >= maxGlossaryTerms) throw new Error("Glossary is full");
+    }
+    db.prepare(
+      `INSERT INTO project_glossary (project_id, term, synonyms, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(project_id, term) DO UPDATE SET
+         synonyms = excluded.synonyms,
+         updated_at = excluded.updated_at`,
+    ).run(projectId, term, JSON.stringify(synonyms), new Date().toISOString());
+    return { term, synonyms };
+  });
+}
+export function unsetProjectGlossaryTerm(
+  db: DatabaseSync,
+  projectId: string,
+  term: string,
+): void {
+  const id = projectIdSchema.parse(projectId);
+  const key = glossaryToken.parse(term);
+  write(db, () => {
+    if (!projectRow(db, id)) throw new UnknownProject([id]);
+    const result = db
+      .prepare("DELETE FROM project_glossary WHERE project_id = ? AND term = ?")
+      .run(id, key);
+    if (!result.changes) throw new Error("Glossary term not found");
   });
 }
 export function readProjectProfile(

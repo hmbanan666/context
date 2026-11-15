@@ -18,6 +18,41 @@ A change to that rule rebuilds the derived source index once. `recall` retains e
 lookup, and `memory_context` retains literal keyword filtering and paged timelines.
 Neither requires model availability.
 
+## Cross-lingual queries
+
+ADR 0014 keeps `Xenova/multilingual-e5-small` (q8 ONNX **118,308,185 bytes**,
+384 dimensions). `multilingual-e5-base` q8 is **278,647,662 bytes** and was not
+selected: a reindex loads a second model, and two base copies do not fit the
+1536 MiB limit. Prefixes remain `query: ` and `passage: `. The version string
+is stored on every chunk. Search never scores a chunk whose model id differs.
+While any other id remains in the area, coverage includes `embeddings_mixed`.
+
+```sh
+context reindex --embeddings
+context reindex --embeddings --batch 8
+```
+
+The command loads the local model, embeds queued rows, and prints counts plus
+the model id. It does not print source text. Rows that already have the current
+id are skipped. Rerun it after a crash; a lease still held by the server waits
+out the ten-minute lease. On a database that is already on this model the
+command spends the load (about 2 seconds) and then reports an empty queue.
+
+Project terms live beside the profile:
+
+```sh
+context project glossary show --id context
+context project glossary set --id context --term дистилляция --synonyms distill,distillation,tidy
+context project glossary unset --id context --term дистилляция
+```
+
+A built-in RU→EN list (backup, distill, nightly, embedding, and similar) applies
+when the project has no entry for that stem. Expanded concepts use FTS weight
+0.35 against weight 1 for the caller's own words. Two or more synonym concepts
+rank above a vector hit that matched only one of them, and below any hit on the
+original words. One synonym does not. The embedding string is not expanded.
+Timeline is not expanded.
+
 ## Recovery and progress
 
 Normally no command is needed. To repair derived search data, run inside the

@@ -3,6 +3,7 @@ import { AuthStore } from "../src/auth-store.js";
 import { readConfig } from "../src/config.js";
 import { evalCommand } from "../src/eval-cli.js";
 import { runIndexCommand } from "../src/index-command.js";
+import { runReindexCommand } from "../src/reindex-command.js";
 import { projectCommand } from "../src/project-cli.js";
 import { searchCommand } from "../src/search-cli.js";
 import { tidyCommand } from "../src/tidy-cli.js";
@@ -69,6 +70,10 @@ async function main() {
   }
   if (process.argv[2] === "search") {
     searchCommand(process.argv.slice(3), process.env);
+    return;
+  }
+  if (process.argv[2] === "reindex") {
+    await runReindexCommand(process.argv.slice(3), process.env);
     return;
   }
   const [kind, action, name, ...args] = process.argv.slice(2);
@@ -160,7 +165,7 @@ async function main() {
       return;
     }
     throw new Error(
-      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--expires 90d] | token list|revoke <id> | project create|rename|list|map|unmap|backfill|profile|review | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>]",
+      "Usage: context owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--expires 90d] | token list|revoke <id> | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>]",
     );
   } finally {
     store.close();
@@ -168,7 +173,12 @@ async function main() {
 }
 // Do not serialize raw errors: they may contain credentials or request data.
 void main().catch((error: unknown) => {
-  if (process.argv[2] === "project" || process.argv[2] === "search") {
+  if (
+    process.argv[2] === "project" ||
+    process.argv[2] === "search" ||
+    process.argv[2] === "reindex" ||
+    process.argv[2] === "eval"
+  ) {
     process.stderr.write(
       `${error instanceof Error ? error.message : "Command failed"}\n`,
     );

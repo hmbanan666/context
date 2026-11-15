@@ -79,7 +79,10 @@ each project's profile with `context project profile`; tidy writes the journal
 ([ADR 0012](docs/adr/0012-project-profile-journal-and-task-pack.md)).
 The owner approves or rejects proposals with `context project review`.
 `context search --mode pack --project <id> --scope <area> --query "<task>" --budget-bytes <n>`
-returns one task pack for that project. Hard delete
+returns one task pack for that project. A project glossary
+(`context project glossary set|show`) plus a small built-in RU→EN list expands
+query words into search and pack; see
+[ADR 0014](docs/adr/0014-cross-lingual-project-search.md). Hard delete
 remains [planned](docs/roadmap.md).
 Run `context tidy` once to distill a capped batch, or `context tidy --dry-run`
 to preview it. See [Nightly tidy](docs/deployment.md#nightly-tidy).
@@ -91,8 +94,9 @@ SQLite files, transferred over SSH/TLS; backup encryption is out of scope.
 Keep backup destinations private. [Restore instructions](docs/deployment.md#backups).
 
 To measure retrieval, place private questions at `/app/data/evals/questions.yaml`
-and run `context eval run` / `context eval history`. The same read-only eval runs
-after nightly backup and tidy attempts when that file exists. Results stay beside the database;
+and run `context eval run` / `context eval history`. Per-project Russian recall
+is `context eval projects --questions /app/data/evals/projects.yaml`. The questions.yaml
+eval runs read-only after nightly backup and tidy attempts when that file exists. Results stay beside the database;
 SQLite snapshots do not include these separate files. [Eval details](docs/evals.md).
 
 ## MCP tools

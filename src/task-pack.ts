@@ -249,6 +249,7 @@ export function buildTaskPack(
   )
     throw new Error("Invalid pack budget");
   const terms = questionTerms(input.question);
+  const expansion = sources.expandedTerms(terms, input.projectId);
   const budget = input.budgetBytes;
   const profile = sources.profile(input.projectId);
   const loaded =
@@ -266,6 +267,7 @@ export function buildTaskPack(
     terms,
     limit: 101,
     projectId: input.projectId,
+    ...(expansion.length ? { expansion } : {}),
   };
   const memory = knowledge.projectHybrid(
     {
