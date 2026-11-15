@@ -7,6 +7,10 @@ or paid search service is required.
 
 ## Start
 
+A new install pulls `ghcr.io/hmbanan666/context` and follows the
+[quick start](docs/QUICKSTART.md): compose, `context init`, then paste the
+printed client config. The steps below build this checkout instead.
+
 Build the image from this checkout, then run it behind your HTTPS reverse proxy:
 
 ```sh
@@ -155,7 +159,7 @@ service's `environment` (or use `docker run -e`).
 | `CONTEXT_PUBLIC_URL` | Required HTTPS URL ending in `/mcp`; keep stable after connecting clients. |
 | `CONTEXT_HOST`, `CONTEXT_PROXY_NETWORK` | Required only for the Traefik overlay: public hostname and existing external proxy network. |
 | `CONTEXT_AREAS` | `personal`; comma-separated owner areas, at most eight. |
-| `CONTEXT_PROCESSOR` | `openai`; optional `codex` uses the CLI's ChatGPT login for model steps. |
+| `CONTEXT_PROCESSOR` | Unset. The processor stays off until `CONTEXT_LLM_API_KEY` and `CONTEXT_LLM_MODEL` are both set. `openai` selects an OpenAI-compatible endpoint; `codex` is the personal device-login path. [Providers](docs/llm-providers.md). |
 | `CONTEXT_LLM_API_KEY`, `CONTEXT_LLM_MODEL` | Both required for the default API processor; unset means dedup only. Local endpoints may use a placeholder key. Codex needs no API key; its model defaults to `gpt-6-luna`. |
 | `CONTEXT_CODEX_BIN`, `CONTEXT_CODEX_HOME` | Required only by the [Codex overlay](docs/deployment.md#optional-codex-subscription-processor): absolute host paths to a static binary and dedicated login directory. |
 | `CODEX_HOME` | CLI-owned login directory; the overlay sets `/app/codex`. Context never reads auth files. |
@@ -186,5 +190,6 @@ regardless of the machine timezone. Tests cover auth, area
 isolation, redaction, retries, restart and backup/restore. Docker/Compose checks
 run in CI. Public fixtures must be synthetic.
 
+[Quick start](docs/QUICKSTART.md) · [LLM providers](docs/llm-providers.md) ·
 [Architecture](docs/architecture.md) · [Product spec](docs/spec.md) ·
 [Glossary](CONTEXT.md) · [ADRs](docs/adr/)

@@ -9,6 +9,7 @@ COPY scripts ./scripts
 RUN pnpm run build && node dist/scripts/download-search-model.js /app/models && pnpm prune --prod
 
 FROM node:24.22.1-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/hmbanan666/context"
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
