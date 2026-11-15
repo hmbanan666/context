@@ -175,6 +175,43 @@ before deliberately switching its database path. Reconcile credentials revoked
 since the snapshot before reopening access. The future hard-delete feature must
 also define deletion reconciliation; it is not implemented today.
 
+## Embeddings reindex and project glossary
+
+ADR 0014 does not change the model id already baked into the image
+(`Xenova/multilingual-e5-small`, q8, 118,308,185 bytes, 384 dimensions, about
+500 MiB RSS after load). Base was measured at 278,647,662 bytes and left out
+so a reindex does not have to sit beside the server inside 1536 MiB.
+
+After the new image is running, as the container user:
+
+```sh
+context reindex --embeddings --batch 8
+```
+
+Stdout is one JSON line per batch: queued, running, completed, failed, chunks,
+`model`, `otherModels`. No record text. The last line should show `failed: 0`
+and `otherModels: []`. If every chunk already has this model id, the run is the
+model load (about 2 seconds) plus an empty queue. A full redo is about 15–25 ms
+per short record on the measured CPU: a thousand records is under half a minute,
+ten thousand is a few minutes, not an hour. Long sources are several chunks
+(a 2,900-character item was 271 ms). The command is safe to rerun. It shares
+the queue with the server. While it runs, RSS includes a second copy of the
+small model (about 500 MiB). Do not also start `context eval run` in that
+window. A crashed run leaves a lease for up to ten minutes; rerun after that,
+or wait, and completed rows are not embedded again.
+
+Built-in synonyms already map дистилляция, ночная and бэкап. Project slang is
+not in that list. For the reported pack query, set the context project term
+that the built-in list does not know:
+
+```sh
+context project glossary set --id context --term дистилляция --synonyms distill,distillation,tidy
+context project glossary show --id context
+```
+
+That does not write an expi glossary. Add expi terms the same way if a private
+eval needs them. The synthetic expi list in the fixture is fictional.
+
 ## Retrieval evaluation
 
 `context eval run` and `context eval history` use the main database read-only.
@@ -184,7 +221,14 @@ runs after scheduled backup and tidy attempts, sharing the same schedule and res
 behavior. No extra settings or volumes are required. The SQLite backup does not
 include these separate files; preserve them privately if needed. Nightly eval
 reuses the server's index/model; standalone eval loads one local model and reports
-semantic availability and its contribution against lexical search. See [evals](evals.md).
+semantic availability and its contribution against lexical search.
+
+`context eval projects --questions /app/data/evals/projects.yaml --k 10` is the
+per-project run. The file is private, same schema as the other eval plus
+optional `item_id`, and each question names a project. Metrics are recall@k and
+pack-hit rate per project. Ids and numbers append to
+`/app/data/evals/projects-history.jsonl`. Misses exit 0. This command is not on
+the nightly schedule. See [evals](evals.md).
 
 ## Search model and memory
 

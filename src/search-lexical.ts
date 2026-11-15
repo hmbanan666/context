@@ -6,6 +6,10 @@ import { visibleSourceText } from "./source-text.js";
 const english = newStemmer("english");
 const russian = newStemmer("russian");
 const VECTOR_RRF_WEIGHT = 5;
+// Below either original lexical list (weight 1). See lexicalCandidates.
+export const EXPANSION_RRF_WEIGHT = 0.35;
+const ORIGINAL_MATCH_BAND = 2;
+const MULTI_EXPANSION_BAND = 1;
 export function stemText(text: string): string {
   return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
     .map((word) =>
@@ -181,11 +185,14 @@ export function stemOffset(text: string, terms: readonly string[]): number {
 
 // Each list has already passed area, date and provenance predicates before
 // receiving a rank. RRF never compares BM25 magnitudes across indexes.
-// Lists are ordered exact, stemmed, vector; the first two share lexical evidence.
-export function reciprocalRankScores(lists: readonly (readonly string[])[]) {
+// Without explicit weights, lists are exact, stemmed, vector.
+export function reciprocalRankScores(
+  lists: readonly (readonly string[])[],
+  weights?: readonly number[],
+) {
   const scores = new Map<string, number>();
   for (const [index, list] of lists.entries()) {
-    const weight = index === 2 ? VECTOR_RRF_WEIGHT : 1;
+    const weight = weights?.[index] ?? (index === 2 ? VECTOR_RRF_WEIGHT : 1);
     for (const [rank, id] of [...new Set(list)].entries()) {
       scores.set(id, (scores.get(id) ?? 0) + weight / (60 + rank + 1));
     }
@@ -207,18 +214,25 @@ export function lexicalCandidates(
   terms: readonly string[],
   limit: number,
   vectors: readonly VectorHit[] = [],
+  expansion: readonly string[] = [],
 ) {
   const exact = `${table}_fts`,
     stemmed = `${table}_stemmed`;
-  const queries = [ftsTerms(terms), ftsTerms(terms.map(stemText))];
   const offsets = new Map<string, number>();
-  const lists = [exact, stemmed].map((index, i) => {
+  const lists: string[][] = [];
+  const weights: number[] = [];
+  const matched = (
+    index: string,
+    queryTerms: readonly string[],
+    highlighted: boolean,
+    stemNeedles: readonly string[],
+  ) => {
     const rows = db
       .prepare(`WITH eligible AS (${eligible})
-      SELECT e.id,e.text,${i === 0 ? `highlight(${index},0,' ','')` : "NULL"} highlighted
+      SELECT e.id,e.text,${highlighted ? `highlight(${index},0,' ','')` : "NULL"} highlighted
       FROM ${index} JOIN eligible e ON e.rowid=${index}.rowid
       WHERE ${index} MATCH ? ORDER BY ${index}.rank,e.id LIMIT ?`)
-      .all(...params, queries[i] ?? "", limit);
+      .all(...params, ftsTerms(queryTerms), limit);
     return rows.map((row) => {
       const id = String(row.id);
       const comparable =
@@ -228,13 +242,45 @@ export function lexicalCandidates(
       if (!offsets.has(id))
         offsets.set(
           id,
-          i === 0
+          highlighted
             ? ftsMatchOffset(comparable, row.highlighted)
-            : stemOffset(comparable, terms),
+            : stemOffset(comparable, stemNeedles),
         );
       return id;
     });
-  });
+  };
+  const push = (ids: string[], weight: number) => {
+    lists.push(ids);
+    weights.push(weight);
+  };
+  // Original tokens outrank glossary synonyms. Each synonym concept is its own
+  // lower-weight list, grouped by stem so distill/distillation count once.
+  const exactOriginal = matched(exact, terms, true, terms);
+  push(exactOriginal, 1);
+  const originalStems = matched(stemmed, terms.map(stemText), false, terms);
+  push(originalStems, 1);
+  const originalIds = new Set([...exactOriginal, ...originalStems]);
+  const conceptCounts = new Map<string, number>();
+  const groups = new Map<string, string[]>();
+  for (const term of expansion) {
+    const key = stemText(term);
+    const surfaces = groups.get(key);
+    if (surfaces) surfaces.push(term);
+    else groups.set(key, [term]);
+  }
+  for (const surfaces of groups.values()) {
+    const exactIds = matched(exact, surfaces, true, surfaces);
+    const stemIds = matched(
+      stemmed,
+      [stemText(surfaces[0] ?? "")],
+      false,
+      surfaces,
+    );
+    push(exactIds, EXPANSION_RRF_WEIGHT);
+    push(stemIds, EXPANSION_RRF_WEIGHT);
+    for (const id of new Set([...exactIds, ...stemIds]))
+      conceptCounts.set(id, (conceptCounts.get(id) ?? 0) + 1);
+  }
   if (vectors.length > 101) throw new Error("Invalid vector candidate bound");
   const placeholders = vectors.map(() => "?").join(",");
   const vectorIds = vectors.map((hit) => hit.id);
@@ -246,14 +292,20 @@ export function lexicalCandidates(
           .map((row) => String(row.id)),
       )
     : new Set<string>();
-  lists.push(
+  push(
     vectors
       .filter((hit) => validVectors.has(hit.id))
       .map((hit) => {
         if (!offsets.has(hit.id)) offsets.set(hit.id, hit.offset);
         return hit.id;
       }),
+    VECTOR_RRF_WEIGHT,
   );
+  const lexicalTerms = [...new Set([...terms, ...expansion])];
+  const queries = [
+    ftsTerms(lexicalTerms),
+    ftsTerms(lexicalTerms.map(stemText)),
+  ];
   const total = Number(
     db
       .prepare(`WITH eligible AS (${eligible}) SELECT COUNT(*) n FROM eligible e WHERE
@@ -261,7 +313,22 @@ export function lexicalCandidates(
     ${vectors.length ? `OR e.id IN (${placeholders})` : ""}`)
       .get(...params, ...queries, ...vectorIds)?.n,
   );
-  const scores = reciprocalRankScores(lists);
+  const scores = reciprocalRankScores(lists, weights);
+  // Bands apply only when a glossary actually expanded the query, so ordinary
+  // hybrid search keeps vector weight 5. An original-term hit stays above every
+  // synonym hit. Two or more synonym concepts stay above a vector neighbour
+  // that matched only one of them (the nightly-backup vs distillation case).
+  // A single synonym stays on the RRF scale and cannot flood past the original.
+  if (expansion.length) {
+    for (const [id, score] of scores) {
+      const band = originalIds.has(id)
+        ? ORIGINAL_MATCH_BAND
+        : (conceptCounts.get(id) ?? 0) >= 2
+          ? MULTI_EXPANSION_BAND
+          : 0;
+      scores.set(id, score + band);
+    }
+  }
   return {
     total,
     ids: [...scores]

@@ -3,6 +3,12 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type CaptureInput, captureSchema } from "./contracts.js";
+import {
+  builtinGlossary,
+  expandQueryTerms,
+  mergeGlossary,
+  type GlossaryEntry,
+} from "./glossary.js";
 import type { ImportProvenance } from "./import-format.js";
 import {
   KnowledgeNotFound,
@@ -28,6 +34,10 @@ import {
   backfillProjects,
   clearProjectProfile,
   createProject,
+  listProjectGlossary,
+  setProjectGlossaryTerm,
+  unsetProjectGlossaryTerm,
+  type ProjectGlossaryEntry,
   getProjectProfile,
   hasProject,
   installProjects,
@@ -781,6 +791,7 @@ export class SourceStore {
         input.terms,
         input.limit,
         input.vectors,
+        input.expansion,
       );
       return {
         ...found,
@@ -900,6 +911,31 @@ export class SourceStore {
 
   clearProfile(projectId: string): void {
     clearProjectProfile(this.#database, projectId);
+  }
+
+  projectGlossary(projectId: string): ProjectGlossaryEntry[] {
+    return listProjectGlossary(this.#database, projectId);
+  }
+
+  glossary(projectId?: string): GlossaryEntry[] {
+    const stored = projectId ? this.projectGlossary(projectId) : [];
+    return mergeGlossary(builtinGlossary, stored);
+  }
+
+  setGlossaryTerm(input: {
+    projectId: string;
+    term: string;
+    synonyms: readonly string[];
+  }): ProjectGlossaryEntry {
+    return setProjectGlossaryTerm(this.#database, input);
+  }
+
+  unsetGlossaryTerm(projectId: string, term: string): void {
+    unsetProjectGlossaryTerm(this.#database, projectId, term);
+  }
+
+  expandedTerms(terms: readonly string[], projectId?: string): string[] {
+    return expandQueryTerms(terms, this.glossary(projectId));
   }
 
   readProfile(id: string, scope: string): ProjectProfile | undefined {

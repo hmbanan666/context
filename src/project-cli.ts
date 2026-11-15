@@ -7,7 +7,7 @@ import type { ReviewKind } from "./review.js";
 import { SourceStore } from "./store.js";
 
 const usage =
-  "Usage: context project create --id <id> --name <name> --home <area> | rename --id <id> --name <name> | list | map --repo <owner/repo> --project <id> | unmap --repo <owner/repo> | backfill | profile show --id <id> | profile set --id <id> --purpose <text> --rules <text> [--pin <decision-id> ...] | profile clear --id <id> | review list [--project <id>] [--kind fact|decision|project|pin] [--since <iso>] [--until <iso>] [--week <YYYY-Www>] | review approve (--id <id> ... | --project <id> --week <YYYY-Www> [--kind fact|decision|project|pin]) [--assign <project-id> [--name <name>] [--home <area>]] | review reject (--id <id> ... | --project <id> --week <YYYY-Www> [--kind fact|decision|project|pin])";
+  "Usage: context project create --id <id> --name <name> --home <area> | rename --id <id> --name <name> | list | map --repo <owner/repo> --project <id> | unmap --repo <owner/repo> | backfill | profile show --id <id> | profile set --id <id> --purpose <text> --rules <text> [--pin <decision-id> ...] | profile clear --id <id> | glossary show --id <id> | glossary set --id <id> --term <term> --synonyms a,b | glossary unset --id <id> --term <term> | review list [--project <id>] [--kind fact|decision|project|pin] [--since <iso>] [--until <iso>] [--week <YYYY-Www>] | review approve (--id <id> ... | --project <id> --week <YYYY-Www> [--kind fact|decision|project|pin]) [--assign <project-id> [--name <name>] [--home <area>]] | review reject (--id <id> ... | --project <id> --week <YYYY-Www> [--kind fact|decision|project|pin])";
 
 function text(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -166,6 +166,7 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
         "unmap",
         "backfill",
         "profile",
+        "glossary",
         "review",
       ].includes(action)
     )
@@ -277,6 +278,47 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
               ...(pinned ? { pinned } : {}),
             }),
           );
+          return;
+        }
+        throw new Error(usage);
+      }
+      if (action === "glossary") {
+        const which = rest[0];
+        const glossaryArgs = rest.slice(1);
+        if (which === "show" || which === "unset") {
+          const values = flags(glossaryArgs, {
+            id: { type: "string" },
+            ...(which === "unset" ? { term: { type: "string" } } : {}),
+          });
+          const id = text(values.id);
+          if (!id) throw new Error(usage);
+          if (which === "unset") {
+            const term = text(values.term);
+            if (!term) throw new Error(usage);
+            store.unsetGlossaryTerm(id, term);
+          }
+          emit({ projectId: id, terms: store.projectGlossary(id) });
+          return;
+        }
+        if (which === "set") {
+          const values = flags(glossaryArgs, {
+            id: { type: "string" },
+            term: { type: "string" },
+            synonyms: { type: "string" },
+          });
+          const id = text(values.id);
+          const term = text(values.term);
+          const synonyms = text(values.synonyms);
+          if (!id || !term || !synonyms) throw new Error(usage);
+          const entry = store.setGlossaryTerm({
+            projectId: id,
+            term,
+            synonyms: synonyms
+              .split(",")
+              .map((part) => part.trim())
+              .filter(Boolean),
+          });
+          emit({ projectId: id, ...entry, terms: store.projectGlossary(id) });
           return;
         }
         throw new Error(usage);

@@ -57,6 +57,12 @@ _Avoid_: area, permission, repository (as a universal synonym), the removed `pro
 rules and pinned decisions in force. A task pack loads it for that project.
 _Avoid_: area policy, inferred biography, raw archive.
 
+**Project glossary**: Owner-written bilingual synonyms for one project, stored
+beside the profile. Search expands them into full-text lookup at a lower weight
+than the words the caller typed. A small built-in RU→EN developer list fills gaps
+the project does not override.
+_Avoid_: the profile document, an embedding, permission to read another area.
+
 **Journal**: A replaceable weekly summary of one project's distilled items. It
 names the project and the week, groups decisions before facts, and cites those
 items. It is not a decision, and it is not the deletion journal that holds tombstones.
@@ -100,7 +106,8 @@ the understanding layer.
 _Avoid_: client, embedding model, mandatory cloud provider.
 
 **Embedding**: A derived representation of content used to find semantically
-related material.
+related material. Each vector stores the model id that produced it, and search
+does not compare vectors from two ids.
 _Avoid_: fact, source, understanding layer.
 
 **Eval set**: Questions with expected grounded outcomes used to measure Context's

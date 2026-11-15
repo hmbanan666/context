@@ -23,6 +23,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
       - run: pnpm run eval:retrieval
+      - run: pnpm run eval:projects
       - name: Validate base and Traefik Compose configurations (no daemon)
         run: node dist/test/validate-compose.js
       - run: docker build -t context:ci .

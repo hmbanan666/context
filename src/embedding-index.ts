@@ -98,6 +98,19 @@ export class EmbeddingIndex {
     return work;
   }
 
+  otherModels(scope?: string): string[] {
+    return (
+      this.#db
+        .prepare(
+          `SELECT DISTINCT model FROM embedding_chunks WHERE model <> ?${scope === undefined ? "" : " AND scope = ?"} ORDER BY model`,
+        )
+        .all(
+          this.#embedder.version,
+          ...(scope === undefined ? [] : [scope]),
+        ) as { model: string }[]
+    ).map((row) => String(row.model));
+  }
+
   status(scope?: string) {
     const where = scope === undefined ? "" : " WHERE scope=?";
     const params = scope === undefined ? [] : [scope];
@@ -119,8 +132,44 @@ export class EmbeddingIndex {
       ...counts,
       chunks,
       model: this.#embedder.version,
+      otherModels: this.otherModels(scope),
       maximumChunks: MAX_CHUNKS,
     };
+  }
+
+  // Resumable. Completed rows that already have this model id are left in
+  // place. A failed row is retried immediately, up to the existing three
+  // attempts. Safe to call again.
+  async reindexEmbeddings(
+    batch: number,
+    onProgress: (status: ReturnType<EmbeddingIndex["status"]>) => void,
+  ) {
+    if (!Number.isInteger(batch) || batch < 1 || batch > 64)
+      throw new Error("Invalid reindex batch");
+    this.backfill();
+    onProgress(this.status());
+    let finished = 0;
+    let releases = 0;
+    for (;;) {
+      const did = await this.processOne();
+      if (did) {
+        finished++;
+        if (finished % batch === 0) onProgress(this.status());
+        continue;
+      }
+      if (releases >= 3) break;
+      const released = this.#db
+        .prepare(
+          `UPDATE embedding_jobs SET status = 'queued', next_at = 0
+           WHERE status = 'failed' AND attempts < 3`,
+        )
+        .run().changes;
+      if (!released) break;
+      releases++;
+    }
+    const status = this.status();
+    onProgress(status);
+    return status;
   }
 
   backfill() {
@@ -298,7 +347,9 @@ export class EmbeddingIndex {
     if (status.queued || status.running)
       empty.reasons.push("embeddings_pending");
     if (status.failed) empty.reasons.push("embeddings_unavailable");
-    // Do not load the model when this authorized area has no vectors yet.
+    // Vectors from another model id are visible but never scored.
+    if (status.otherModels.length) empty.reasons.push("embeddings_mixed");
+    // Do not load the model when this authorized area has no current vectors.
     if (!this.hasVectors(input.scope)) return empty;
     let timeout: NodeJS.Timeout | undefined;
     try {
@@ -333,6 +384,7 @@ export class EmbeddingIndex {
     input: SemanticSelection,
     query: Float32Array,
   ) {
+    // c.model is the stored embedder id. A different id never enters the cosine.
     const conditions = [
       "c.scope=?",
       "c.kind=?",

@@ -185,10 +185,12 @@ export function buildContextPackage(
   const request = contextPackageSchema.parse(input);
   const terms =
     request.mode === "timeline" ? [] : questionTerms(request.question);
+  const expansion = terms.length ? sources.expandedTerms(terms, projectId) : [];
   const selection = {
     scope: request.scope,
     terms,
     limit: 101,
+    ...(expansion.length ? { expansion } : {}),
     ...(request.from ? { from: request.from } : {}),
     ...(request.until ? { until: request.until } : {}),
     ...(projectId ? { projectId } : {}),

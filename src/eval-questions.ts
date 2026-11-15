@@ -13,6 +13,7 @@ const areas = z
 const matcher = z.union([
   z.strictObject({ source_external_id: z.string().min(1).max(2048) }),
   z.strictObject({ source_id: z.string().min(1).max(128) }),
+  z.strictObject({ item_id: z.string().min(1).max(128) }),
   z.strictObject({ substring: z.string().min(1).max(2048) }),
 ]);
 export const evalQuestionSchema = z

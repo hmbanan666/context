@@ -642,6 +642,7 @@ export class KnowledgeStore {
           input.terms,
           input.limit,
           input.vectors,
+          input.expansion,
         );
       const materialize = (
         ids: readonly string[],
@@ -769,6 +770,7 @@ export class KnowledgeStore {
       input.terms,
       input.limit,
       input.vectors,
+      input.expansion,
     );
   }
 

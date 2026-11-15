@@ -237,6 +237,46 @@ refresh/revocation, real-client inactivity, hosted performance or private qualit
 Those remain separate acceptance checks. Concurrent capture changes the live
 corpus, so record corpus changes when interpreting history deltas.
 
+## Project eval
+
+ADR 0014 adds a second run that scores one file of project questions and prints
+per-project recall@k and pack-hit rate. It opens the database read-only, attaches
+the local model only when current vectors exist, and appends a content-free line
+to `projects-history.jsonl` in the eval directory. It is not part of the nightly
+backup schedule.
+
+```sh
+context eval projects
+context eval projects --questions /app/data/evals/projects.yaml --k 10 --json
+```
+
+The default path is `evals/projects.yaml` beside the database (`/app/data/evals/projects.yaml`
+in the container). `--questions` selects another file, which is how a private
+prod set is run. `--k` is 1–20 and defaults to 10. `--json` prints the report
+only. Question text, matchers and excerpts are not stored.
+
+Recall@k for a question is the fraction of its expected matchers found in the
+top k (or in the pack, still capped at k cards). Pack-hit rate is the fraction
+of `mode: pack` questions that found every matcher, respected `outranks` and
+forbidden substrings, and had no isolation violation. Both are macro-averaged
+per project and overall. A question needs a `project`. `item_id` matches a
+returned knowledge item id. `source_id`, `source_external_id` and `substring`
+keep their existing meanings. Placeholders are skipped.
+
+Public CI runs [`projects.yaml`](../fixtures/evals/projects.yaml): 12 Russian
+questions for fictional project `context` and 12 for fictional project `expi`,
+including `context_nightly_distill` ("улучшить ночную дистилляцию"). The corpus
+is synthetic. Real expi or context notes do not belong in that file. On that
+fixture, with no vectors, recall@10 and pack-hit rate are both 1.
+
+```sh
+pnpm run eval:projects
+```
+
+Exit 0 when the run finishes, including retrieval misses. Exit 1 when the file,
+database or a retrieval attempt fails. Exit 2 when any isolation violation is
+counted.
+
 ## Project memory cases
 
 ADRs 0010–0013 accept the public questions below.

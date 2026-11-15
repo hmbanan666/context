@@ -79,13 +79,18 @@ function version() {
     git_sha: sha && /^[a-f0-9]{40,64}$/.test(sha) ? sha : null,
   };
 }
+export function evalHitMatches(
+  expected: EvalQuestion["expected"][number],
+  hit: EvalHit,
+): boolean {
+  if ("item_id" in expected) return hit.id === expected.item_id;
+  if ("source_id" in expected) return hit.id === expected.source_id;
+  if ("source_external_id" in expected)
+    return hit.externalIds.includes(expected.source_external_id);
+  return hit.excerpts.some((excerpt) => excerpt.includes(expected.substring));
+}
 export function scoreEval(question: EvalQuestion, hits: EvalHit[]) {
-  const matches = (expected: EvalQuestion["expected"][number], hit: EvalHit) =>
-    "source_id" in expected
-      ? hit.id === expected.source_id
-      : "source_external_id" in expected
-        ? hit.externalIds.includes(expected.source_external_id)
-        : hit.excerpts.some((excerpt) => excerpt.includes(expected.substring));
+  const matches = evalHitMatches;
   const ranks = question.expected.map(
     (expected) => hits.findIndex((hit) => matches(expected, hit)) + 1,
   );
@@ -190,14 +195,8 @@ export async function evaluate(
         if (retrieved.failed) run.outcome = "failed";
         const packComplete =
           q.mode !== "pack" ||
-          q.expected.every(
-            (expected) =>
-              !("substring" in expected) ||
-              retrieved.hits.some((hit) =>
-                hit.excerpts.some((excerpt) =>
-                  excerpt.includes(expected.substring),
-                ),
-              ),
+          q.expected.every((expected) =>
+            retrieved.hits.some((hit) => evalHitMatches(expected, hit)),
           );
         result.pass =
           !retrieved.failed &&
