@@ -215,9 +215,20 @@ test("embedding warmup starts after listen and logs ready on stderr", async () =
       await fetch(`http://127.0.0.1:${service.address.port}/health`)
     ).json()) as { embeddings?: string };
     assert.equal(health.embeddings, "warming");
-    assert.equal(calls.includes("query:warmup"), true);
+    assert.equal(
+      calls.some((call) => call.startsWith("query:")),
+      true,
+    );
     release?.();
     await service.close();
+    assert.equal(
+      calls.some((call) => call.includes("memory")),
+      true,
+    );
+    assert.equal(
+      calls.some((call) => call.includes("память")),
+      true,
+    );
     assert.ok(
       lines.some((line) => line.includes('"event":"embeddings_ready"')),
     );

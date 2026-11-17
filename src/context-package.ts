@@ -23,7 +23,12 @@ import type {
 } from "./knowledge.js";
 import type { Material } from "./materials.js";
 import { contextPackageSchema, questionTerms } from "./package-query.js";
-import { idsWithinCardFloor, readCardFloor } from "./search-when-none.js";
+import { conceptCoverage } from "./search-lexical.js";
+import {
+  cardFloorTerms,
+  idsWithinCardFloor,
+  readCardFloor,
+} from "./search-when-none.js";
 import { visibleSourceText } from "./source-text.js";
 import type { SourceStore } from "./store.js";
 
@@ -586,14 +591,42 @@ export function buildContextPackage(
   // real hit from a neighbour that shares one word. Drop source cards far
   // below the best match. Larger corpora keep every hit.
   const cardFloor = readCardFloor(process.env);
+  const floorHits = new Map<string, { concepts: number }>();
+  if (explained && frequency) {
+    const distinctive = cardFloorTerms(
+      terms,
+      frequency.counts,
+      explained.documents,
+    );
+    for (const material of original.materials) {
+      const text = visibleSourceText(material.source.text);
+      const heading = groundingHeading(
+        material.doc?.title ?? material.metadata.title,
+        text,
+      );
+      floorHits.set(material.source.id, {
+        concepts: conceptCoverage(
+          heading ? `${heading}\n${text}` : text,
+          distinctive,
+        ).concepts,
+      });
+    }
+  }
+  // No distinctive term means every hit is tied on words. Rank and document
+  // status must not then drop a card: an accepted ADR is scored one point
+  // higher, and a superseded one is halved.
+  const distinctiveHit = [...floorHits.values()].some(
+    (hit) => hit.concepts > 0,
+  );
   const sourceKeep =
     explained &&
     explained.documents < explained.thresholds.marginMinCorpus &&
-    cardFloor > 0
+    cardFloor > 0 &&
+    distinctiveHit
       ? idsWithinCardFloor(
           original.materials.map((material) => material.source.id),
           original.scores,
-          original.termHits,
+          floorHits,
           cardFloor,
         )
       : undefined;

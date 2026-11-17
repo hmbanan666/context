@@ -1,3 +1,4 @@
+import { isShareStop } from "./grounding.js";
 import { itemsHint } from "./llm.js";
 
 /** What to do with cards when grounding is none. */
@@ -33,8 +34,25 @@ export function readCardFloor(env: NodeJS.ProcessEnv): number {
 }
 
 /**
- * Match score is the hybrid rank score plus the number of query terms found
- * in the card. Rank alone does not drop a one-word neighbour on a handful of
+ * Content terms the card floor may count. Function words are out, the same
+ * list grounding uses. On a handful of notes a word in half or more of them
+ * (бот, сайт) is not rare either: it would otherwise keep every neighbour.
+ */
+export function cardFloorTerms(
+  terms: readonly string[],
+  documentFrequency: ReadonlyMap<string, number>,
+  documents: number,
+): string[] {
+  return terms.filter((term) => {
+    if (isShareStop(term)) return false;
+    const seen = documentFrequency.get(term) ?? 0;
+    return !(documents >= 2 && seen * 2 >= documents);
+  });
+}
+
+/**
+ * Match score is the hybrid rank score plus how many floor terms the card
+ * contains. Rank alone does not drop a one-word neighbour on a handful of
  * notes. The best card stays even if every score falls through the floor.
  */
 export function idsWithinCardFloor(
