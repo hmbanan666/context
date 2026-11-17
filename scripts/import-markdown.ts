@@ -8,18 +8,20 @@ import {
 import { SourceStore } from "../src/store.js";
 
 const usage =
-  "Usage: context import markdown <dir> [--area <area>] [--project <id>]";
+  "Usage: context import markdown <dir> [--area <area>] [--project <id>] [--prune]";
 
 export async function runMarkdownImport(args: string[]): Promise<void> {
   let directory: string | undefined;
   let area: string | undefined;
   let project: string | undefined;
+  let prune = false;
   try {
     const parsed = parseArgs({
       args,
       options: {
         area: { type: "string" },
         project: { type: "string" },
+        prune: { type: "boolean" },
       },
       allowPositionals: true,
       strict: true,
@@ -28,6 +30,7 @@ export async function runMarkdownImport(args: string[]): Promise<void> {
     directory = parsed.positionals[0];
     area = parsed.values.area;
     project = parsed.values.project;
+    prune = parsed.values.prune === true;
   } catch {
     throw new Error(usage);
   }
@@ -48,6 +51,7 @@ export async function runMarkdownImport(args: string[]): Promise<void> {
         areas,
         ...(area === undefined ? {} : { area }),
         ...(project === undefined ? {} : { project }),
+        ...(prune ? { prune: true } : {}),
       },
       async (result: MarkdownImportResult) => {
         if (!process.stdout.write(`${JSON.stringify(result)}\n`))

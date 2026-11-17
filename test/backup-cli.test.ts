@@ -137,7 +137,7 @@ test(
           );
           assert.deepEqual(
             await (await fetch(`http://127.0.0.1:${port}/health`)).json(),
-            { status: "ok" },
+            { status: "ok", processor: "off" },
           );
           assert.equal(
             (await fetch(`http://127.0.0.1:${port}/backups`)).status,
@@ -219,7 +219,7 @@ test(
       assert.equal(event.event, "listening");
       assert.deepEqual(
         await (await fetch(`http://127.0.0.1:${event.port}/health`)).json(),
-        { status: "ok" },
+        { status: "ok", processor: "off" },
       );
       const events = errors
         .trim()
@@ -236,6 +236,11 @@ test(
         ],
       );
       for (const event of events.filter((event) => event.event !== "backup")) {
+        if (event.event === "processor") {
+          assert.equal(event.processor, "off");
+          assert.match(event.detail, /supported mode/);
+          continue;
+        }
         assert.deepEqual(event, {
           event: "embeddings_unavailable",
           fallback: "lexical_and_stemmed",

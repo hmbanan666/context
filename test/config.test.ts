@@ -15,6 +15,7 @@ test("defaults to a persistent local database and validates configuration", () =
     port: 3000,
     databasePath: "./data/context.db",
     grounding: defaultGroundingThresholds,
+    processor: "off",
   });
   assert.equal(readConfig({ NODE_ENV: "test", CONTEXT_PORT: "0" }).port, 0);
   for (const NODE_ENV of ["production", "staging", "preview"])

@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
@@ -34,12 +34,14 @@ export interface MarkdownImportOptions {
   readonly areas: readonly string[];
   readonly area?: string;
   readonly project?: string;
+  /** Retire markdown sources from this area, project, and directory that are gone. */
+  readonly prune?: boolean;
 }
 
 export interface MarkdownImportItem {
   readonly type: "item";
   readonly path: string;
-  readonly status: "added" | "updated" | "skipped" | "rejected";
+  readonly status: "added" | "updated" | "skipped" | "rejected" | "removed";
   readonly source_id?: string;
   readonly reason?: string;
 }
@@ -50,6 +52,7 @@ export interface MarkdownImportSummary {
   updated: number;
   skipped: number;
   rejected: number;
+  removed: number;
 }
 
 export type MarkdownImportResult = MarkdownImportItem | MarkdownImportSummary;
@@ -89,6 +92,12 @@ export function splitMarkdownBody(
   }
   if (rest.trim()) parts.push(rest);
   return parts;
+}
+
+/** Chunk ids are `path#2`. A file whose name is that string stays the full id. */
+export function markdownImportPath(externalId: string): string {
+  const match = /^(.+\.md)#([2-9]|[1-9]\d+)$/u.exec(externalId);
+  return match?.[1] ?? externalId;
 }
 
 function fileKey(root: string, file: string): string {
@@ -269,6 +278,7 @@ export async function importMarkdown(
 ): Promise<MarkdownImportSummary> {
   const rootInfo = await stat(directory);
   if (!rootInfo.isDirectory()) throw new Error("Not a directory");
+  const root = await realpath(directory);
   const area = resolveArea(options);
   if (!area) throw new Error("Area is required");
   if (options.project !== undefined) {
@@ -282,12 +292,22 @@ export async function importMarkdown(
     updated: 0,
     skipped: 0,
     rejected: 0,
+    removed: 0,
   };
   const reject = async (path: string, reason: string) => {
     summary.rejected += 1;
     await emit({ type: "item", path, status: "rejected", reason });
   };
-  for (const file of await markdownFiles(directory)) {
+  const files = await markdownFiles(directory);
+  const present = new Set<string>();
+  for (const file of files) {
+    try {
+      present.add(fileKey(directory, file));
+    } catch {
+      // The import loop reports the invalid path.
+    }
+  }
+  for (const file of files) {
     let key: string;
     try {
       key = fileKey(directory, file);
@@ -416,6 +436,8 @@ export async function importMarkdown(
                 }
               : undefined,
           );
+          store.noteMarkdownRoot(saved.source.id, root);
+          store.restoreSource(saved.source.id);
           const status = saved.duplicate
             ? "skipped"
             : saved.changed
@@ -440,6 +462,24 @@ export async function importMarkdown(
           ? error.message
           : "invalid_front_matter";
       await reject(key, reason);
+    }
+  }
+  if (options.prune) {
+    for (const candidate of store.markdownPruneCandidates(
+      area,
+      options.project,
+      root,
+    )) {
+      const path = markdownImportPath(candidate.externalId);
+      if (present.has(candidate.externalId) || present.has(path)) continue;
+      if (!store.retireSource(candidate.id, "import_prune")) continue;
+      summary.removed += 1;
+      await emit({
+        type: "item",
+        path: candidate.externalId,
+        status: "removed",
+        source_id: candidate.id,
+      });
     }
   }
   await emit(summary);

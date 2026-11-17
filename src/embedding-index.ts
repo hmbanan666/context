@@ -4,6 +4,7 @@ import { setImmediate as yieldEventLoop } from "node:timers/promises";
 import { type Embedder, textChunks } from "./embedding-model.js";
 import { knowledgeWindowSql } from "./journal.js";
 import { linkedProjectSql } from "./projects.js";
+import { retirementFilter } from "./retirement.js";
 import { latestReviewStatusSql } from "./review-status.js";
 import {
   ensureVisibleSourceIndex,
@@ -419,6 +420,7 @@ export class EmbeddingIndex {
       this.#embedder.version,
     ];
     if (table === "sources") {
+      conditions.push(retirementFilter(this.#db, "r.id"));
       for (const [bound, op] of [
         [input.from, ">="],
         [input.until, "<"],

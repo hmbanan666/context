@@ -15,7 +15,7 @@ import { syntheticSource } from "../fixtures/synthetic-source.js";
 import { SourceStore } from "../src/store.js";
 
 function childEnvironment(databasePath: string): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_ENV: "test",
     CONTEXT_DB_PATH: databasePath,
@@ -24,6 +24,11 @@ function childEnvironment(databasePath: string): NodeJS.ProcessEnv {
     CONTEXT_LOCAL_MCP: "enabled",
     CONTEXT_AREAS: "local-foundation",
   };
+  delete env.CONTEXT_PROCESSOR;
+  delete env.CONTEXT_LLM_API_KEY;
+  delete env.CONTEXT_LLM_MODEL;
+  delete env.CONTEXT_LLM_BASE_URL;
+  return env;
 }
 
 function run(entry: URL, env: NodeJS.ProcessEnv): ChildProcess {
@@ -108,7 +113,10 @@ test(
           const port = await waitForPort(child);
           const health = await fetch(`http://127.0.0.1:${port}/health`);
           assert.equal(health.status, 200);
-          assert.deepEqual(await health.json(), { status: "ok" });
+          assert.deepEqual(await health.json(), {
+            status: "ok",
+            processor: "off",
+          });
           const client = new Client({
             name: "context-process-smoke",
             version: "1.0.0",
