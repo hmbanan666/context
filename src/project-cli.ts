@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { ZodError } from "zod";
 import { scopeSchema } from "./contracts.js";
 import { KnowledgeStore } from "./knowledge.js";
-import { normalizeRepositoryName } from "./projects.js";
+import { normalizeRepositoryName, projectIdSchema } from "./projects.js";
 import type { ReviewKind } from "./review.js";
 import { SourceStore } from "./store.js";
 
@@ -47,6 +47,26 @@ function databasePath(env: NodeJS.ProcessEnv): string {
 function emit(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
+function rejectProjectId(store: SourceStore, id: string): void {
+  if (projectIdSchema.safeParse(id).success) return;
+  const existing = store.listProjects().projects.map((project) => project.id);
+  const slug = id
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 64);
+  const suggestion =
+    id.includes(".") && projectIdSchema.safeParse(slug).success
+      ? ` Use a slug such as "${slug}".`
+      : "";
+  const listed = existing.length ? existing.join(", ") : "(none)";
+  throw new Error(
+    `A project id is 1–64 characters: a lowercase letter or digit, then lowercase letters, digits, colon, underscore or hyphen. Dots are not allowed.${suggestion} Existing project ids: ${listed}.`,
+  );
+}
+const projectIdRules =
+  "A project id is 1–64 characters: a lowercase letter or digit, then lowercase letters, digits, colon, underscore or hyphen. Dots are not allowed.";
 function reviewKind(value: string | undefined): ReviewKind | undefined {
   if (value === undefined) return undefined;
   if (
@@ -188,6 +208,7 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
         const home = text(values.home);
         if (!id || !name || !home) throw new Error(usage);
         if (!configured.includes(home)) throw new Error("Unknown area");
+        rejectProjectId(store, id);
         emit(store.createProject({ id, name, homeArea: home }));
         return;
       }
@@ -327,12 +348,26 @@ export function projectCommand(args: string[], env: NodeJS.ProcessEnv): void {
     };
     const store = new SourceStore(databasePath(env));
     try {
-      run(store);
+      try {
+        run(store);
+      } catch (error) {
+        if (error instanceof ZodError) {
+          const existing = store
+            .listProjects()
+            .projects.map((project) => project.id);
+          const listed = existing.length ? existing.join(", ") : "(none)";
+          throw new Error(
+            `Invalid project arguments. ${projectIdRules} Existing project ids: ${listed}.`,
+          );
+        }
+        throw error;
+      }
     } finally {
       store.close();
     }
   } catch (error) {
-    if (error instanceof ZodError) throw new Error("Invalid project arguments");
+    if (error instanceof ZodError)
+      throw new Error(`Invalid project arguments. ${projectIdRules}`);
     throw error;
   }
 }

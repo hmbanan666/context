@@ -58,7 +58,10 @@ field keeps its area rights.
 
 The token prints once. Store it privately in your client's MCP bearer-token
 configuration. Tokens expire after 90 days by default (`--expires 30d` overrides).
-`context token list|revoke` and `context client list|revoke` manage access.
+`context token list` shows each token's name, `used`, and `lastUsed`.
+`context token revoke <id>` and `context token revoke --name <name>` revoke
+access. `context client list|revoke` manages OAuth clients. `context remember`
+stores a note from the owner shell. `context status` prints counts.
 Revocation takes effect on the next request.
 
 Try: **“Remember this note”**, then open a fresh conversation and ask about it.

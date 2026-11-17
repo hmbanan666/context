@@ -30,6 +30,15 @@ export function processorState(env: NodeJS.ProcessEnv): ProcessorKind {
   return processor;
 }
 
+/** Shown on search when the processor is off and no distilled items were returned. */
+export function itemsHint(
+  itemCount: number,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (itemCount > 0 || processorState(env) !== "off") return undefined;
+  return "Items are empty because the processor is off.";
+}
+
 /** One startup line when distillation is off. Not a failure. */
 export function processorOffLog(): string {
   return JSON.stringify({

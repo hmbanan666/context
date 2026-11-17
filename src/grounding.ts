@@ -22,6 +22,9 @@ import { stemText } from "./search-lexical.js";
 // weak floor, even if some rare term matched. Otherwise a rare-term passage
 // is weak or strong as before. With no vectors, the lexical bar is stricter
 // and the margin is not used. The same share floor is none on that path too.
+// A scoped corpus smaller than marginMinCorpus (default 6) skips the margin
+// and uses that lexical path: the centroid is too close to the passage itself
+// for the margin to mean anything, so an exact match can be strong.
 // A passage that matches only common terms is not lexical evidence. The
 // margin still applies when no passage contains a query term.
 //
@@ -70,6 +73,11 @@ export interface GroundingThresholds {
   readonly commonMinDf: number;
   /** Minimum share of the corpus before a term can be common. */
   readonly commonRate: number;
+  /**
+   * Use the centroid margin only when the scoped corpus has at least this
+   * many records. Below it, lexical-only rules apply.
+   */
+  readonly marginMinCorpus: number;
 }
 
 export const defaultGroundingThresholds: GroundingThresholds = {
@@ -88,6 +96,10 @@ export const defaultGroundingThresholds: GroundingThresholds = {
   commonCorpus: 40,
   commonMinDf: 8,
   commonRate: 0.05,
+  // Public margin tests use 7 passages and must keep the margin path.
+  // Three similar notes make the centroid almost the passage, so the margin
+  // stays near 0 and an exact hit cannot reach strong.
+  marginMinCorpus: 6,
 };
 
 export interface GroundingVector {
@@ -168,6 +180,11 @@ export function readGroundingThresholds(
     defaultGroundingThresholds.commonRate,
     "CONTEXT_GROUNDING_COMMON_RATE",
   );
+  const marginMinCorpus = readCount(
+    env.CONTEXT_GROUNDING_MARGIN_MIN_CORPUS,
+    defaultGroundingThresholds.marginMinCorpus,
+    "CONTEXT_GROUNDING_MARGIN_MIN_CORPUS",
+  );
   if (lexicalOnlyStrong < lexicalStrong)
     throw new Error("Invalid CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG");
   if (marginStrong < marginWeak)
@@ -182,6 +199,7 @@ export function readGroundingThresholds(
     commonCorpus,
     commonMinDf,
     commonRate,
+    marginMinCorpus,
   };
 }
 
@@ -543,21 +561,24 @@ export function explainStoredGrounding(input: {
   readonly thresholds?: GroundingThresholds;
 }): GroundingReport {
   const thresholds = input.thresholds ?? readGroundingThresholds(process.env);
+  const documents = Math.max(0, input.documents);
   const scored = scorePassages(
     input.passages,
     input.terms,
     input.documentFrequency,
-    input.documents,
+    documents,
     thresholds,
     identityStems(input.protectedTerms ?? []),
   );
   const cosine = Math.max(scored.bestCosine, input.unmatchedCosine ?? 0);
-  const background = input.vectorsAvailable
-    ? unitCosine(input.backgroundCosine)
-    : 0;
+  // Few passages: the centroid is nearly the passage, so the margin cannot
+  // separate an exact hit from the background. Use the lexical rules.
+  const applyMargin =
+    input.vectorsAvailable && documents >= thresholds.marginMinCorpus;
+  const background = applyMargin ? unitCosine(input.backgroundCosine) : 0;
   const evidenceCosine = scored.anyRare ? scored.best.cosine : cosine;
-  const margin = input.vectorsAvailable ? evidenceCosine - background : 0;
-  const decided = input.vectorsAvailable
+  const margin = applyMargin ? evidenceCosine - background : 0;
+  const decided = applyMargin
     ? labelWithVectors(scored, margin, thresholds)
     : labelLexical(scored, thresholds);
   return {
@@ -568,12 +589,12 @@ export function explainStoredGrounding(input: {
     rareShare: scored.best.uncommon,
     matchedRare: scored.matchedRare,
     commonDropped: scored.commonDropped,
-    documents: Math.max(0, input.documents),
+    documents,
     documentFrequency: scored.terms,
     thresholds,
     vectorsAvailable: input.vectorsAvailable,
     rule: decided.rule,
-    cosineSource: input.vectorsAvailable
+    cosineSource: applyMargin
       ? evidenceSource(
           scored.anyRare,
           scored.best,

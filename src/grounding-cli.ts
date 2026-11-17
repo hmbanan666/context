@@ -152,7 +152,7 @@ export function formatExplain(row: ExplainRow): string {
     `commonDropped: ${formatList(row.commonDropped)}`,
     `corpus: ${row.corpus}`,
     `documentFrequency: ${frequency || "-"}`,
-    `thresholds: lexicalStrong=${formatNumber(thresholds.lexicalStrong)} lexicalNone=${formatNumber(thresholds.lexicalNone)} lexicalOnlyStrong=${formatNumber(thresholds.lexicalOnlyStrong)} marginWeak=${formatNumber(thresholds.marginWeak)} marginStrong=${formatNumber(thresholds.marginStrong)} commonCorpus=${thresholds.commonCorpus} commonMinDf=${thresholds.commonMinDf} commonRate=${formatNumber(thresholds.commonRate)}`,
+    `thresholds: lexicalStrong=${formatNumber(thresholds.lexicalStrong)} lexicalNone=${formatNumber(thresholds.lexicalNone)} lexicalOnlyStrong=${formatNumber(thresholds.lexicalOnlyStrong)} marginWeak=${formatNumber(thresholds.marginWeak)} marginStrong=${formatNumber(thresholds.marginStrong)} marginMinCorpus=${thresholds.marginMinCorpus} commonCorpus=${thresholds.commonCorpus} commonMinDf=${thresholds.commonMinDf} commonRate=${formatNumber(thresholds.commonRate)}`,
     `vectors: ${row.vectors}`,
     `topHit: ${row.topHit ? `${row.topHit.id}${row.topHit.title ? ` ${row.topHit.title}` : ""}` : "-"}`,
   ];

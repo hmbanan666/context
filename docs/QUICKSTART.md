@@ -46,7 +46,9 @@ To create the first project and bind the token to it:
 docker compose exec context context init --project notes --name "Notes"
 ```
 
-The project id is lowercase letters, digits, and `:_-`. Its home area is the
+The project id is lowercase letters, digits, and `:_-`. A dot is rejected.
+`context project create` names the allowed characters, suggests a slug, and
+lists the ids that already exist. Its home area is the
 first configured area (`personal` unless you changed `CONTEXT_AREAS`).
 
 Stdout is one JSON object:

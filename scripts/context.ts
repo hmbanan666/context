@@ -12,8 +12,35 @@ import { searchCommand } from "../src/search-cli.js";
 import { SourceStore } from "../src/store.js";
 import { tidyCommand } from "../src/tidy-cli.js";
 import { docCommand } from "../src/doc-cli.js";
+import { rememberCommand } from "../src/remember-cli.js";
+import { statusCommand } from "../src/status-cli.js";
 import { runImport } from "./import-jsonl.js";
 import { runMarkdownImport } from "./import-markdown.js";
+
+const usage = `Usage: context <command>
+
+  init [--project <id> --name <name>]
+  owner init
+  client list
+  client revoke <id>
+  token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d]
+  token list
+  token revoke <id>
+  token revoke --name <name>
+  remember [--area <area>] [--project <id>] [--kind note] [--idempotency-key <key>] [text]
+  import jsonl --source <name> [--area <a>] [--file <path>]
+  import markdown <dir> [--area <a>] [--project <id>] [--prune] [--prune-legacy] [--force]
+  doc remove <doc:project:type:key or source id>
+  doc restore <doc:project:type:key or source id>
+  source restore <source id>
+  project create|rename|list|map|unmap|backfill|profile|glossary|review
+  reindex --embeddings [--batch N]
+  search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>]
+  grounding explain (--query <text> | --file <questions.yaml>) [--area <a>] [--project <id>] [--json]
+  status
+  index rebuild
+  tidy [--dry-run] [--json]
+  eval`;
 
 async function passwordInput() {
   if (!process.stdin.isTTY) {
@@ -62,32 +89,50 @@ async function passwordInput() {
   }
 }
 async function main() {
-  if (process.argv[2] === "tidy") {
+  const command = process.argv[2];
+  if (
+    command === undefined ||
+    command === "--help" ||
+    command === "-h" ||
+    command === "help"
+  ) {
+    process.stdout.write(`${usage}\n`);
+    return;
+  }
+  if (command === "tidy") {
     await tidyCommand(process.argv.slice(3), process.env);
     return;
   }
-  if (process.argv[2] === "eval") {
+  if (command === "eval") {
     await evalCommand(process.argv.slice(3), process.env);
     return;
   }
-  if (process.argv[2] === "project") {
+  if (command === "project") {
     projectCommand(process.argv.slice(3), process.env);
     return;
   }
-  if (process.argv[2] === "search") {
+  if (command === "search") {
     searchCommand(process.argv.slice(3), process.env);
     return;
   }
-  if (process.argv[2] === "grounding") {
+  if (command === "grounding") {
     await groundingCommand(process.argv.slice(3), process.env);
     return;
   }
-  if (process.argv[2] === "reindex") {
+  if (command === "reindex") {
     await runReindexCommand(process.argv.slice(3), process.env);
     return;
   }
-  if (process.argv[2] === "init") {
+  if (command === "init") {
     await initCommand(process.argv.slice(3), process.env);
+    return;
+  }
+  if (command === "remember") {
+    await rememberCommand(process.argv.slice(3), process.env);
+    return;
+  }
+  if (command === "status") {
+    statusCommand(process.env);
     return;
   }
   const [kind, action, name, ...args] = process.argv.slice(2);
@@ -99,9 +144,9 @@ async function main() {
     await runMarkdownImport(process.argv.slice(4));
     return;
   }
-  if (kind === "doc") {
+  if (kind === "doc" || (kind === "source" && action === "restore")) {
     docCommand(
-      [action, name, ...args].filter(
+      [kind === "source" ? "restore" : action, name, ...args].filter(
         (part): part is string => part !== undefined,
       ),
       process.env,
@@ -113,6 +158,8 @@ async function main() {
     await runIndexCommand(action, process.env);
     return;
   }
+  if (kind !== "owner" && kind !== "client" && kind !== "token")
+    throw new Error(usage);
   const config = readConfig(process.env);
   if (!config.oauth) throw new Error("CLI requires CONTEXT_PUBLIC_URL");
   const store = new AuthStore(config.databasePath, config.oauth.areas);
@@ -136,6 +183,17 @@ async function main() {
     }
     if (kind === "token" && action === "list" && !name) {
       process.stdout.write(`${JSON.stringify(store.listTokens(), null, 2)}\n`);
+      return;
+    }
+    if (
+      kind === "token" &&
+      action === "revoke" &&
+      name === "--name" &&
+      args.length === 1 &&
+      args[0]
+    ) {
+      store.revokeTokensByName(args[0]);
+      process.stdout.write("Revoked.\n");
       return;
     }
     if (
@@ -210,39 +268,27 @@ async function main() {
       process.stdout.write(`${result.token}\n`);
       return;
     }
-    throw new Error(
-      "Usage: context init [--project <id> --name <name>] | owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d] | token list|revoke <id> | import jsonl --source <name> [--area <a>] [--file <path>] | import markdown <dir> [--area <a>] [--project <id>] [--prune] | doc remove <doc:project:type:key or source id> | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>] | grounding explain (--query <text> | --file <questions.yaml>) [--area <a>] [--project <id>] [--json]",
-    );
+    throw new Error(usage);
   } finally {
     store.close();
   }
 }
 // Do not serialize raw errors: they may contain credentials or request data.
 void main().catch((error: unknown) => {
-  if (
-    process.argv[2] === "project" ||
-    process.argv[2] === "search" ||
-    process.argv[2] === "grounding" ||
-    process.argv[2] === "reindex" ||
-    process.argv[2] === "eval" ||
-    process.argv[2] === "init" ||
-    process.argv[2] === "doc"
-  ) {
-    process.stderr.write(
-      `${error instanceof Error ? error.message : "Command failed"}\n`,
-    );
-    process.exitCode = 1;
-    return;
-  }
+  const message = error instanceof Error ? error.message : "Command failed";
   if (process.argv[2] === "import") {
+    const safe =
+      /^(Usage:|Refusing to prune|Folder not found|Not a directory|Unknown area|Unknown project|Area is required|Persistent database required|Invalid configured areas)/.test(
+        message,
+      );
     process.stderr.write(
-      '{"type":"error","reason":"import_failed_check_arguments_configuration_or_io"}\n',
+      safe
+        ? `${message}\n`
+        : '{"type":"error","reason":"import_failed_check_arguments_configuration_or_io"}\n',
     );
     process.exitCode = 1;
     return;
   }
-  process.stderr.write(
-    "Context command failed; check arguments, configuration and local file access.\n",
-  );
+  process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 });

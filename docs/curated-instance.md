@@ -52,11 +52,16 @@ context import markdown fixtures/curated/mira-quill \
 ```
 
 `--prune` retires markdown sources from that same area, project, and import
-directory whose relative path is no longer in the folder. The source row stays
+directory whose relative path is no longer in the folder. It does not retire
+sources that have no recorded import root. `--prune-legacy` opts into those
+older rows. An empty directory is refused unless you pass `--force`. A missing
+path is refused either way, and nothing is retired. The source row stays
 in the database and drops out of search, timeline, and read. Importing the
-file again makes it visible. To retire one document or one source without a
+file again makes it visible. `context doc restore <id>` or
+`context source restore <source id>` undoes a retirement without a re-import.
+To retire one document or one source without a
 folder walk, the owner runs `context doc remove doc:mira:adr:0012` or
-`context doc remove <source id>`. That command is not an MCP tool.
+`context doc remove <source id>`. Those commands are not MCP tools.
 
 Leave the LLM lines commented out. `/health` then reports `"processor": "off"`.
 That is a supported mode: distillation does not run, and startup logs that
@@ -124,12 +129,26 @@ of the first card. A page can be the nearest stored page and still be
 Instruct the agent:
 
 - `none`: say you don't know. Do not answer from a merely similar page.
+  Pass `whenNone: "empty"` to receive no cards in that case. Set
+  `CONTEXT_SEARCH_WHEN_NONE=empty` when this instance should do that for
+  every search. The default is `keep`, which still returns the cards and
+  the `none` label. When cards are omitted the result includes
+  `cardsOmitted: "grounding-none"`.
 - `weak`: answer only from the cited text, and say the overlap is partial.
 - `strong`: answer from the cited text.
 
-Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
+When `items` is empty and the processor is off, the result includes
+`itemsHint`: `Items are empty because the processor is off.` That is not an
+error. Sources are still searchable.
+
+On a scoped corpus smaller than 6 records
+(`CONTEXT_GROUNDING_MARGIN_MIN_CORPUS`), the centroid is too close to the
+passage itself, so the margin is skipped and the lexical-only rules apply.
+An exact match can then be `strong`, and an off-topic query stays `none`.
+Larger corpora keep the margin. Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
 share below `0.30` is the none floor; a term is common from corpus size
-`40`, document frequency `8`, and rate `0.05`; margin `0.024` / `0.08`) and
+`40`, document frequency `8`, and rate `0.05`; margin `0.024` / `0.08`;
+margin corpus floor `6`) and
 can be set with
 `CONTEXT_GROUNDING_LEXICAL_STRONG`,
 `CONTEXT_GROUNDING_LEXICAL_NONE`,
@@ -137,8 +156,9 @@ can be set with
 `CONTEXT_GROUNDING_COMMON_CORPUS`,
 `CONTEXT_GROUNDING_COMMON_MIN_DF`,
 `CONTEXT_GROUNDING_COMMON_RATE`,
-`CONTEXT_GROUNDING_MARGIN_WEAK`, and
-`CONTEXT_GROUNDING_MARGIN_STRONG`.
+`CONTEXT_GROUNDING_MARGIN_WEAK`,
+`CONTEXT_GROUNDING_MARGIN_STRONG`, and
+`CONTEXT_GROUNDING_MARGIN_MIN_CORPUS`.
 Calibrate the margin on a real database with
 `context grounding explain --file`. See [Search](search.md#grounding).
 

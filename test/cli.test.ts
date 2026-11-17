@@ -48,6 +48,9 @@ test("CLI initializes exactly one owner, prints credentials once, lists grants a
     assert.ok(!list.stdout.includes(token));
     const records = JSON.parse(list.stdout);
     assert.equal(records.length, 1);
+    assert.equal(records[0].name, "fictional-worker");
+    assert.equal(records[0].used, false);
+    assert.equal(records[0].lastUsed, null);
     const clients = JSON.parse(run(["client", "list"]).stdout);
     const worker = clients.find(
       (client: { name?: string }) => client.name === "fictional-worker",

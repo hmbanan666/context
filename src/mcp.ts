@@ -188,6 +188,7 @@ export function createContextMcp(
         grants?.project,
         grants?.read,
         tokenLabel,
+        credential?.id,
       );
       return server;
     },

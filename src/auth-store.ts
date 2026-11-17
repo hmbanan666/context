@@ -66,6 +66,8 @@ export interface TokenRecord {
   family: string;
   familyExpires: number;
   used: boolean;
+  /** Unix seconds of the last accepted use. Absent on tokens issued before this field. */
+  lastUsed?: number | null;
   revoked: boolean;
   redirect?: string;
   challenge?: string;
@@ -339,7 +341,44 @@ export class AuthStore {
     if (!row) throw new Error("Unknown token");
     this.revokeFamily((JSON.parse(row.data as string) as TokenRecord).family);
   }
+  revokeTokensByName(name: string) {
+    if (!/^[a-zA-Z0-9._-]{1,80}$/.test(name)) throw new Error("Unknown token");
+    const names = new Map(
+      this.listClients().map((client) => [client.id, client.name]),
+    );
+    const families = new Set<string>();
+    for (const row of this.db.prepare("SELECT data FROM auth_tokens").all()) {
+      const token = JSON.parse(row.data as string) as TokenRecord;
+      if (names.get(token.clientId) === name) families.add(token.family);
+    }
+    if (!families.size) throw new Error("Unknown token");
+    for (const family of families) this.revokeFamily(family);
+  }
+  /** Record that this access or CLI token was accepted. Codes and refresh tokens stay untouched. */
+  noteTokenUse(id: string) {
+    const row = this.db
+      .prepare("SELECT data FROM auth_tokens WHERE id=?")
+      .get(id) as { data?: string } | undefined;
+    if (!row?.data) return;
+    const token = JSON.parse(row.data) as TokenRecord;
+    if (token.revoked || (token.kind !== "cli" && token.kind !== "access"))
+      return;
+    const now = this.now();
+    this.db
+      .prepare(
+        "UPDATE auth_tokens SET data=json_set(data, '$.used', json('true'), '$.lastUsed', ?) WHERE id=?",
+      )
+      .run(now, id);
+    this.db
+      .prepare(
+        "UPDATE auth_clients SET data=json_set(data, '$.lastUsed', ?) WHERE id=?",
+      )
+      .run(now, token.clientId);
+  }
   listTokens() {
+    const names = new Map(
+      this.listClients().map((client) => [client.id, client.name]),
+    );
     return this.db
       .prepare("SELECT data FROM auth_tokens ORDER BY id")
       .all()
@@ -347,6 +386,7 @@ export class AuthStore {
         const t: TokenRecord = JSON.parse(r.data as string);
         return {
           id: t.id,
+          name: names.get(t.clientId) ?? null,
           clientId: t.clientId,
           kind: t.kind,
           grants: t.grants,
@@ -355,6 +395,7 @@ export class AuthStore {
           expires: t.expires,
           revoked: t.revoked,
           used: t.used,
+          lastUsed: t.lastUsed ?? null,
         };
       });
   }
@@ -374,12 +415,8 @@ export class AuthStore {
         (a) => this.areas.includes(a) && client.grants[op].includes(a),
       );
     client.lastUsed = this.now();
-    // Never overwrite grants/revocation from a stale client read while the CLI writes.
-    this.db
-      .prepare(
-        "UPDATE auth_clients SET data=json_set(data, '$.lastUsed', ?) WHERE id=?",
-      )
-      .run(client.lastUsed, client.id);
+    // json_set keeps a concurrent CLI grant edit. Codes and refresh tokens are not marked here.
+    this.noteTokenUse(token.id);
     let scoped: Grants;
     try {
       scoped = retainProject(grants, token.grants);

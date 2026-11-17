@@ -11,6 +11,7 @@ import {
   packBudgetMax,
   packBudgetMin,
 } from "./task-pack.js";
+import { presentSearchResult } from "./search-when-none.js";
 import { SourceStore } from "./store.js";
 
 const usage =
@@ -100,30 +101,38 @@ export function searchCommand(args: string[], env: NodeJS.ProcessEnv): void {
         throw new Error(usage);
       process.stdout.write(
         `${JSON.stringify(
-          buildTaskPack(sources, knowledge, {
-            scope,
-            projectId: project,
-            question: query,
-            budgetBytes: budget,
-          }),
+          presentSearchResult(
+            buildTaskPack(sources, knowledge, {
+              scope,
+              projectId: project,
+              question: query,
+              budgetBytes: budget,
+            }),
+            undefined,
+            env,
+          ),
         )}\n`,
       );
       return;
     }
     const limit = values.k ? Number(values.k) : 8;
-    const pack = buildContextPackage(
-      sources,
-      knowledge,
-      contextPackageSchema.parse({
-        scope,
-        question: query,
-        limit,
-        ...(values.since ? { from: values.since } : {}),
-        ...(values.until ? { until: values.until } : {}),
-        ...(values.budget ? { maxBytes: budget } : {}),
-      }),
+    const pack = presentSearchResult(
+      buildContextPackage(
+        sources,
+        knowledge,
+        contextPackageSchema.parse({
+          scope,
+          question: query,
+          limit,
+          ...(values.since ? { from: values.since } : {}),
+          ...(values.until ? { until: values.until } : {}),
+          ...(values.budget ? { maxBytes: budget } : {}),
+        }),
+        undefined,
+        project,
+      ),
       undefined,
-      project,
+      env,
     );
     process.stdout.write(`${JSON.stringify(pack)}\n`);
   } catch (error) {

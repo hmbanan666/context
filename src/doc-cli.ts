@@ -1,6 +1,7 @@
 import { SourceStore } from "./store.js";
 
-const usage = "Usage: context doc remove <doc:project:type:key or source id>";
+const usage =
+  "Usage: context doc remove|restore <doc:project:type:key or source id>";
 
 function databasePath(env: NodeJS.ProcessEnv): string {
   const path = env.CONTEXT_DB_PATH ?? "./data/context.db";
@@ -10,8 +11,9 @@ function databasePath(env: NodeJS.ProcessEnv): string {
 }
 
 export function docCommand(args: string[], env: NodeJS.ProcessEnv): void {
+  const action = args[0];
   if (
-    args[0] !== "remove" ||
+    (action !== "remove" && action !== "restore") ||
     args.length !== 2 ||
     !args[1] ||
     args[1].startsWith("-")
@@ -19,7 +21,10 @@ export function docCommand(args: string[], env: NodeJS.ProcessEnv): void {
     throw new Error(usage);
   const store = new SourceStore(databasePath(env));
   try {
-    const result = store.removeRecord(args[1]);
+    const result =
+      action === "restore"
+        ? store.restoreRecord(args[1])
+        : store.removeRecord(args[1]);
     if (!result) {
       process.stderr.write("Not found\n");
       process.exitCode = 1;

@@ -97,6 +97,40 @@ export function knowledgeExcerpt(text: string, matchOffset = 0, maximum = 480) {
   };
 }
 
+function snapWordStart(text: string, start: number, offset: number): number {
+  if (start <= 0) return 0;
+  const previous = text[start - 1] ?? "";
+  if (/[\s.!?…。！？]/u.test(previous)) return start;
+  let index = start;
+  while (index < offset && !/\s/u.test(text[index] ?? "")) index += 1;
+  if (index >= offset) return start;
+  while (index < offset && /\s/u.test(text[index] ?? "")) index += 1;
+  if (/[\uDC00-\uDFFF]/u.test(text[index] ?? "")) index -= 1;
+  return Math.max(0, index);
+}
+
+function snapWordEnd(
+  text: string,
+  start: number,
+  hardEnd: number,
+  offset: number,
+): number {
+  if (hardEnd >= text.length) return text.length;
+  const sentence = endOnSentence(text, start, hardEnd, offset);
+  if (sentence > offset && sentence < hardEnd) return sentence;
+  let end = hardEnd;
+  const window = text.slice(Math.min(offset, hardEnd), hardEnd);
+  let best = -1;
+  for (const mark of [" ", "\n", "\t"]) {
+    const index = window.lastIndexOf(mark);
+    if (index > best) best = index;
+  }
+  if (best > 0) end = Math.min(offset, hardEnd) + best;
+  if (end <= offset) end = hardEnd;
+  if (end < text.length && /[\uDC00-\uDFFF]/u.test(text[end] ?? "")) end -= 1;
+  return end;
+}
+
 export function excerpt(text: string, matchOffset = 0, maximum = 360) {
   const visible = visibleSourceText(text);
   const offset =
@@ -105,9 +139,11 @@ export function excerpt(text: string, matchOffset = 0, maximum = 360) {
       : Math.min(Math.max(0, matchOffset), visible.length);
   let start = Math.max(0, offset - 80);
   if (start > 0 && /[\uDC00-\uDFFF]/u.test(visible[start] ?? "")) start--;
+  start = snapWordStart(visible, start, Math.min(offset, visible.length));
   let end = Math.min(visible.length, start + maximum);
   if (end < visible.length && /[\uDC00-\uDFFF]/u.test(visible[end] ?? ""))
     end--;
+  end = snapWordEnd(visible, start, end, Math.min(offset, visible.length));
   return {
     text: visible.slice(start, end),
     start,

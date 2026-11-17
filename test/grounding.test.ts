@@ -17,6 +17,7 @@ import {
   readGroundingThresholds,
   type GroundingPassage,
 } from "../src/grounding.js";
+import { presentSearchResult } from "../src/search-when-none.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
@@ -190,6 +191,61 @@ test("grounding uses passage co-occurrence and idf, not rank", () => {
   assert.throws(() =>
     readGroundingThresholds({ CONTEXT_GROUNDING_COMMON_MIN_DF: "0" }),
   );
+  assert.equal(readGroundingThresholds({}).marginMinCorpus, 6);
+  assert.throws(() =>
+    readGroundingThresholds({ CONTEXT_GROUNDING_MARGIN_MIN_CORPUS: "0" }),
+  );
+});
+
+test("a flat margin on three passages uses the lexical path", () => {
+  const terms = ["cobalt", "lantern"];
+  const passage: GroundingPassage = {
+    text: "The cobalt lantern is in the blue cabinet.",
+    vectors: [{ offset: 0, score: 0.99 }],
+  };
+  const small = explainStoredGrounding({
+    terms,
+    passages: [passage],
+    documents: 3,
+    documentFrequency: new Map([
+      ["cobalt", 1],
+      ["lantern", 1],
+    ]),
+    vectorsAvailable: true,
+    backgroundCosine: 0.99,
+    thresholds,
+  });
+  assert.equal(small.label, "strong");
+  assert.equal(small.rule, "strong-lexical");
+  assert.equal(small.margin, 0);
+  const large = explainStoredGrounding({
+    terms,
+    passages: [passage],
+    documents: 100,
+    documentFrequency: new Map([
+      ["cobalt", 1],
+      ["lantern", 1],
+    ]),
+    vectorsAvailable: true,
+    backgroundCosine: 0.99,
+    thresholds,
+  });
+  assert.equal(large.label, "weak");
+  assert.equal(large.rule, "weak-rare");
+  const off = explainStoredGrounding({
+    terms: ["borscht", "recipe"],
+    passages: [passage],
+    documents: 3,
+    documentFrequency: new Map([
+      ["borscht", 0],
+      ["recipe", 0],
+    ]),
+    vectorsAvailable: true,
+    backgroundCosine: 0.99,
+    unmatchedCosine: 0.99,
+    thresholds,
+  });
+  assert.equal(off.label, "none");
 });
 
 function remember(
@@ -680,6 +736,168 @@ test("a rare passage below the retrieval floor uses its stored cosine", async ()
   }
 });
 
+test("whenNone empty drops cards only when grounding is none", () => {
+  const none = {
+    grounding: "none" as const,
+    sources: [{ id: "a" }],
+    items: [],
+    relations: [{ id: "r" }],
+  };
+  const emptied = presentSearchResult(none, "empty", {});
+  assert.equal(emptied.sources.length, 0);
+  assert.equal(emptied.items.length, 0);
+  assert.equal(emptied.relations?.length, 0);
+  assert.equal(emptied.cardsOmitted, "grounding-none");
+  assert.equal(
+    emptied.itemsHint,
+    "Items are empty because the processor is off.",
+  );
+  const strong = presentSearchResult(
+    { ...none, grounding: "strong", items: [{ id: "k" }] },
+    "empty",
+    {},
+  );
+  assert.equal(strong.sources.length, 1);
+  assert.equal(strong.itemsHint, undefined);
+  const fromEnv = presentSearchResult(none, undefined, {
+    CONTEXT_SEARCH_WHEN_NONE: "empty",
+  });
+  assert.equal(fromEnv.sources.length, 0);
+  const kept = presentSearchResult(none, "keep", {
+    CONTEXT_SEARCH_WHEN_NONE: "empty",
+  });
+  assert.equal(kept.sources.length, 1);
+  assert.throws(() =>
+    presentSearchResult(none, undefined, {
+      CONTEXT_SEARCH_WHEN_NONE: "drop",
+    }),
+  );
+});
+
+test("a three-note corpus can call an exact match strong", async () => {
+  const { EmbeddingIndex } = await import("../src/embedding-index.js");
+  const directory = await mkdtemp(join(tmpdir(), "context-grounding-tiny-"));
+  const path = join(directory, "context.db");
+  const store = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  const embedder = {
+    version: "synthetic-tiny-v1",
+    async embed() {
+      return Float32Array.from([1, 0]);
+    },
+  };
+  const index = new EmbeddingIndex(path, embedder);
+  const notes = [
+    "The cobalt lantern is in the blue cabinet.",
+    "The cobalt lantern sits beside the brass desk.",
+    "A cobalt lantern note for the studio shelf.",
+  ];
+  try {
+    for (const [index, text] of notes.entries())
+      remember(store, "personal", `note-${index}`, text);
+    index.backfill();
+    while (await index.processOne()) {
+      /* drain the synthetic queue */
+    }
+    const exactHits = await index.search({
+      scope: "personal",
+      question: "cobalt lantern",
+    });
+    const exact = buildContextPackage(
+      store,
+      knowledge,
+      { version: 1, scope: "personal", question: "cobalt lantern", limit: 8 },
+      exactHits,
+    );
+    assert.equal(exact.grounding, "strong");
+    assert.equal(searchGroundingReport(exact)?.rule, "strong-lexical");
+    assert.match(
+      exact.sources.map((card) => card.excerpt.text).join("\n"),
+      /cobalt lantern/i,
+    );
+    const offHits = await index.search({
+      scope: "personal",
+      question: "recipe for borscht",
+    });
+    const off = buildContextPackage(
+      store,
+      knowledge,
+      {
+        version: 1,
+        scope: "personal",
+        question: "recipe for borscht",
+        limit: 8,
+      },
+      offHits,
+    );
+    assert.equal(off.grounding, "none");
+    assert.ok(off.sources.length > 0);
+    const mcp = createContextMcp(store, ["personal"], false, {
+      knowledge,
+      embeddings: index,
+    });
+    const client = new Client({ name: "tiny-corpus", version: "1" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
+        fetch: async (input, init) => mcp.fetch(new Request(input, init)),
+      }),
+    );
+    try {
+      const kept = await client.callTool({
+        name: "search",
+        arguments: { scope: "personal", query: "recipe for borscht" },
+      });
+      const keptBody = kept.structuredContent as {
+        grounding?: string;
+        sources?: unknown[];
+      };
+      assert.equal(keptBody.grounding, "none");
+      assert.ok((keptBody.sources?.length ?? 0) > 0);
+      const emptied = await client.callTool({
+        name: "search",
+        arguments: {
+          scope: "personal",
+          query: "recipe for borscht",
+          whenNone: "empty",
+        },
+      });
+      const emptiedBody = emptied.structuredContent as {
+        grounding?: string;
+        sources?: unknown[];
+        items?: unknown[];
+        cardsOmitted?: string;
+      };
+      assert.equal(emptied.isError, false);
+      assert.equal(emptiedBody.grounding, "none");
+      assert.equal(emptiedBody.sources?.length, 0);
+      assert.equal(emptiedBody.items?.length, 0);
+      assert.equal(emptiedBody.cardsOmitted, "grounding-none");
+      const still = await client.callTool({
+        name: "search",
+        arguments: {
+          scope: "personal",
+          query: "cobalt lantern",
+          whenNone: "empty",
+        },
+      });
+      const stillBody = still.structuredContent as {
+        grounding?: string;
+        sources?: unknown[];
+      };
+      assert.equal(stillBody.grounding, "strong");
+      assert.ok((stillBody.sources?.length ?? 0) > 0);
+    } finally {
+      await client.close();
+      await mcp.close();
+    }
+  } finally {
+    await index.close();
+    knowledge.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("search tells the agent when nothing relevant was stored", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-grounding-"));
   const databasePath = join(directory, "context.db");
@@ -720,6 +938,10 @@ test("search tells the agent when nothing relevant was stored", async () => {
     assert.equal(
       (hit.structuredContent as { grounding?: string }).grounding,
       "strong",
+    );
+    assert.equal(
+      (hit.structuredContent as { itemsHint?: string }).itemsHint,
+      "Items are empty because the processor is off.",
     );
     const miss = await client.callTool({
       name: "search",
