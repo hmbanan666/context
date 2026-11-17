@@ -11,6 +11,36 @@ export interface Llm {
   preflight?(): Promise<void>;
   ask(instruction: string, data: unknown): Promise<unknown>;
 }
+
+export type ProcessorKind = "off" | "openai" | "codex";
+
+/**
+ * Whether distillation can run. "off" is a supported mode (a curated instance
+ * leaves the processor unset). The result is only the kind, never a model or key.
+ */
+export function processorState(env: NodeJS.ProcessEnv): ProcessorKind {
+  const processor = env.CONTEXT_PROCESSOR?.trim() || "openai";
+  if (processor !== "openai" && processor !== "codex") return "off";
+  const key = env.CONTEXT_LLM_API_KEY?.trim();
+  const model =
+    env.CONTEXT_LLM_MODEL?.trim() ||
+    (processor === "codex" ? "gpt-6-luna" : undefined);
+  if (!model || (processor === "openai" && !key)) return "off";
+  if (model.length > 128 || /[\r\n]/.test(model)) return "off";
+  return processor;
+}
+
+/** One startup line when distillation is off. Not a failure. */
+export function processorOffLog(): string {
+  return JSON.stringify({
+    event: "processor",
+    processor: "off",
+    distillation: "off",
+    detail:
+      "No processor is configured, so distillation stays off. This is a supported mode, including a curated instance.",
+  });
+}
+
 export function createLlm(
   env: NodeJS.ProcessEnv,
   request: typeof fetch = fetch,

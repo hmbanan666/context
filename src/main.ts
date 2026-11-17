@@ -1,5 +1,6 @@
 import { startAutomaticBackups } from "./automatic-backup.js";
 import { readConfig } from "./config.js";
+import { processorOffLog } from "./llm.js";
 import { startService } from "./server.js";
 
 try {
@@ -26,6 +27,9 @@ try {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   console.log(JSON.stringify({ event: "listening", ...service.address }));
+  // Processor-off is a supported mode. Say so once, without a model name or key.
+  if (config.processor !== "openai" && config.processor !== "codex")
+    console.warn(processorOffLog());
 } catch {
   // Do not print raw errors: SQLite errors can contain file paths or inputs.
   console.error(

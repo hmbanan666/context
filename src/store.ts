@@ -80,6 +80,7 @@ import {
   type RepositoryMapping,
 } from "./projects.js";
 import { redact, redactFields } from "./redaction.js";
+import { notRetired } from "./retirement.js";
 import { retrievalRelations } from "./retrieval-relations.js";
 import {
   ensureVisibleSourceIndex,
@@ -147,6 +148,7 @@ function materialMetadata(
 
 export class SourceStore {
   readonly #database: DatabaseSync;
+  #retirementReady = false;
 
   constructor(path: string, options: { readOnly?: boolean } = {}) {
     if (!options.readOnly && path !== ":memory:") {
@@ -168,7 +170,10 @@ export class SourceStore {
           return Number.isFinite(timestamp) ? timestamp : null;
         },
       );
-      if (options.readOnly) return;
+      if (options.readOnly) {
+        this.#retirementReady = this.#hasRetirementTable();
+        return;
+      }
       registerSearchFunctions(this.#database);
       this.#database.exec(`
         PRAGMA journal_mode = WAL;
@@ -238,6 +243,7 @@ export class SourceStore {
       `);
       installProjects(this.#database);
       installDocuments(this.#database);
+      this.#installRetirement();
       installSearchIndex(this.#database, "sources");
       ensureVisibleSourceIndex(this.#database);
     } catch (error) {
@@ -532,7 +538,9 @@ export class SourceStore {
             "Idempotency key reused with different input",
           );
         }
-        const source = this.find(String(existing.source_id), request.scope);
+        const source = this.find(String(existing.source_id), request.scope, {
+          includeRetired: true,
+        });
         if (!source)
           throw new IdempotencyConflict("Source no longer in requested area");
         this.#database.exec("COMMIT");
@@ -662,7 +670,7 @@ export class SourceStore {
       .prepare(`
       SELECT s.id, s.text, s.origin, s.scope, s.captured_at AS capturedAt, s.checksum, s.status
       FROM sources_fts JOIN sources s ON s.rowid = sources_fts.rowid
-      WHERE sources_fts MATCH ? AND s.scope = ?
+      WHERE sources_fts MATCH ? AND s.scope = ? AND ${this.#visible("s.id")}
       ORDER BY sources_fts.rank, s.id LIMIT ?
     `)
       .all(phrase, scope, 101);
@@ -715,11 +723,19 @@ export class SourceStore {
     return record;
   }
 
-  find(id: string, scope: string): Source | undefined {
+  find(
+    id: string,
+    scope: string,
+    options?: { includeRetired?: boolean },
+  ): Source | undefined {
+    const hidden =
+      options?.includeRetired || !this.#retirementReady
+        ? ""
+        : ` AND ${notRetired("id")}`;
     const row = this.#database
       .prepare(`
         SELECT id, text, origin, scope, captured_at AS capturedAt, checksum, status
-        FROM sources WHERE id = ? AND scope = ?
+        FROM sources WHERE id = ? AND scope = ?${hidden}
       `)
       .get(id, scope);
     if (!row) return undefined;
@@ -839,7 +855,7 @@ export class SourceStore {
           .get(input.scope)?.watermark,
       );
     const date = "source_timestamp(COALESCE(m.created_at, s.captured_at))";
-    const conditions = ["s.scope = ?", "s.rowid <= ?"];
+    const conditions = ["s.scope = ?", "s.rowid <= ?", this.#visible("s.id")];
     const params: (string | number)[] = [input.scope, snapshot];
     if (input.from !== undefined) {
       conditions.push(`${date} >= ?`);
@@ -910,7 +926,7 @@ export class SourceStore {
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 101)
       throw new Error("Invalid candidate bound");
     const date = "source_timestamp(COALESCE(m.created_at, s.captured_at))";
-    const conditions = ["s.scope = ?"];
+    const conditions = ["s.scope = ?", this.#visible("s.id")];
     const params: (string | number)[] = [input.scope];
     if (input.from) {
       conditions.push(`${date} >= ?`);
@@ -924,9 +940,15 @@ export class SourceStore {
       conditions.push(linkedProjectSql("source", "s.id"));
       params.push(input.projectId);
     }
-    conditions.push(`NOT (${staleDocumentSourceSql})`);
+    conditions.push(
+      `NOT (${staleDocumentSourceSql((column) => this.#visible(column))})`,
+    );
     if (input.documentsOnly || input.docType) {
-      conditions.push(currentDocumentSourceSql(input.docType !== undefined));
+      conditions.push(
+        currentDocumentSourceSql(input.docType !== undefined, (column) =>
+          this.#visible(column),
+        ),
+      );
       if (input.docType) params.push(input.docType);
     }
     if (input.terms.length) {
@@ -1048,10 +1070,18 @@ export class SourceStore {
       params.push(projectId);
     }
     if (pool === "sources") {
+      conditions.push(this.#visible("s.id"));
       if (documents) {
-        conditions.push(currentDocumentSourceSql(documents.type !== undefined));
+        conditions.push(
+          currentDocumentSourceSql(documents.type !== undefined, (column) =>
+            this.#visible(column),
+          ),
+        );
         if (documents.type) params.push(documents.type);
-      } else conditions.push(`NOT (${staleDocumentSourceSql})`);
+      } else
+        conditions.push(
+          `NOT (${staleDocumentSourceSql((column) => this.#visible(column))})`,
+        );
     } else {
       conditions.push(`${knowledgeMatchStatusSql} <> 'rejected'`);
       if (!projectId)
@@ -1233,16 +1263,18 @@ export class SourceStore {
   ): string | undefined {
     const row = this.#database
       .prepare(
-        `SELECT source_id FROM source_docs
-         WHERE project_id = ? AND doc_type = ? AND doc_key = ?
-           AND revision = (
-             SELECT MAX(revision) FROM source_docs
-             WHERE project_id = ? AND doc_type = ? AND doc_key = ?
+        `SELECT d.source_id FROM source_docs d
+         WHERE d.project_id = ? AND d.doc_type = ? AND d.doc_key = ?
+           AND ${this.#visible("d.source_id")}
+           AND d.revision = (
+             SELECT MAX(d2.revision) FROM source_docs d2
+             WHERE d2.project_id = d.project_id
+               AND d2.doc_type = d.doc_type
+               AND d2.doc_key = d.doc_key
+               AND ${this.#visible("d2.source_id")}
            )`,
       )
-      .get(projectId, type, key, projectId, type, key) as
-      | { source_id?: string }
-      | undefined;
+      .get(projectId, type, key) as { source_id?: string } | undefined;
     return typeof row?.source_id === "string" ? row.source_id : undefined;
   }
 
@@ -1259,6 +1291,7 @@ export class SourceStore {
          FROM source_docs d JOIN sources s ON s.id = d.source_id
          WHERE d.project_id = ? AND d.doc_type = ? AND d.doc_key = ?
            AND s.scope = ?
+           AND ${this.#visible("d.source_id")}
          ORDER BY d.revision DESC`,
       )
       .all(projectId, type, key, scope) as unknown as DocumentRevisionSummary[];
@@ -1289,26 +1322,24 @@ export class SourceStore {
       ref.revision === undefined
         ? this.#database
             .prepare(
-              `SELECT source_id FROM source_docs
-               WHERE project_id = ? AND doc_type = ? AND doc_key = ?
-                 AND revision = (
-                   SELECT MAX(revision) FROM source_docs
-                   WHERE project_id = ? AND doc_type = ? AND doc_key = ?
+              `SELECT d.source_id FROM source_docs d
+               WHERE d.project_id = ? AND d.doc_type = ? AND d.doc_key = ?
+                 AND ${this.#visible("d.source_id")}
+                 AND d.revision = (
+                   SELECT MAX(d2.revision) FROM source_docs d2
+                   WHERE d2.project_id = d.project_id
+                     AND d2.doc_type = d.doc_type
+                     AND d2.doc_key = d.doc_key
+                     AND ${this.#visible("d2.source_id")}
                  )`,
             )
-            .get(
-              ref.projectId,
-              ref.type,
-              ref.key,
-              ref.projectId,
-              ref.type,
-              ref.key,
-            )
+            .get(ref.projectId, ref.type, ref.key)
         : this.#database
             .prepare(
               `SELECT source_id FROM source_docs
                WHERE project_id = ? AND doc_type = ? AND doc_key = ?
-                 AND revision = ?`,
+                 AND revision = ?
+                 AND ${this.#visible("source_id")}`,
             )
             .get(ref.projectId, ref.type, ref.key, ref.revision)
     ) as { source_id?: string } | undefined;
@@ -1328,6 +1359,129 @@ export class SourceStore {
 
   checkHealth(): void {
     this.#database.prepare("SELECT 1 FROM sources LIMIT 1").get();
+  }
+
+  noteMarkdownRoot(sourceId: string, root: string): void {
+    if (!root || root.length > 4096) return;
+    this.#database
+      .prepare(
+        `INSERT INTO markdown_import_roots (source_id, root) VALUES (?, ?)
+         ON CONFLICT(source_id) DO NOTHING`,
+      )
+      .run(sourceId, root);
+  }
+
+  restoreSource(sourceId: string): void {
+    if (!this.#retirementReady) return;
+    this.#database
+      .prepare("DELETE FROM source_retirements WHERE source_id = ?")
+      .run(sourceId);
+  }
+
+  retireSource(
+    sourceId: string,
+    reason: "import_prune" | "doc_remove",
+  ): boolean {
+    if (!this.#retirementReady) return false;
+    const result = this.#database
+      .prepare(
+        `INSERT INTO source_retirements (source_id, retired_at, reason)
+         SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM sources WHERE id = ?)
+         ON CONFLICT(source_id) DO NOTHING`,
+      )
+      .run(sourceId, new Date().toISOString(), reason, sourceId);
+    return Number(result.changes) > 0;
+  }
+
+  markdownPruneCandidates(
+    area: string,
+    project: string | undefined,
+    root: string,
+  ): { id: string; externalId: string }[] {
+    const projectSql = project
+      ? `EXISTS (SELECT 1 FROM project_associations pa
+           WHERE pa.record_kind = 'source' AND pa.record_id = s.id
+             AND pa.project_id = ? AND pa.status = 'linked')`
+      : `NOT EXISTS (SELECT 1 FROM project_associations pa
+           WHERE pa.record_kind = 'source' AND pa.record_id = s.id
+             AND pa.status = 'linked')`;
+    const params = project
+      ? ["markdown", area, root, project]
+      : ["markdown", area, root];
+    return this.#database
+      .prepare(
+        `SELECT DISTINCT i.source_id AS id, i.external_id AS externalId
+         FROM source_imports i
+         JOIN sources s ON s.id = i.source_id
+         LEFT JOIN markdown_import_roots roots ON roots.source_id = s.id
+         WHERE i.source = ?
+           AND s.scope = ?
+           AND (roots.root = ? OR roots.root IS NULL)
+           AND ${this.#visible("s.id")}
+           AND ${projectSql}`,
+      )
+      .all(...params)
+      .map((row) => ({
+        id: String(row.id),
+        externalId: String(row.externalId),
+      }));
+  }
+
+  /** Owner removal. A document id retires every revision of that document. */
+  removeRecord(id: string): { removed: number; id: string } | undefined {
+    if (id.startsWith("doc:")) {
+      const refs = documentRefCandidates(id);
+      const ref = refs.length === 1 ? refs[0] : undefined;
+      if (!ref) return undefined;
+      const rows = this.#database
+        .prepare(
+          `SELECT source_id FROM source_docs
+           WHERE project_id = ? AND doc_type = ? AND doc_key = ?`,
+        )
+        .all(ref.projectId, ref.type, ref.key);
+      if (!rows.length) return undefined;
+      let removed = 0;
+      for (const row of rows) {
+        if (this.retireSource(String(row.source_id), "doc_remove"))
+          removed += 1;
+      }
+      return { removed, id: `doc:${ref.projectId}:${ref.type}:${ref.key}` };
+    }
+    const exists = this.#database
+      .prepare("SELECT id FROM sources WHERE id = ?")
+      .get(id);
+    if (!exists) return undefined;
+    const doc = this.#document(id);
+    if (doc)
+      return this.removeRecord(`doc:${doc.projectId}:${doc.type}:${doc.key}`);
+    return { removed: this.retireSource(id, "doc_remove") ? 1 : 0, id };
+  }
+
+  #hasRetirementTable(): boolean {
+    return !!this.#database
+      .prepare(
+        "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'source_retirements'",
+      )
+      .get();
+  }
+
+  #installRetirement(): void {
+    this.#database.exec(`
+      CREATE TABLE IF NOT EXISTS source_retirements (
+        source_id TEXT PRIMARY KEY NOT NULL REFERENCES sources(id),
+        retired_at TEXT NOT NULL,
+        reason TEXT NOT NULL CHECK(reason IN ('import_prune', 'doc_remove'))
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS markdown_import_roots (
+        source_id TEXT PRIMARY KEY NOT NULL REFERENCES sources(id),
+        root TEXT NOT NULL CHECK(length(root) BETWEEN 1 AND 4096)
+      ) STRICT;
+    `);
+    this.#retirementReady = true;
+  }
+
+  #visible(column: string): string {
+    return this.#retirementReady ? notRetired(column) : "1";
   }
 
   close(): void {

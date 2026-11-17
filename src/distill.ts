@@ -7,6 +7,7 @@ import {
   KnowledgeValidationError,
 } from "./knowledge.js";
 import type { Llm } from "./llm.js";
+import { retirementFilter } from "./retirement.js";
 import { askLlm, LlmCallError } from "./llm-call.js";
 import {
   hasProject,
@@ -277,6 +278,7 @@ function scheduled(
        FROM sources s
        LEFT JOIN source_metadata m ON m.source_id = s.id
        WHERE s.scope IN (${marks})
+         AND ${retirementFilter(db, "s.id")}
          AND NOT EXISTS (
            SELECT 1 FROM knowledge_items k, json_each(k.source_refs) ref
            WHERE k.kind IN ('fact', 'decision')

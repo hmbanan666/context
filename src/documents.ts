@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { nonblankText } from "./contracts.js";
 import { projectIdSchema } from "./projects.js";
+import { notRetired } from "./retirement.js";
 
 // A document is a source. Revisions stay immutable rows, as markdown import
 // already does. This table names the current key and who set the status.
@@ -113,25 +114,36 @@ export function installDocuments(db: DatabaseSync): void {
   `);
 }
 
-/** Older revisions of the same project, type and key. */
-export const staleDocumentSourceSql = `s.id IN (
+/** Older revisions of the same project, type and key. Retired rows are not current. */
+export function staleDocumentSourceSql(
+  visible: (column: string) => string = notRetired,
+): string {
+  return `s.id IN (
   SELECT d.source_id FROM source_docs d
-  WHERE d.revision < (
+  WHERE ${visible("d.source_id")}
+    AND d.revision < (
     SELECT MAX(d2.revision) FROM source_docs d2
     WHERE d2.project_id = d.project_id
       AND d2.doc_type = d.doc_type
       AND d2.doc_key = d.doc_key
+      AND ${visible("d2.source_id")}
   )
 )`;
+}
 
-export function currentDocumentSourceSql(typed: boolean): string {
+export function currentDocumentSourceSql(
+  typed: boolean,
+  visible: (column: string) => string = notRetired,
+): string {
   return `s.id IN (
     SELECT d.source_id FROM source_docs d
-    WHERE d.revision = (
+    WHERE ${visible("d.source_id")}
+      AND d.revision = (
       SELECT MAX(d2.revision) FROM source_docs d2
       WHERE d2.project_id = d.project_id
         AND d2.doc_type = d.doc_type
         AND d2.doc_key = d.doc_key
+        AND ${visible("d2.source_id")}
     )${typed ? " AND d.doc_type = ?" : ""}
   )`;
 }

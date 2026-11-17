@@ -9,7 +9,9 @@ import { maxImportTextLength } from "../src/import-format.js";
 import { importMarkdown, splitMarkdownBody } from "../src/import-markdown.js";
 import { SourceStore } from "../src/store.js";
 import { buildContextPackage } from "../src/context-package.js";
+import { EmbeddingIndex } from "../src/embedding-index.js";
 import { KnowledgeStore } from "../src/knowledge.js";
+import { buildMemoryContext } from "../src/memory.js";
 
 test("markdown chunks stay inside the source text limit", () => {
   const text = `${"alpha ".repeat(1600)}omega-terminus`;
@@ -195,6 +197,325 @@ test("markdown CLI reports added, skipped and updated", async () => {
     } finally {
       jobs.close();
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("prune retires missing paths and doc remove hides one record", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-md-prune-"));
+  const databasePath = join(directory, "context.db");
+  const folder = join(directory, "notes");
+  const otherFolder = join(directory, "other");
+  await mkdir(join(folder, "cases"), { recursive: true });
+  await mkdir(otherFolder, { recursive: true });
+  const gone = join(folder, "cases", "gone.md");
+  const kept = join(folder, "keep.md");
+  const adr = join(folder, "adr.md");
+  const long = join(folder, "long.md");
+  await writeFile(gone, "# Gone\n\nThe missing lantern left the folder.\n");
+  await writeFile(kept, "# Keep\n\nThe brass harbor desk stays.\n");
+  await writeFile(
+    adr,
+    `---
+type: adr
+key: "0012"
+status: accepted
+title: Amber index
+---
+
+# Amber index
+
+The amber index stays on the desk.
+`,
+  );
+  await writeFile(long, `${"beta ".repeat(2000)}end-marker-prune`);
+  await writeFile(
+    join(otherFolder, "blue.md"),
+    "# Blue\n\nThe cobalt slip stays.\n",
+  );
+  const store = new SourceStore(databasePath);
+  const knowledge = new KnowledgeStore(databasePath);
+  const index = new EmbeddingIndex(databasePath, {
+    version: "fixture-retire",
+    async embed() {
+      return Float32Array.from([1, 0]);
+    },
+  });
+  try {
+    store.createProject({ id: "mira", name: "Mira Quill", homeArea: "studio" });
+    store.createProject({ id: "other", name: "Other", homeArea: "studio" });
+    const options = {
+      areas: ["studio"],
+      area: "studio",
+      project: "mira",
+    };
+    await importMarkdown(store, folder, options);
+    await importMarkdown(store, otherFolder, {
+      ...options,
+      project: "other",
+    });
+    assert.equal(store.search("missing lantern", "studio", 5).length, 1);
+    assert.ok(store.resolveDocument("doc:mira:adr:0012", "studio"));
+    const goneId = store
+      .list("studio", 20)
+      .find((source) => source.text.includes("missing lantern"))?.id;
+    assert.ok(goneId);
+    const vector = Buffer.alloc(8);
+    vector.writeFloatLE(1, 0);
+    const sql = new DatabaseSync(databasePath);
+    sql
+      .prepare(
+        `INSERT INTO embedding_chunks
+          (kind, record_id, scope, chunk, offset, model, vector)
+         VALUES ('sources', ?, 'studio', 0, 0, 'fixture-retire', ?)`,
+      )
+      .run(goneId, vector);
+    sql.close();
+    const before = await index.search({
+      scope: "studio",
+      question: "missing lantern",
+    });
+    assert.ok(before.sources.some((hit) => hit.id === goneId));
+    await rm(gone);
+    await rm(adr);
+    await rm(long);
+    const keptVisible = await importMarkdown(store, folder, options);
+    assert.equal(keptVisible.removed, 0);
+    assert.equal(store.search("missing lantern", "studio", 5).length, 1);
+    const pruned = await importMarkdown(store, folder, {
+      ...options,
+      prune: true,
+    });
+    assert.ok(pruned.removed >= 4);
+    assert.equal(store.search("missing lantern", "studio", 5).length, 0);
+    assert.equal(store.search("end-marker-prune", "studio", 5).length, 0);
+    assert.equal(store.search("amber index", "studio", 5).length, 0);
+    assert.equal(store.search("brass harbor", "studio", 5).length, 1);
+    assert.equal(store.search("cobalt slip", "studio", 5).length, 1);
+    assert.equal(store.find(goneId, "studio"), undefined);
+    assert.equal(
+      store.resolveDocument("doc:mira:adr:0012", "studio"),
+      undefined,
+    );
+    const timeline = buildMemoryContext(store, {
+      version: 1,
+      scope: "studio",
+      limit: 20,
+    });
+    assert.equal(
+      timeline.sources.some((item) =>
+        item.source.text.includes("missing lantern"),
+      ),
+      false,
+    );
+    const after = await index.search({
+      scope: "studio",
+      question: "missing lantern",
+    });
+    assert.equal(
+      after.sources.some((hit) => hit.id === goneId),
+      false,
+    );
+    const history = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      const text = String(
+        history.prepare("SELECT text FROM sources WHERE id = ?").get(goneId)
+          ?.text,
+      );
+      assert.match(text, /missing lantern/);
+      const tomb = history
+        .prepare("SELECT reason FROM source_retirements WHERE source_id = ?")
+        .get(goneId);
+      assert.equal(tomb?.reason, "import_prune");
+      assert.equal(JSON.stringify(tomb).includes("lantern"), false);
+    } finally {
+      history.close();
+    }
+    const again = await importMarkdown(store, folder, {
+      ...options,
+      prune: true,
+    });
+    assert.equal(again.removed, 0);
+    await writeFile(gone, "# Gone\n\nThe missing lantern left the folder.\n");
+    await importMarkdown(store, folder, { ...options, prune: true });
+    assert.equal(store.search("missing lantern", "studio", 5).length, 1);
+    await writeFile(
+      adr,
+      `---
+type: adr
+key: "0012"
+status: accepted
+title: Amber index
+---
+
+# Amber index
+
+The amber index stays on the desk.
+`,
+    );
+    await importMarkdown(store, folder, options);
+    assert.ok(store.resolveDocument("doc:mira:adr:0012", "studio"));
+    const removedDoc = store.removeRecord("doc:mira:adr:0012");
+    assert.equal(removedDoc?.id, "doc:mira:adr:0012");
+    assert.ok((removedDoc?.removed ?? 0) >= 1);
+    assert.equal(
+      store.resolveDocument("doc:mira:adr:0012", "studio"),
+      undefined,
+    );
+    assert.equal(store.search("amber index", "studio", 5).length, 0);
+    assert.equal(store.removeRecord("doc:mira:adr:0012")?.removed, 0);
+    const keptId = store
+      .list("studio", 20)
+      .find((source) => source.text.includes("brass harbor"))?.id;
+    assert.ok(keptId);
+    assert.equal(store.removeRecord(keptId)?.removed, 1);
+    assert.equal(store.find(keptId, "studio"), undefined);
+    assert.equal(store.search("brass harbor", "studio", 5).length, 0);
+    assert.equal(store.removeRecord("missing-source"), undefined);
+    const pack = buildContextPackage(
+      store,
+      knowledge,
+      { version: 1, scope: "studio", question: "cobalt slip", limit: 5 },
+      undefined,
+      "other",
+    );
+    assert.match(
+      pack.sources.map((card) => card.excerpt.text).join("\n"),
+      /cobalt/,
+    );
+  } finally {
+    await index.close();
+    knowledge.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("prune does not retire a different import root", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-md-root-"));
+  const databasePath = join(directory, "context.db");
+  const folderA = join(directory, "a");
+  const folderB = join(directory, "b");
+  await mkdir(folderA, { recursive: true });
+  await mkdir(folderB, { recursive: true });
+  await writeFile(
+    join(folderA, "keep.md"),
+    "# Keep\n\nAmber stays in folder A.\n",
+  );
+  await writeFile(
+    join(folderB, "blue.md"),
+    "# Blue\n\nCobalt stays in folder B.\n",
+  );
+  const store = new SourceStore(databasePath);
+  try {
+    store.createProject({ id: "mira", name: "Mira Quill", homeArea: "studio" });
+    const shared = { areas: ["studio"], area: "studio", project: "mira" };
+    await importMarkdown(store, folderA, shared);
+    await importMarkdown(store, folderB, shared);
+    await rm(join(folderB, "blue.md"));
+    const pruned = await importMarkdown(store, folderB, {
+      ...shared,
+      prune: true,
+    });
+    assert.equal(pruned.removed, 1);
+    assert.equal(store.search("Amber stays", "studio", 5).length, 1);
+    assert.equal(store.search("Cobalt stays", "studio", 5).length, 0);
+    const sql = new DatabaseSync(databasePath);
+    sql.exec("DELETE FROM markdown_import_roots");
+    sql.close();
+    const legacy = await importMarkdown(store, folderB, {
+      ...shared,
+      prune: true,
+    });
+    assert.equal(legacy.removed, 1);
+    assert.equal(store.search("Amber stays", "studio", 5).length, 0);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("markdown CLI prune and doc remove", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-md-prune-cli-"));
+  const databasePath = join(directory, "context.db");
+  const folder = join(directory, "site");
+  await mkdir(folder, { recursive: true });
+  const gone = join(folder, "gone.md");
+  const kept = join(folder, "keep.md");
+  await writeFile(gone, "# Gone\n\nThe retired page should leave search.\n");
+  await writeFile(kept, "# Keep\n\nThe remaining page stays.\n");
+  const env = {
+    ...process.env,
+    CONTEXT_DB_PATH: databasePath,
+    CONTEXT_AREAS: "studio",
+  };
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, ["dist/scripts/context.js", ...args], {
+      env,
+      encoding: "utf8",
+    });
+  try {
+    const store = new SourceStore(databasePath);
+    store.createProject({ id: "mira", name: "Mira Quill", homeArea: "studio" });
+    store.close();
+    const first = run([
+      "import",
+      "markdown",
+      folder,
+      "--area",
+      "studio",
+      "--project",
+      "mira",
+    ]);
+    assert.equal(first.status, 0, first.stderr);
+    const lines = first.stdout
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            path?: string;
+            source_id?: string;
+            removed?: number;
+          },
+      );
+    assert.equal(lines.at(-1)?.removed, 0);
+    const keptId = lines.find((line) => line.path === "keep.md")?.source_id;
+    assert.ok(keptId);
+    await rm(gone);
+    const pruned = run([
+      "import",
+      "markdown",
+      folder,
+      "--area",
+      "studio",
+      "--project",
+      "mira",
+      "--prune",
+    ]);
+    assert.equal(pruned.status, 0, pruned.stderr);
+    const summary = JSON.parse(pruned.stdout.trim().split("\n").at(-1) ?? "{}");
+    assert.equal(summary.removed, 1);
+    assert.equal(summary.skipped, 1);
+    const removed = run(["doc", "remove", keptId]);
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.equal(JSON.parse(removed.stdout).removed, 1);
+    assert.equal(JSON.parse(removed.stdout).id, keptId);
+    const opened = new SourceStore(databasePath);
+    try {
+      assert.equal(opened.search("retired page", "studio", 5).length, 0);
+      assert.equal(opened.search("remaining page", "studio", 5).length, 0);
+      assert.equal(opened.find(keptId, "studio"), undefined);
+    } finally {
+      opened.close();
+    }
+    const missing = run(["doc", "remove", "missing-source"]);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /Not found/);
+    const usage = run(["doc"]);
+    assert.equal(usage.status, 1);
+    assert.match(usage.stderr, /doc remove/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

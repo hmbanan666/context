@@ -17,7 +17,7 @@ test("only health is exposed on loopback; private routes do not exist", async ()
     const health = await fetch(`${url}/health`);
     assert.equal(health.status, 200);
     assert.equal(health.headers.get("cache-control"), "no-store");
-    assert.deepEqual(await health.json(), { status: "ok" });
+    assert.deepEqual(await health.json(), { status: "ok", processor: "off" });
     const write = await fetch(`${url}/health`, { method: "POST" });
     assert.equal(write.status, 405);
     for (const path of ["/mcp", "/capture", "/recall", "/sources"]) {

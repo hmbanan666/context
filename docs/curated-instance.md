@@ -41,7 +41,28 @@ may set `title`, `project`, `date`, and `tags`. `type`, `key` and `status`
 mark an ADR, spec or note. Details and limits are in [Imports](imports.md).
 
 Running the import again skips unchanged files and writes a new revision for
-files that changed. The summary reports `added`, `updated`, and `skipped`.
+files that changed. The summary reports `added`, `updated`, `skipped`, and
+`removed`. `removed` stays `0` unless you pass `--prune`.
+
+A file deleted from the folder stays searchable until that opt-in re-sync:
+
+```sh
+context import markdown fixtures/curated/mira-quill \
+  --area studio --project mira --prune
+```
+
+`--prune` retires markdown sources from that same area, project, and import
+directory whose relative path is no longer in the folder. The source row stays
+in the database and drops out of search, timeline, and read. Importing the
+file again makes it visible. To retire one document or one source without a
+folder walk, the owner runs `context doc remove doc:mira:adr:0012` or
+`context doc remove <source id>`. That command is not an MCP tool.
+
+Leave the LLM lines commented out. `/health` then reports `"processor": "off"`.
+That is a supported mode: distillation does not run, and startup logs that
+once. It is not a failed configuration. When a processor is configured the
+field is `openai` or `codex`, with no model name and no key.
+
 Embeddings are queued the same way as any other capture. The running server
 indexes them in the background. `context reindex --embeddings` does the same
 job in the foreground. No model call is required for import or for lexical

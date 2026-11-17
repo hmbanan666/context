@@ -11,6 +11,7 @@ import { projectIdSchema } from "../src/projects.js";
 import { searchCommand } from "../src/search-cli.js";
 import { SourceStore } from "../src/store.js";
 import { tidyCommand } from "../src/tidy-cli.js";
+import { docCommand } from "../src/doc-cli.js";
 import { runImport } from "./import-jsonl.js";
 import { runMarkdownImport } from "./import-markdown.js";
 
@@ -96,6 +97,15 @@ async function main() {
   }
   if (kind === "import" && action === "markdown") {
     await runMarkdownImport(process.argv.slice(4));
+    return;
+  }
+  if (kind === "doc") {
+    docCommand(
+      [action, name, ...args].filter(
+        (part): part is string => part !== undefined,
+      ),
+      process.env,
+    );
     return;
   }
   if (kind === "index") {
@@ -201,7 +211,7 @@ async function main() {
       return;
     }
     throw new Error(
-      "Usage: context init [--project <id> --name <name>] | owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d] | token list|revoke <id> | import jsonl --source <name> [--area <a>] [--file <path>] | import markdown <dir> [--area <a>] [--project <id>] | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>] | grounding explain (--query <text> | --file <questions.yaml>) [--area <a>] [--project <id>] [--json]",
+      "Usage: context init [--project <id> --name <name>] | owner init | client list|revoke <id> | token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d] | token list|revoke <id> | import jsonl --source <name> [--area <a>] [--file <path>] | import markdown <dir> [--area <a>] [--project <id>] [--prune] | doc remove <doc:project:type:key or source id> | project create|rename|list|map|unmap|backfill|profile|glossary|review | reindex --embeddings [--batch N] | search --query <text> --scope <area> [--project <id>] [--mode pack] [--budget-bytes <n>] | grounding explain (--query <text> | --file <questions.yaml>) [--area <a>] [--project <id>] [--json]",
     );
   } finally {
     store.close();
@@ -215,7 +225,8 @@ void main().catch((error: unknown) => {
     process.argv[2] === "grounding" ||
     process.argv[2] === "reindex" ||
     process.argv[2] === "eval" ||
-    process.argv[2] === "init"
+    process.argv[2] === "init" ||
+    process.argv[2] === "doc"
   ) {
     process.stderr.write(
       `${error instanceof Error ? error.message : "Command failed"}\n`,

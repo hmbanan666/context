@@ -85,6 +85,7 @@ export async function startService(
   const validateOrigin = config.oauth
     ? originValidation([new URL(config.oauth.resource).hostname])
     : localhostOriginValidation();
+  const processor = config.processor ?? "off";
   const server = createServer((request, response) => {
     response.setHeader("Content-Type", "application/json");
     response.setHeader("Cache-Control", "no-store");
@@ -137,9 +138,11 @@ export async function startService(
     }
     try {
       store.checkHealth();
-      response.writeHead(200).end(JSON.stringify({ status: "ok" }));
+      response.writeHead(200).end(JSON.stringify({ status: "ok", processor }));
     } catch {
-      response.writeHead(503).end(JSON.stringify({ status: "unavailable" }));
+      response
+        .writeHead(503)
+        .end(JSON.stringify({ status: "unavailable", processor }));
     }
   });
   server.requestTimeout = 5000;

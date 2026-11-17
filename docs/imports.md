@@ -18,6 +18,7 @@ read-only website-assistant setup.
 
 ```sh
 context import markdown /path/to/notes --area studio --project mira
+context import markdown /path/to/notes --area studio --project mira --prune
 ```
 
 The walk is recursive, `*.md` only, and does not follow symlinks or enter
@@ -43,8 +44,29 @@ tags, area, project or document status writes a new immutable revision and is
 source, then:
 
 ```json
-{"type":"summary","added":1,"updated":0,"skipped":2,"rejected":0}
+{"type":"summary","added":1,"updated":0,"skipped":2,"rejected":0,"removed":0}
 ```
+
+`--prune` is off unless you pass it. With `--prune`, after the folder is
+saved, markdown sources from that same area, project, and directory are
+retired when their relative path is not in the folder. Chunks (`path#2`)
+follow the file. `removed` counts those sources, and each one is a JSONL item
+with `"status":"removed"`. The source row stays in the database, so a later
+import of the same path restores it. Search, timeline, and read skip retired
+sources. The import root is the real path of the directory, so a second folder
+in the same project is left alone. A markdown source imported before roots
+were recorded has no root; the first `--prune` for that area and project
+treats it as part of this folder.
+
+```sh
+context doc remove doc:mira:adr:0012
+context doc remove <source-id>
+```
+
+`context doc remove` retires every revision of that document. A source id that
+belongs to a document does the same; any other source id retires that one
+source. It prints `{"removed":N,"id":"..."}` and exits 1 when nothing matches.
+It does not add an MCP tool. Already-retired rows report `removed: 0`.
 
 Exit `0` when nothing was rejected, `2` when a file was rejected and the
 others were saved, `1` on a fatal argument or IO error. A file over **8192**
