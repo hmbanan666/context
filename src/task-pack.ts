@@ -3,6 +3,7 @@ import { knowledgeExcerpt } from "./context-package.js";
 import {
   assessStoredGrounding,
   bestCosine,
+  groundingHeading,
   passageVectors,
   type Grounding,
   type GroundingPassage,
@@ -578,8 +579,14 @@ export function buildTaskPack(
       input.semantic?.sources,
       stored,
     );
+    const text = visibleSourceText(material.source.text);
+    const heading = groundingHeading(
+      material.doc?.title ?? material.metadata.title,
+      text,
+    );
     passages.push({
-      text: visibleSourceText(material.source.text),
+      text,
+      ...(heading ? { heading } : {}),
       ...(vectors.length ? { vectors } : {}),
     });
   }

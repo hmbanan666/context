@@ -64,6 +64,9 @@ folder walk, the owner runs `context doc remove doc:mira:adr:0012` or
 `context doc remove <source id>`. Those commands are not MCP tools.
 
 Leave the LLM lines commented out. `/health` then reports `"processor": "off"`.
+`embeddings` is `warming` while the model loads after listen, `ready` after
+that startup embed, and `off` when no model is available. The listen event
+stays on stdout. The ready line is `{"event":"embeddings_ready"}` on stderr.
 That is a supported mode: distillation does not run, and startup logs that
 once. It is not a failed configuration. When a processor is configured the
 field is `openai` or `codex`, with no model name and no key.
@@ -145,7 +148,13 @@ On a scoped corpus smaller than 6 records
 (`CONTEXT_GROUNDING_MARGIN_MIN_CORPUS`), the centroid is too close to the
 passage itself, so the margin is skipped and the lexical-only rules apply.
 An exact match can then be `strong`, and an off-topic query stays `none`.
-Larger corpora keep the margin. Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
+Question words (how, what, где, чём, and the same kind of function word)
+do not count against that share, and the stored title is part of the first
+passage window, so an English paraphrase of an English paragraph and a
+question that repeats the title can be `strong`. On that same small corpus,
+source cards below half the best card's match score are omitted
+(`CONTEXT_SEARCH_CARD_FLOOR`, default `0.5`, `0` disables it). A larger
+corpus does not use that floor and keeps the margin. Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
 share below `0.30` is the none floor; a term is common from corpus size
 `40`, document frequency `8`, and rate `0.05`; margin `0.024` / `0.08`;
 margin corpus floor `6`) and
@@ -159,6 +168,7 @@ can be set with
 `CONTEXT_GROUNDING_MARGIN_WEAK`,
 `CONTEXT_GROUNDING_MARGIN_STRONG`, and
 `CONTEXT_GROUNDING_MARGIN_MIN_CORPUS`.
+`CONTEXT_SEARCH_CARD_FLOOR` defaults to `0.5`.
 Calibrate the margin on a real database with
 `context grounding explain --file`. See [Search](search.md#grounding).
 

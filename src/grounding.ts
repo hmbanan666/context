@@ -9,6 +9,9 @@ import { stemText } from "./search-lexical.js";
 // chunk the embedding index stores (256 UTF-16 code units, 64 overlap), so a
 // score belongs to the window that actually matched. Glossary synonyms do
 // not count; they expand the query, they are not the caller's words.
+// Question words and other function words are not content terms: they stay
+// out of the share numerator and the denominator. A heading is scored with
+// the first window only and does not move the chunk offsets used for vectors.
 //
 // Each term is weighted by inverse document frequency in the same pool search
 // can match. Common terms stay in the denominator and cannot by themselves
@@ -109,7 +112,54 @@ export interface GroundingVector {
 
 export interface GroundingPassage {
   readonly text: string;
+  /** Stored title. Lexical evidence for the first window only. */
+  readonly heading?: string;
   readonly vectors?: readonly GroundingVector[];
+}
+
+// Function words are not evidence and must not dilute a short question.
+// Surfaces, not stems: чём and чем are both listed. A one-letter token is
+// the same kind of noise (the s in "bot's").
+const shareStops = new Set(
+  `a an the what which who whom whose why how where when did does do
+   was were is are am be been being of in on at to for and or but if
+   than then so as my me you your yours we our ours us they them their
+   it its this that these those there here with from by into onto about
+   over under can could would should will shall may might must has have
+   had not no nor please tell explain describe happened suitable
+   что какие какой какая какое какую каких каким какими
+   как почему кто где когда куда откуда зачем
+   это этот эта эти эту этого этой этом этих этим
+   у я мои моих меня мой моя моё мое мне ты вы мы он она оно они
+   в во на для и или о об обо по из с со к ко от ото до при над под подо
+   без про через между чём чем чего чему ли же бы
+   его её ее их им ей ему них неё нее то
+   можно нужно надо такой такая такое такие
+   весь вся всё все всего всей
+   происходило подходит подходят известно не ни`
+    .split(/\s+/u)
+    .filter((word) => word.length > 0),
+);
+
+export function isShareStop(term: string): boolean {
+  const word = term.toLowerCase();
+  if (shareStops.has(word)) return true;
+  return word.length === 1 && /\p{L}/u.test(word);
+}
+
+/** Title text that is not already the start of the indexed body. */
+export function groundingHeading(
+  title: string | undefined,
+  text: string,
+): string | undefined {
+  const heading = title?.trim();
+  if (!heading) return undefined;
+  const body = text.trimStart();
+  if (body.toLowerCase().startsWith(heading.toLowerCase())) {
+    const next = body[heading.length];
+    if (next === undefined || !/[\p{L}\p{N}]/u.test(next)) return undefined;
+  }
+  return heading;
 }
 
 function readUnit(
@@ -335,7 +385,8 @@ function scorePassages(
   readonly commonDropped: readonly string[];
   readonly terms: readonly GroundingTermFrequency[];
 } {
-  const info = terms.map((term) => {
+  const contentTerms = terms.filter((term) => !isShareStop(term));
+  const info = contentTerms.map((term) => {
     const df = documentFrequency.get(term) ?? 0;
     const stem = stemText(term);
     const common =
@@ -362,7 +413,11 @@ function scorePassages(
   const rareHits = new Set<string>();
   for (const passage of passages) {
     for (const chunk of textChunks(passage.text)) {
-      const stems = stemsOf(chunk.text);
+      const window =
+        chunk.offset === 0 && passage.heading
+          ? `${passage.heading}\n${chunk.text}`
+          : chunk.text;
+      const stems = stemsOf(window);
       let matchedWeight = 0;
       let uncommonWeight = 0;
       let matched = 0;
@@ -386,14 +441,14 @@ function scorePassages(
         uncommon:
           totalWeight > 0
             ? uncommonWeight / totalWeight
-            : terms.length > 0
-              ? uncommonMatched / terms.length
+            : contentTerms.length > 0
+              ? uncommonMatched / contentTerms.length
               : 0,
         coverage:
           totalWeight > 0
             ? matchedWeight / totalWeight
-            : terms.length > 0
-              ? matched / terms.length
+            : contentTerms.length > 0
+              ? matched / contentTerms.length
               : 0,
         matched,
         cosine: looked.cosine,

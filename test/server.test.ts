@@ -3,7 +3,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vite-plus/test";
+import { startService as startRawService } from "../src/server.js";
 import { startTestService as startService } from "./fixtures/search-service.js";
+
+function assertHealth(
+  body: { status?: string; processor?: string; embeddings?: string },
+  processor = "off",
+) {
+  assert.equal(body.status, "ok");
+  assert.equal(body.processor, processor);
+  assert.match(body.embeddings ?? "", /^(off|warming|ready)$/);
+}
 
 test("only health is exposed on loopback; private routes do not exist", async () => {
   const directory = await mkdtemp(join(tmpdir(), "context-http-"));
@@ -17,7 +27,7 @@ test("only health is exposed on loopback; private routes do not exist", async ()
     const health = await fetch(`${url}/health`);
     assert.equal(health.status, 200);
     assert.equal(health.headers.get("cache-control"), "no-store");
-    assert.deepEqual(await health.json(), { status: "ok", processor: "off" });
+    assertHealth(await health.json());
     const write = await fetch(`${url}/health`, { method: "POST" });
     assert.equal(write.status, 405);
     for (const path of ["/mcp", "/capture", "/recall", "/sources"]) {
@@ -170,6 +180,55 @@ test("built-in auth routes and CLI credentials work through the HTTP listener, i
     await client.close();
     registry.close();
     await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("embedding warmup starts after listen and logs ready on stderr", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-warmup-"));
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: string[] = [];
+  const service = await startRawService(
+    {
+      port: 0,
+      databasePath: join(directory, "context.db"),
+    },
+    {
+      version: "synthetic-warmup",
+      async embed(text, purpose) {
+        calls.push(`${purpose}:${text}`);
+        await gate;
+        return Float32Array.from([1, 0]);
+      },
+    },
+  );
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = ((line?: unknown) => {
+    lines.push(String(line));
+  }) as typeof console.error;
+  try {
+    const health = (await (
+      await fetch(`http://127.0.0.1:${service.address.port}/health`)
+    ).json()) as { embeddings?: string };
+    assert.equal(health.embeddings, "warming");
+    assert.equal(calls.includes("query:warmup"), true);
+    release?.();
+    await service.close();
+    assert.ok(
+      lines.some((line) => line.includes('"event":"embeddings_ready"')),
+    );
+    assert.equal(
+      lines.some((line) => line.includes("synthetic")),
+      false,
+    );
+  } finally {
+    console.error = original;
+    release?.();
+    await service.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }
 });

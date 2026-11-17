@@ -66,22 +66,24 @@ test("health reports the processor kind and nothing secret", async () => {
       processor: "off",
     });
     try {
-      assert.deepEqual(
-        await (
-          await fetch(`http://127.0.0.1:${off.address.port}/health`)
-        ).json(),
-        { status: "ok", processor: "off" },
-      );
+      const offHealth = (await (
+        await fetch(`http://127.0.0.1:${off.address.port}/health`)
+      ).json()) as { status: string; processor: string; embeddings: string };
+      assert.equal(offHealth.status, "ok");
+      assert.equal(offHealth.processor, "off");
+      assert.match(offHealth.embeddings, /^(off|warming|ready)$/);
     } finally {
       await off.close();
     }
     for (const processor of ["openai", "codex"] as const) {
       const service = await startService({ port: 0, databasePath, processor });
       try {
-        const body = await (
+        const body = (await (
           await fetch(`http://127.0.0.1:${service.address.port}/health`)
-        ).json();
-        assert.deepEqual(body, { status: "ok", processor });
+        ).json()) as { status: string; processor: string; embeddings: string };
+        assert.equal(body.status, "ok");
+        assert.equal(body.processor, processor);
+        assert.match(body.embeddings, /^(off|warming|ready)$/);
         assert.equal(JSON.stringify(body).includes(model), false);
         assert.equal(JSON.stringify(body).includes(key), false);
       } finally {
@@ -152,7 +154,14 @@ test("startup logs distillation off once and does not print a configured model",
     const health = await (
       await fetch(`http://127.0.0.1:${off.port}/health`)
     ).json();
-    assert.deepEqual(health, { status: "ok", processor: "off" });
+    const reported = health as {
+      status: string;
+      processor: string;
+      embeddings: string;
+    };
+    assert.equal(reported.status, "ok");
+    assert.equal(reported.processor, "off");
+    assert.match(reported.embeddings, /^(off|warming|ready)$/);
     const notices = off
       .text()
       .split("\n")
@@ -173,7 +182,14 @@ test("startup logs distillation off once and does not print a configured model",
     const open = await (
       await fetch(`http://127.0.0.1:${configured.port}/health`)
     ).json();
-    assert.deepEqual(open, { status: "ok", processor: "openai" });
+    const openBody = open as {
+      status: string;
+      processor: string;
+      embeddings: string;
+    };
+    assert.equal(openBody.status, "ok");
+    assert.equal(openBody.processor, "openai");
+    assert.match(openBody.embeddings, /^(off|warming|ready)$/);
     assert.equal(configured.text().includes(model), false);
     assert.equal(configured.text().includes(key), false);
     assert.equal(configured.text().includes('"event":"processor"'), false);
@@ -184,7 +200,14 @@ test("startup logs distillation off once and does not print a configured model",
     const codexHealth = await (
       await fetch(`http://127.0.0.1:${codex.port}/health`)
     ).json();
-    assert.deepEqual(codexHealth, { status: "ok", processor: "codex" });
+    const codexBody = codexHealth as {
+      status: string;
+      processor: string;
+      embeddings: string;
+    };
+    assert.equal(codexBody.status, "ok");
+    assert.equal(codexBody.processor, "codex");
+    assert.match(codexBody.embeddings, /^(off|warming|ready)$/);
     assert.equal(codex.text().includes("gpt-6-luna"), false);
     assert.equal(codex.text().includes('"event":"processor"'), false);
     await stop(children[2]!);

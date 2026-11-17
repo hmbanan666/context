@@ -4,6 +4,7 @@ import type { SemanticHits } from "./embedding-index.js";
 import {
   bestCosine,
   explainStoredGrounding,
+  groundingHeading,
   passageVectors,
   type Grounding,
   type GroundingPassage,
@@ -22,6 +23,7 @@ import type {
 } from "./knowledge.js";
 import type { Material } from "./materials.js";
 import { contextPackageSchema, questionTerms } from "./package-query.js";
+import { idsWithinCardFloor, readCardFloor } from "./search-when-none.js";
 import { visibleSourceText } from "./source-text.js";
 import type { SourceStore } from "./store.js";
 
@@ -347,8 +349,14 @@ export function buildContextPackage(
         semantic?.sources,
         stored,
       );
+      const text = visibleSourceText(material.source.text);
+      const heading = groundingHeading(
+        material.doc?.title ?? material.metadata.title,
+        text,
+      );
       passages.push({
-        text: visibleSourceText(material.source.text),
+        text,
+        ...(heading ? { heading } : {}),
         ...(vectors.length ? { vectors } : {}),
       });
     }
@@ -574,8 +582,25 @@ export function buildContextPackage(
     rank: number;
     tier: number;
   }> = [];
+  // Below the margin corpus floor, reciprocal-rank scores barely separate a
+  // real hit from a neighbour that shares one word. Drop source cards far
+  // below the best match. Larger corpora keep every hit.
+  const cardFloor = readCardFloor(process.env);
+  const sourceKeep =
+    explained &&
+    explained.documents < explained.thresholds.marginMinCorpus &&
+    cardFloor > 0
+      ? idsWithinCardFloor(
+          original.materials.map((material) => material.source.id),
+          original.scores,
+          original.termHits,
+          cardFloor,
+        )
+      : undefined;
+  const keepSource = (id: string) => sourceKeep?.has(id) !== false;
   if (projectId === undefined) {
     original.materials.slice(0, 100).forEach((source, i) => {
+      if (!keepSource(source.source.id)) return;
       candidates.push({ source, rank: i * 2 + 1, tier: 0 });
     });
     derived.items.slice(0, 100).forEach((item, i) => {
@@ -590,6 +615,7 @@ export function buildContextPackage(
       else candidates.push({ item, rank: restRank++, tier: 1 });
     }
     original.materials.slice(0, 100).forEach((source, i) => {
+      if (!keepSource(source.source.id)) return;
       candidates.push({ source, rank: i, tier: 1 });
     });
   }

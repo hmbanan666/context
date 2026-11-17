@@ -7,6 +7,11 @@ quantized `Xenova/multilingual-e5-small`; startup automatically backfills existi
 sources and knowledge, and new captures/imports enqueue their stored text. Capture
 never waits for a model. A missing/unavailable model logs `embeddings_unavailable`
 without record content and automatically falls back to exact plus stemmed search.
+The process listens before it loads the model. After listen, it loads the model
+and embeds one dummy query in the background, so the first search does not pay
+that startup cost and the listening line is not delayed. Success is one stderr
+line, `{"event":"embeddings_ready"}`. That line is not written to stdout.
+`/health` reports `embeddings` as `warming`, `ready`, or `off`.
 
 Ask through the existing `context_package` MCP tool. Its output fields, provenance,
 source excerpts, date semantics, entry/byte limits and one-hop relations stay the
@@ -69,6 +74,15 @@ apply: an exact match can be `strong`, and an off-topic query stays `none`.
 A corpus at or above the floor keeps the margin, including the public
 calibration sets.
 
+Question words and other function words do not enter the uncommon share, in
+Russian or English. The list includes как, о, чём, чем, how, what, where,
+can, you, and explain, and a one-letter token such as the s in bot's. Those
+words stay out of both the numerator and the denominator. A stored title is
+read with the first passage window for this check only. Chunk offsets stay
+on the body, so a stored vector still belongs to that window. A question
+that repeats the title can be strong when the body never repeats the
+distinctive word.
+
 With embeddings, the result is `none` when the uncommon share is below
 `CONTEXT_GROUNDING_LEXICAL_NONE` (default `0.30`) and the margin is below
 `CONTEXT_GROUNDING_MARGIN_WEAK` (default `0.024`). That includes a passage
@@ -130,6 +144,15 @@ leave them. Omitting it follows `CONTEXT_SEARCH_WHEN_NONE`, which defaults to
 `items`, and `relations`. The `grounding` field stays `none`. A curated or
 agent-memory instance that should not hand the model an off-topic page sets
 `CONTEXT_SEARCH_WHEN_NONE=empty`.
+
+On a scoped corpus smaller than `CONTEXT_GROUNDING_MARGIN_MIN_CORPUS`,
+search omits source cards whose match score is below
+`CONTEXT_SEARCH_CARD_FLOOR` (default `0.5`) times the best source card.
+The compared score is the hybrid rank score plus how many query terms the
+card contains. On a few notes the rank scores alone sit too close to drop a
+neighbour that shares one word. `0` turns the floor off. A corpus at or
+above that size does not use the floor, so a lower-ranked hit in the public
+eval sets stays. The best card is kept. Knowledge cards are unchanged.
 
 When `items` is empty and the processor is off, search adds `itemsHint` with
 the text `Items are empty because the processor is off.` Sources are still

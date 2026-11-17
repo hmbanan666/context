@@ -136,13 +136,24 @@ export async function startService(
         .end(JSON.stringify({ error: "method_not_allowed" }));
       return;
     }
+    const embeddingsState = embeddings.warmup;
     try {
       store.checkHealth();
-      response.writeHead(200).end(JSON.stringify({ status: "ok", processor }));
+      response.writeHead(200).end(
+        JSON.stringify({
+          status: "ok",
+          processor,
+          embeddings: embeddingsState,
+        }),
+      );
     } catch {
-      response
-        .writeHead(503)
-        .end(JSON.stringify({ status: "unavailable", processor }));
+      response.writeHead(503).end(
+        JSON.stringify({
+          status: "unavailable",
+          processor,
+          embeddings: embeddingsState,
+        }),
+      );
     }
   });
   server.requestTimeout = 5000;
@@ -165,6 +176,9 @@ export async function startService(
     throw error;
   }
   const address = server.address() as AddressInfo;
+  // After listen, so model load and the dummy embed cannot delay the
+  // listening line. The ready log goes to stderr.
+  embeddings.warm();
   return {
     address,
     embeddings,
