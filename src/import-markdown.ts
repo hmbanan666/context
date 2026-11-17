@@ -36,6 +36,13 @@ export interface MarkdownImportOptions {
   readonly project?: string;
   /** Retire markdown sources from this area, project, and directory that are gone. */
   readonly prune?: boolean;
+  /**
+   * Also retire markdown sources in that area and project that have no recorded
+   * import root. Off unless set. Those rows are not part of every folder.
+   */
+  readonly pruneLegacy?: boolean;
+  /** Allow --prune when the folder exists but contains no markdown files. */
+  readonly force?: boolean;
 }
 
 export interface MarkdownImportItem {
@@ -276,7 +283,20 @@ export async function importMarkdown(
   options: MarkdownImportOptions,
   emit: (result: MarkdownImportResult) => void | Promise<void> = () => {},
 ): Promise<MarkdownImportSummary> {
-  const rootInfo = await stat(directory);
+  let rootInfo: Awaited<ReturnType<typeof stat>>;
+  try {
+    rootInfo = await stat(directory);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      throw new Error(
+        options.prune
+          ? "Refusing to prune a missing folder. Nothing was retired."
+          : "Folder not found",
+      );
+    }
+    throw error;
+  }
   if (!rootInfo.isDirectory()) throw new Error("Not a directory");
   const root = await realpath(directory);
   const area = resolveArea(options);
@@ -299,6 +319,11 @@ export async function importMarkdown(
     await emit({ type: "item", path, status: "rejected", reason });
   };
   const files = await markdownFiles(directory);
+  if (options.prune && files.length === 0 && !options.force) {
+    throw new Error(
+      "Refusing to prune an empty folder. Pass --force to retire sources recorded for this directory.",
+    );
+  }
   const present = new Set<string>();
   for (const file of files) {
     try {
@@ -469,6 +494,7 @@ export async function importMarkdown(
       area,
       options.project,
       root,
+      options.pruneLegacy === true,
     )) {
       const path = markdownImportPath(candidate.externalId);
       if (present.has(candidate.externalId) || present.has(path)) continue;

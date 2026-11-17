@@ -365,6 +365,13 @@ The amber index stays on the desk.
     );
     assert.equal(store.search("amber index", "studio", 5).length, 0);
     assert.equal(store.removeRecord("doc:mira:adr:0012")?.removed, 0);
+    const restoredDoc = store.restoreRecord("doc:mira:adr:0012");
+    assert.equal(restoredDoc?.id, "doc:mira:adr:0012");
+    assert.ok((restoredDoc?.restored ?? 0) >= 1);
+    assert.ok(store.resolveDocument("doc:mira:adr:0012", "studio"));
+    assert.equal(store.restoreRecord("doc:mira:adr:0012")?.restored, 0);
+    assert.equal(store.removeRecord("doc:mira:adr:0012")?.removed, 1);
+    assert.equal(store.restoreRecord("missing-source"), undefined);
     const keptId = store
       .list("studio", 20)
       .find((source) => source.text.includes("brass harbor"))?.id;
@@ -414,9 +421,16 @@ test("prune does not retire a different import root", async () => {
     await importMarkdown(store, folderA, shared);
     await importMarkdown(store, folderB, shared);
     await rm(join(folderB, "blue.md"));
+    await assert.rejects(
+      () => importMarkdown(store, folderB, { ...shared, prune: true }),
+      /Refusing to prune an empty folder/,
+    );
+    assert.equal(store.search("Amber stays", "studio", 5).length, 1);
+    assert.equal(store.search("Cobalt stays", "studio", 5).length, 1);
     const pruned = await importMarkdown(store, folderB, {
       ...shared,
       prune: true,
+      force: true,
     });
     assert.equal(pruned.removed, 1);
     assert.equal(store.search("Amber stays", "studio", 5).length, 1);
@@ -427,8 +441,17 @@ test("prune does not retire a different import root", async () => {
     const legacy = await importMarkdown(store, folderB, {
       ...shared,
       prune: true,
+      force: true,
     });
-    assert.equal(legacy.removed, 1);
+    assert.equal(legacy.removed, 0);
+    assert.equal(store.search("Amber stays", "studio", 5).length, 1);
+    const opted = await importMarkdown(store, folderB, {
+      ...shared,
+      prune: true,
+      pruneLegacy: true,
+      force: true,
+    });
+    assert.equal(opted.removed, 1);
     assert.equal(store.search("Amber stays", "studio", 5).length, 0);
   } finally {
     store.close();
@@ -510,6 +533,33 @@ test("markdown CLI prune and doc remove", async () => {
     } finally {
       opened.close();
     }
+    const restored = run(["doc", "restore", keptId]);
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.equal(JSON.parse(restored.stdout).restored, 1);
+    assert.equal(JSON.parse(restored.stdout).id, keptId);
+    const again = run(["source", "restore", keptId]);
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(JSON.parse(again.stdout).restored, 0);
+    const visible = new SourceStore(databasePath);
+    try {
+      assert.equal(visible.search("remaining page", "studio", 5).length, 1);
+      assert.ok(visible.find(keptId, "studio"));
+    } finally {
+      visible.close();
+    }
+    const missingFolder = run([
+      "import",
+      "markdown",
+      join(directory, "missing-notes"),
+      "--area",
+      "studio",
+      "--project",
+      "mira",
+      "--prune",
+    ]);
+    assert.equal(missingFolder.status, 1);
+    assert.match(missingFolder.stderr, /Refusing to prune a missing folder/);
+    assert.equal(missingFolder.stdout.trim(), "");
     const missing = run(["doc", "remove", "missing-source"]);
     assert.equal(missing.status, 1);
     assert.match(missing.stderr, /Not found/);

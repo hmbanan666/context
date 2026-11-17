@@ -1397,6 +1397,7 @@ export class SourceStore {
     area: string,
     project: string | undefined,
     root: string,
+    includeRootless = false,
   ): { id: string; externalId: string }[] {
     const projectSql = project
       ? `EXISTS (SELECT 1 FROM project_associations pa
@@ -1405,6 +1406,11 @@ export class SourceStore {
       : `NOT EXISTS (SELECT 1 FROM project_associations pa
            WHERE pa.record_kind = 'source' AND pa.record_id = s.id
              AND pa.status = 'linked')`;
+    // A source imported before roots were recorded has no row. It does not
+    // belong to every folder. Only --prune-legacy opts into those rows.
+    const rootSql = includeRootless
+      ? "(roots.root = ? OR roots.root IS NULL)"
+      : "roots.root = ?";
     const params = project
       ? ["markdown", area, root, project]
       : ["markdown", area, root];
@@ -1416,7 +1422,7 @@ export class SourceStore {
          LEFT JOIN markdown_import_roots roots ON roots.source_id = s.id
          WHERE i.source = ?
            AND s.scope = ?
-           AND (roots.root = ? OR roots.root IS NULL)
+           AND ${rootSql}
            AND ${this.#visible("s.id")}
            AND ${projectSql}`,
       )
@@ -1455,6 +1461,100 @@ export class SourceStore {
     if (doc)
       return this.removeRecord(`doc:${doc.projectId}:${doc.type}:${doc.key}`);
     return { removed: this.retireSource(id, "doc_remove") ? 1 : 0, id };
+  }
+
+  /**
+   * Undo a retirement. A document id restores every revision of that document.
+   * A source id that belongs to a document does the same. Already-visible rows
+   * report restored 0. Missing ids return undefined.
+   */
+  restoreRecord(id: string): { restored: number; id: string } | undefined {
+    const target = this.#retirementTargets(id);
+    if (!target) return undefined;
+    let restored = 0;
+    const clear = this.#database.prepare(
+      "DELETE FROM source_retirements WHERE source_id = ?",
+    );
+    for (const sourceId of target.sources)
+      restored += Number(clear.run(sourceId).changes);
+    return { restored, id: target.id };
+  }
+
+  #retirementTargets(
+    id: string,
+  ): { id: string; sources: string[] } | undefined {
+    if (id.startsWith("doc:")) {
+      const refs = documentRefCandidates(id);
+      const ref = refs.length === 1 ? refs[0] : undefined;
+      if (!ref) return undefined;
+      const rows = this.#database
+        .prepare(
+          `SELECT source_id FROM source_docs
+           WHERE project_id = ? AND doc_type = ? AND doc_key = ?`,
+        )
+        .all(ref.projectId, ref.type, ref.key);
+      if (!rows.length) return undefined;
+      return {
+        id: `doc:${ref.projectId}:${ref.type}:${ref.key}`,
+        sources: rows.map((row) => String(row.source_id)),
+      };
+    }
+    const exists = this.#database
+      .prepare("SELECT id FROM sources WHERE id = ?")
+      .get(id);
+    if (!exists) return undefined;
+    const doc = this.#document(id);
+    if (doc)
+      return this.#retirementTargets(
+        `doc:${doc.projectId}:${doc.type}:${doc.key}`,
+      );
+    return { id, sources: [id] };
+  }
+
+  /** Owner-local counts for `context status`. Knowledge is absent until that table exists. */
+  instanceCounts(): {
+    sourcesActive: number;
+    sourcesRetired: number;
+    docs: number;
+    knowledgeItems: number;
+    projects: number;
+  } {
+    const count = (sql: string) =>
+      Number(this.#database.prepare(sql).get()?.n ?? 0);
+    const has = (name: string) =>
+      !!this.#database
+        .prepare(
+          "SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .get(name);
+    const sourcesRetired = has("source_retirements")
+      ? count("SELECT COUNT(*) AS n FROM source_retirements")
+      : 0;
+    const sourcesActive = has("source_retirements")
+      ? count(
+          `SELECT COUNT(*) AS n FROM sources s
+           WHERE NOT EXISTS (
+             SELECT 1 FROM source_retirements r WHERE r.source_id = s.id
+           )`,
+        )
+      : count("SELECT COUNT(*) AS n FROM sources");
+    return {
+      sourcesActive,
+      sourcesRetired,
+      docs: has("source_docs")
+        ? count(
+            `SELECT COUNT(*) AS n FROM (
+               SELECT DISTINCT project_id, doc_type, doc_key FROM source_docs
+             )`,
+          )
+        : 0,
+      knowledgeItems: has("knowledge_items")
+        ? count("SELECT COUNT(*) AS n FROM knowledge_items")
+        : 0,
+      projects: has("projects")
+        ? count("SELECT COUNT(*) AS n FROM projects")
+        : 0,
+    };
   }
 
   #hasRetirementTable(): boolean {

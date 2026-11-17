@@ -120,12 +120,25 @@ context token create one-project --read projects --write projects --default-writ
 context client list
 context token list
 context token revoke TOKEN_ID
+context token revoke --name coding-agent
 context client revoke CLIENT_ID
+context remember --area projects --project observatory "The shutter stays closed."
+context status
 ```
 
 Tokens print once and expire in 90 days by default; `--expires` accepts bounded
 `m`, `h`, `d` durations up to one year. Optional `--project <id>` binds that
-token to one existing project; the area flags are still required. OAuth
+token to one existing project; the area flags are still required. `context
+token list` includes the token name, `used`, and `lastUsed`. `used` becomes
+true and `lastUsed` is the unix time when that access or CLI token is
+accepted, including a successful `remember`. `context token revoke --name
+<name>` revokes every token issued for that client name. `context remember`
+stores a note through the same validation and write path as MCP `remember`.
+Text is the remaining arguments or stdin. `--area` selects the area, repeat
+`--project` for one to eight existing ids, and `--kind` is `note`. `context
+status` prints source counts (active and retired), documents, knowledge
+items, tokens, projects, and whether the processor is on or off. It does not
+need `CONTEXT_PUBLIC_URL`. OAuth
 consent does not offer a project, so browser clients stay area-scoped.
 Optional `--process projects` also requires
 read/write rights. Reusing a CLI client name can add area rights to its registry but

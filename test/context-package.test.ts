@@ -701,6 +701,22 @@ test("knowledge excerpts start at a sentence boundary and trim the end", () => {
   assert.equal(shifted.text, emoji.slice(shifted.start, shifted.end));
 });
 
+test("source excerpts stop on a word or sentence boundary", () => {
+  const text =
+    "Alpha prefix stays behind. The cobalt lantern sits on the brass desk and the rest of this sentence should not be cut mid-word when the window is short.";
+  const offset = text.indexOf("lantern");
+  const cut = excerpt(text, offset, 48);
+  assert.equal(cut.text, text.slice(cut.start, cut.end));
+  assert.match(cut.text, /lantern/);
+  assert.ok(cut.end < text.length);
+  const next = text[cut.end] ?? "";
+  const previous = text[cut.end - 1] ?? "";
+  assert.ok(
+    /\s/u.test(next) || /[.!?…。！？]/u.test(previous),
+    JSON.stringify(cut.text),
+  );
+});
+
 test("Unicode excerpts are exact and never split surrogate pairs", () => {
   const text = `${"😀".repeat(150)}needle ${"🚀".repeat(300)}`;
   const e = excerpt(text, text.indexOf("needle"), 361);

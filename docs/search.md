@@ -61,6 +61,13 @@ the chunk set changes. With no embeddings, the share must reach the
 stricter `CONTEXT_GROUNDING_LEXICAL_ONLY_STRONG` (default `0.75`) and the
 margin is not used. On that path a share below
 `CONTEXT_GROUNDING_LEXICAL_NONE` (default `0.30`) is `none`.
+The margin is also skipped when the scoped corpus has fewer than
+`CONTEXT_GROUNDING_MARGIN_MIN_CORPUS` records (default `6`). A handful of
+notes makes the centroid almost the same vector as the passage, so an exact
+hit would otherwise stay `weak`. Below that size the lexical-only rules
+apply: an exact match can be `strong`, and an off-topic query stays `none`.
+A corpus at or above the floor keeps the margin, including the public
+calibration sets.
 
 With embeddings, the result is `none` when the uncommon share is below
 `CONTEXT_GROUNDING_LEXICAL_NONE` (default `0.30`) and the margin is below
@@ -116,7 +123,18 @@ cut to choose `CONTEXT_GROUNDING_MARGIN_WEAK` and
 `CONTEXT_GROUNDING_MARGIN_STRONG`. Defaults stay as above.
 
 When `grounding` is `none`, the agent should say it does not know. Similarity
-and rank are not permission to answer from an unrelated page.
+and rank are not permission to answer from an unrelated page. `search` accepts
+`whenNone: "empty"` to return no cards in that case, and `whenNone: "keep"` to
+leave them. Omitting it follows `CONTEXT_SEARCH_WHEN_NONE`, which defaults to
+`keep`. `empty` sets `cardsOmitted` to `grounding-none` and clears `sources`,
+`items`, and `relations`. The `grounding` field stays `none`. A curated or
+agent-memory instance that should not hand the model an off-topic page sets
+`CONTEXT_SEARCH_WHEN_NONE=empty`.
+
+When `items` is empty and the processor is off, search adds `itemsHint` with
+the text `Items are empty because the processor is off.` Sources are still
+returned. The hint is not an error and is not charged against the evidence
+byte budget.
 
 ## Cross-lingual queries
 
