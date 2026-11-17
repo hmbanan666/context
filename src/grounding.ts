@@ -127,6 +127,7 @@ const shareStops = new Set(
    it its this that these those there here with from by into onto about
    over under can could would should will shall may might must has have
    had not no nor please tell explain describe happened suitable
+   work works working worked нет нету
    что какие какой какая какое какую каких каким какими
    как почему кто где когда куда откуда зачем
    это этот эта эти эту этого этой этом этих этим

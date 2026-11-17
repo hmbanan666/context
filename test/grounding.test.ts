@@ -18,6 +18,7 @@ import {
   type GroundingPassage,
 } from "../src/grounding.js";
 import {
+  cardFloorTerms,
   idsWithinCardFloor,
   presentSearchResult,
   readCardFloor,
@@ -1122,6 +1123,26 @@ test("function words and a heading do not dilute a tiny-corpus share", () => {
   assert.equal(aligned.cosineSource, "vector");
   assert.equal(aligned.cosine, 0.5);
   assert.equal(aligned.label, "strong");
+  const worked = explainStoredGrounding({
+    terms: ["bot", "s", "memory", "work"],
+    passages: [
+      {
+        text: "The bot memory stores short notes and finds them by words.",
+      },
+    ],
+    documents: 3,
+    documentFrequency: new Map([
+      ["bot", 2],
+      ["s", 0],
+      ["memory", 1],
+      ["work", 0],
+    ]),
+    vectorsAvailable: false,
+    thresholds,
+  });
+  assert.equal(worked.label, "strong");
+  assert.equal(worked.rule, "strong-lexical");
+  assert.deepEqual(worked.matchedRare, ["bot", "memory"]);
   const off = explainStoredGrounding({
     terms: ["where", "cobalt", "lantern"],
     passages: [{ text: paragraph, heading: "Как устроена память бота" }],
@@ -1157,4 +1178,93 @@ test("the relative card floor drops a one-word neighbour", () => {
     ["best", "near"],
   );
   assert.equal(idsWithinCardFloor(ids, scores, hits, 0).size, 3);
+  assert.deepEqual(
+    cardFloorTerms(
+      ["бота", "память", "устроена", "work", "s"],
+      new Map([
+        ["бота", 3],
+        ["память", 1],
+        ["устроена", 0],
+        ["work", 0],
+        ["s", 0],
+      ]),
+      3,
+    ),
+    ["память", "устроена"],
+  );
+});
+
+test("shared words do not keep neighbours on a three-note mixed corpus", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-grounding-shared-"));
+  const path = join(directory, "context.db");
+  const store = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  const save = (key: string, title: string, text: string) =>
+    store.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "synthetic",
+      idempotencyKey: key,
+      text,
+      metadata: { type: "note", title },
+    }).material.source.id;
+  try {
+    const badges = save(
+      "badges",
+      "Почему на сайте нет бейджей технологий",
+      "На сайте нет бейджей технологий. Проекты перечислены без значков стека, хотя бот может их назвать.\n\nThe site lists projects without technology badges. The bot can name the stack, but the icons are not shown.",
+    );
+    const memory = save(
+      "memory",
+      "Как устроена память бота",
+      "Память бота хранит короткие заметки и находит их по словам на сайте. Запись остаётся источником.\n\nThe bot memory stores short notes and finds them by words. A record stays a source.",
+    );
+    const answers = save(
+      "answers",
+      "О чём отвечает AI Бот",
+      "AI Бот отвечает по сохранённым заметкам этой области и не выходит за текст сайта.\n\nThe AI bot answers from the saved notes in this area and does not go beyond the text.",
+    );
+    const ask = (question: string) =>
+      buildContextPackage(store, knowledge, {
+        version: 1,
+        scope: "personal",
+        question,
+        limit: 8,
+      });
+    const english = ask("How does the bot's memory work?");
+    assert.equal(english.grounding, "strong");
+    assert.equal(searchGroundingReport(english)?.rule, "strong-lexical");
+    assert.deepEqual(searchGroundingReport(english)?.matchedRare, [
+      "bot",
+      "memory",
+    ]);
+    assert.deepEqual(
+      english.sources.map((source) => source.id),
+      [memory],
+    );
+    const titled = ask("Как устроена память бота?");
+    assert.equal(titled.grounding, "strong");
+    assert.deepEqual(
+      titled.sources.map((source) => source.id),
+      [memory],
+    );
+    const about = ask("О чём отвечает AI Бот?");
+    assert.equal(about.grounding, "strong");
+    assert.deepEqual(
+      about.sources.map((source) => source.id),
+      [answers],
+    );
+    const badgesQuestion = ask("Почему на сайте нет бейджей технологий?");
+    assert.equal(badgesQuestion.grounding, "strong");
+    assert.deepEqual(
+      badgesQuestion.sources.map((source) => source.id),
+      [badges],
+    );
+    const off = ask("Where is the cobalt lantern?");
+    assert.equal(off.grounding, "none");
+  } finally {
+    knowledge.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

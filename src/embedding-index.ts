@@ -6,15 +6,30 @@ import { knowledgeWindowSql } from "./journal.js";
 import { linkedProjectSql } from "./projects.js";
 import { retirementFilter } from "./retirement.js";
 import { latestReviewStatusSql } from "./review-status.js";
+import { questionTerms } from "./package-query.js";
 import {
   ensureVisibleSourceIndex,
   registerSearchFunctions,
+  stemText,
   type SearchTable,
   type VectorHit,
 } from "./search-lexical.js";
 import { visibleSourceText } from "./source-text.js";
 
 const MAX_CHUNKS = 50_000;
+// One ASCII probe does not initialize the Cyrillic tokenizer or a longer
+// ONNX input. The first Russian question then misses the two-second query
+// budget. Both probes run before embeddings_ready.
+const warmupProbes = [
+  "How does the bot's memory work?",
+  "Как устроена память бота?",
+];
+
+function warmQueryPath(): void {
+  for (const text of warmupProbes) {
+    for (const term of questionTerms(text)) stemText(term);
+  }
+}
 // Calibrated on the private RU/EN corpus (see docs/search.md).
 // Lexical hits never depend on these model-specific bounds.
 // Candidate floor only. Answer grounding uses the higher thresholds in grounding.ts.
@@ -360,9 +375,13 @@ export class EmbeddingIndex {
     this.#warmup = "warming";
     this.#warmTask = (async () => {
       try {
+        warmQueryPath();
         await this.#embedder.load?.();
         if (this.#stopping) return;
-        await this.#embed("warmup", "query");
+        for (const text of warmupProbes) {
+          if (this.#stopping) return;
+          await this.#embed(text, "query");
+        }
         if (this.#stopping) return;
         this.#warmup = "ready";
         console.error(JSON.stringify({ event: "embeddings_ready" }));

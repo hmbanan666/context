@@ -8,9 +8,12 @@ sources and knowledge, and new captures/imports enqueue their stored text. Captu
 never waits for a model. A missing/unavailable model logs `embeddings_unavailable`
 without record content and automatically falls back to exact plus stemmed search.
 The process listens before it loads the model. After listen, it loads the model
-and embeds one dummy query in the background, so the first search does not pay
-that startup cost and the listening line is not delayed. Success is one stderr
-line, `{"event":"embeddings_ready"}`. That line is not written to stdout.
+and embeds an English question and a Russian question in the background. An
+ASCII-only probe leaves the first Cyrillic query to initialize the tokenizer
+and the runtime, which can spend the two-second query budget. Both probes
+finish before `{"event":"embeddings_ready"}` on stderr. That line is not
+written to stdout. The same warmup stems those questions so the first search
+does not compile that path either.
 `/health` reports `embeddings` as `warming`, `ready`, or `off`.
 
 Ask through the existing `context_package` MCP tool. Its output fields, provenance,
@@ -75,9 +78,11 @@ A corpus at or above the floor keeps the margin, including the public
 calibration sets.
 
 Question words and other function words do not enter the uncommon share, in
-Russian or English. The list includes как, о, чём, чем, how, what, where,
-can, you, and explain, and a one-letter token such as the s in bot's. Those
-words stay out of both the numerator and the denominator. A stored title is
+Russian or English. The list includes как, о, чём, чем, нет, how, what,
+where, can, you, explain, and work (as in "how does it work"), and a
+one-letter token such as the s in bot's. A missing question word would
+otherwise take the highest weight, because its document frequency is zero.
+Those words stay out of both the numerator and the denominator. A stored title is
 read with the first passage window for this check only. Chunk offsets stay
 on the body, so a stored vector still belongs to that window. A question
 that repeats the title can be strong when the body never repeats the
@@ -148,9 +153,13 @@ agent-memory instance that should not hand the model an off-topic page sets
 On a scoped corpus smaller than `CONTEXT_GROUNDING_MARGIN_MIN_CORPUS`,
 search omits source cards whose match score is below
 `CONTEXT_SEARCH_CARD_FLOOR` (default `0.5`) times the best source card.
-The compared score is the hybrid rank score plus how many query terms the
-card contains. On a few notes the rank scores alone sit too close to drop a
-neighbour that shares one word. `0` turns the floor off. A corpus at or
+The compared score is the hybrid rank score plus how many distinctive terms
+the card contains, counted on the title and the body with the same stemming
+as grounding. Function words are ignored. A term in half or more of that
+small corpus is ignored too, so бот or сайт does not keep every note.
+When no card contains a distinctive term, the floor does not run, so a
+document status boost cannot drop another copy of the same words.
+`0` turns the floor off. A corpus at or
 above that size does not use the floor, so a lower-ranked hit in the public
 eval sets stays. The best card is kept. Knowledge cards are unchanged.
 

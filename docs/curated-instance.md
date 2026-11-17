@@ -65,8 +65,9 @@ folder walk, the owner runs `context doc remove doc:mira:adr:0012` or
 
 Leave the LLM lines commented out. `/health` then reports `"processor": "off"`.
 `embeddings` is `warming` while the model loads after listen, `ready` after
-that startup embed, and `off` when no model is available. The listen event
-stays on stdout. The ready line is `{"event":"embeddings_ready"}` on stderr.
+the English and Russian startup embeds, and `off` when no model is available.
+The listen event stays on stdout. The ready line is `{"event":"embeddings_ready"}`
+on stderr, and it is not logged until both probes have finished.
 That is a supported mode: distillation does not run, and startup logs that
 once. It is not a failed configuration. When a processor is configured the
 field is `openai` or `codex`, with no model name and no key.
@@ -153,7 +154,10 @@ do not count against that share, and the stored title is part of the first
 passage window, so an English paraphrase of an English paragraph and a
 question that repeats the title can be `strong`. On that same small corpus,
 source cards below half the best card's match score are omitted
-(`CONTEXT_SEARCH_CARD_FLOOR`, default `0.5`, `0` disables it). A larger
+(`CONTEXT_SEARCH_CARD_FLOOR`, default `0.5`, `0` disables it). The floor
+counts distinctive terms only: function words are out, and a word in half
+or more of the notes, such as бот or сайт, does not keep a neighbour. The
+title counts. A larger
 corpus does not use that floor and keeps the margin. Thresholds have defaults (uncommon share `0.5`, or `0.75` with no embeddings;
 share below `0.30` is the none floor; a term is common from corpus size
 `40`, document frequency `8`, and rate `0.05`; margin `0.024` / `0.08`;
