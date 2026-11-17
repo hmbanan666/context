@@ -135,10 +135,16 @@ test(
               .outcome,
             "success",
           );
-          assert.deepEqual(
-            await (await fetch(`http://127.0.0.1:${port}/health`)).json(),
-            { status: "ok", processor: "off" },
-          );
+          const health = (await (
+            await fetch(`http://127.0.0.1:${port}/health`)
+          ).json()) as {
+            status: string;
+            processor: string;
+            embeddings: string;
+          };
+          assert.equal(health.status, "ok");
+          assert.equal(health.processor, "off");
+          assert.match(health.embeddings, /^(off|warming|ready)$/);
           assert.equal(
             (await fetch(`http://127.0.0.1:${port}/backups`)).status,
             404,
@@ -217,10 +223,12 @@ test(
       for (let i = 0; i < 200 && !output.includes("\n"); i++) await delay(20);
       const event = JSON.parse(output.trim());
       assert.equal(event.event, "listening");
-      assert.deepEqual(
-        await (await fetch(`http://127.0.0.1:${event.port}/health`)).json(),
-        { status: "ok", processor: "off" },
-      );
+      const health = (await (
+        await fetch(`http://127.0.0.1:${event.port}/health`)
+      ).json()) as { status: string; processor: string; embeddings: string };
+      assert.equal(health.status, "ok");
+      assert.equal(health.processor, "off");
+      assert.match(health.embeddings, /^(off|warming|ready)$/);
       const events = errors
         .trim()
         .split("\n")
@@ -241,6 +249,7 @@ test(
           assert.match(event.detail, /supported mode/);
           continue;
         }
+        if (event.event === "embeddings_ready") continue;
         assert.deepEqual(event, {
           event: "embeddings_unavailable",
           fallback: "lexical_and_stemmed",

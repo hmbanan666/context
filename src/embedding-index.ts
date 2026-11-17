@@ -33,6 +33,9 @@ export interface StoredChunkRef {
   readonly id: string;
 }
 
+/** Startup model state. `off` until warmup runs, and again if the model is missing. */
+export type EmbeddingWarmup = "off" | "warming" | "ready";
+
 export interface SemanticHits {
   available: boolean;
   sources: VectorHit[];
@@ -57,6 +60,9 @@ export class EmbeddingIndex {
   #timer: NodeJS.Timeout | undefined;
   #active: Promise<unknown> | undefined;
   #stopping = false;
+  #warmup: EmbeddingWarmup = "off";
+  #warmStarted = false;
+  #warmTask: Promise<void> = Promise.resolve();
   // Centroid of the passage vectors for one area or project. The stamp is the
   // chunk count and max rowid, so a rewrite recomputes it.
   #centroids = new Map<
@@ -338,6 +344,34 @@ export class EmbeddingIndex {
     return true;
   }
 
+  get warmup(): EmbeddingWarmup {
+    return this.#warmup;
+  }
+
+  /**
+   * Load the model and embed one dummy query. The server calls this after
+   * listen so the first search does not pay startup cost and the listening
+   * line is not delayed. Success is one stderr JSON line. A missing model
+   * leaves the state `off`; the embedder already logs `embeddings_unavailable`.
+   */
+  warm(): void {
+    if (this.#warmStarted || this.#stopping) return;
+    this.#warmStarted = true;
+    this.#warmup = "warming";
+    this.#warmTask = (async () => {
+      try {
+        await this.#embedder.load?.();
+        if (this.#stopping) return;
+        await this.#embed("warmup", "query");
+        if (this.#stopping) return;
+        this.#warmup = "ready";
+        console.error(JSON.stringify({ event: "embeddings_ready" }));
+      } catch {
+        if (this.#warmup !== "ready") this.#warmup = "off";
+      }
+    })();
+  }
+
   start() {
     const tick = () => {
       if (this.#stopping) return;
@@ -348,14 +382,7 @@ export class EmbeddingIndex {
             this.#timer = setTimeout(tick, didWork ? 10 : 1000).unref();
         });
     };
-    // Warm the baked-in model in the background even when backfill is complete,
-    // so the first question after a restart does not pay the load cost.
-    this.#active = Promise.resolve()
-      .then(() => this.#embedder.load?.())
-      .catch(() => {})
-      .then(() => {
-        if (!this.#stopping) this.#timer = setTimeout(tick, 0).unref();
-      });
+    if (!this.#stopping) this.#timer = setTimeout(tick, 0).unref();
   }
 
   async search(input: SemanticSelection): Promise<SemanticHits> {
@@ -634,6 +661,7 @@ export class EmbeddingIndex {
     this.#stopping = true;
     clearTimeout(this.#timer);
     await this.#active;
+    await this.#warmTask;
     await this.#tail;
     await this.#embedder.close?.();
     this.#db.close();

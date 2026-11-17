@@ -17,7 +17,11 @@ import {
   readGroundingThresholds,
   type GroundingPassage,
 } from "../src/grounding.js";
-import { presentSearchResult } from "../src/search-when-none.js";
+import {
+  idsWithinCardFloor,
+  presentSearchResult,
+  readCardFloor,
+} from "../src/search-when-none.js";
 import { KnowledgeStore } from "../src/knowledge.js";
 import { createContextMcp } from "../src/mcp.js";
 import { SourceStore } from "../src/store.js";
@@ -959,4 +963,198 @@ test("search tells the agent when nothing relevant was stored", async () => {
     sources.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("question words and a stored title ground a three-note mixed corpus", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "context-grounding-mixed-"));
+  const path = join(directory, "context.db");
+  const store = new SourceStore(path);
+  const knowledge = new KnowledgeStore(path);
+  const save = (key: string, title: string, text: string) =>
+    store.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "synthetic",
+      idempotencyKey: key,
+      text,
+      metadata: { type: "note", title },
+    }).material.source.id;
+  try {
+    const memory = save(
+      "memory",
+      "Как устроена память бота",
+      "Память бота хранит короткие заметки и находит их по словам. Запись остаётся источником.\n\nThe bot memory stores short notes and finds them by words. A record stays a source.",
+    );
+    const answers = save(
+      "answers",
+      "О чём отвечает AI Бот",
+      "AI Бот цитирует сохранённые заметки этой области. Факты вне текста не используются.\n\nSaved notes in this area set the boundary of an answer.",
+    );
+    save(
+      "tidy",
+      "Ночная уборка индекса",
+      "Ночная уборка перестраивает поисковый индекс и не трогает исходный текст.\n\nNightly tidy rebuilds the search index and leaves the original notes alone.",
+    );
+    const ask = (question: string) =>
+      buildContextPackage(store, knowledge, {
+        version: 1,
+        scope: "personal",
+        question,
+        limit: 8,
+      });
+    const english = ask(
+      "Can you explain how the bot memory stores short notes?",
+    );
+    assert.equal(english.grounding, "strong");
+    assert.equal(searchGroundingReport(english)?.rule, "strong-lexical");
+    assert.deepEqual(
+      english.sources.map((source) => source.id),
+      [memory],
+    );
+    assert.ok(
+      (searchGroundingReport(english)?.rareShare ?? 0) >=
+        thresholds.lexicalOnlyStrong,
+    );
+    const titled = ask("Как устроена память бота?");
+    assert.equal(titled.grounding, "strong");
+    assert.equal(titled.sources[0]?.id, memory);
+    const about = ask("О чём отвечает AI Бот?");
+    assert.equal(about.grounding, "strong");
+    assert.equal(
+      about.sources.some((source) => source.id === answers),
+      true,
+    );
+    const off = ask("Where is the cobalt lantern?");
+    assert.equal(off.grounding, "none");
+    assert.equal(off.sources.length, 0);
+    for (let index = 0; index < 3; index += 1)
+      store.capture({
+        version: 1,
+        scope: "personal",
+        origin: "synthetic",
+        idempotencyKey: `filler-${index}`,
+        text: `Ordinary weather remains ordinary in filler page ${index}.`,
+      });
+    const wide = ask("Can you explain how the bot memory stores short notes?");
+    assert.equal(wide.grounding, "strong");
+    assert.equal(wide.sources.length, 3);
+  } finally {
+    knowledge.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("function words and a heading do not dilute a tiny-corpus share", () => {
+  const paragraph =
+    "The bot memory stores short notes and finds them by words.";
+  const asked = explainStoredGrounding({
+    terms: ["can", "you", "explain", "bot", "memory", "stores", "notes"],
+    passages: [{ text: paragraph }],
+    documents: 3,
+    documentFrequency: new Map([
+      ["can", 0],
+      ["you", 0],
+      ["explain", 0],
+      ["bot", 1],
+      ["memory", 1],
+      ["stores", 1],
+      ["notes", 1],
+    ]),
+    vectorsAvailable: false,
+    thresholds,
+  });
+  assert.equal(asked.label, "strong");
+  assert.equal(asked.rule, "strong-lexical");
+  assert.deepEqual(asked.matchedRare, ["bot", "memory", "stores", "notes"]);
+  const owned = explainStoredGrounding({
+    terms: ["bot", "s", "memory", "structured"],
+    passages: [{ text: "The bot memory is structured as stored notes." }],
+    documents: 3,
+    documentFrequency: new Map([
+      ["bot", 1],
+      ["s", 0],
+      ["memory", 1],
+      ["structured", 1],
+    ]),
+    vectorsAvailable: false,
+    thresholds,
+  });
+  assert.equal(owned.label, "strong");
+  assert.deepEqual(owned.matchedRare, ["bot", "memory", "structured"]);
+  const titled = explainStoredGrounding({
+    terms: ["устроена", "память", "бота"],
+    passages: [
+      {
+        text: "Память бота хранит короткие заметки.",
+        heading: "Как устроена память бота",
+      },
+    ],
+    documents: 3,
+    documentFrequency: new Map([
+      ["устроена", 1],
+      ["память", 1],
+      ["бота", 1],
+    ]),
+    vectorsAvailable: true,
+    backgroundCosine: 0.99,
+    thresholds,
+  });
+  assert.equal(titled.label, "strong");
+  assert.equal(titled.rule, "strong-lexical");
+  assert.equal(titled.margin, 0);
+  assert.deepEqual(titled.matchedRare, ["устроена", "память", "бота"]);
+  const aligned = explainStoredGrounding({
+    terms: ["lantern"],
+    passages: [
+      {
+        text: "The cobalt lantern is in the blue cabinet.",
+        heading: "Cobalt lantern",
+        vectors: [{ offset: 0, score: 0.5 }],
+      },
+    ],
+    documents: 100,
+    documentFrequency: new Map([["lantern", 1]]),
+    vectorsAvailable: true,
+    backgroundCosine: 0,
+    thresholds,
+  });
+  assert.equal(aligned.cosineSource, "vector");
+  assert.equal(aligned.cosine, 0.5);
+  assert.equal(aligned.label, "strong");
+  const off = explainStoredGrounding({
+    terms: ["where", "cobalt", "lantern"],
+    passages: [{ text: paragraph, heading: "Как устроена память бота" }],
+    documents: 3,
+    documentFrequency: new Map([
+      ["where", 0],
+      ["cobalt", 0],
+      ["lantern", 0],
+    ]),
+    vectorsAvailable: false,
+    thresholds,
+  });
+  assert.equal(off.label, "none");
+});
+
+test("the relative card floor drops a one-word neighbour", () => {
+  assert.equal(readCardFloor({}), 0.5);
+  assert.equal(readCardFloor({ CONTEXT_SEARCH_CARD_FLOOR: "0" }), 0);
+  assert.throws(() => readCardFloor({ CONTEXT_SEARCH_CARD_FLOOR: "2" }));
+  const ids = ["best", "near", "weak"];
+  const scores = new Map([
+    ["best", 0.03],
+    ["near", 0.029],
+    ["weak", 0.028],
+  ]);
+  const hits = new Map([
+    ["best", { concepts: 4 }],
+    ["near", { concepts: 4 }],
+    ["weak", { concepts: 1 }],
+  ]);
+  assert.deepEqual(
+    [...idsWithinCardFloor(ids, scores, hits, 0.5)],
+    ["best", "near"],
+  );
+  assert.equal(idsWithinCardFloor(ids, scores, hits, 0).size, 3);
 });

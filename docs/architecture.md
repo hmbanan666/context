@@ -43,7 +43,10 @@ uncommon terms that co-occur in one passage and, when vectors exist, the
 margin of that passage over the cached area or project centroid. Common
 words in a large corpus do not make a result strong. A low uncommon share
 is `none` when the margin is below the weak floor, even if a rare term
-matched. That field is not a rank.
+matched. That field is not a rank. Function words are omitted from that
+share, a stored title counts in the first window, and a corpus below the
+margin floor drops source cards far below the best one. The server listens
+before it warms the embedding model.
 `redaction.ts` provides the shared deterministic filter for MCP,
 imports and collectors. All content/provenance strings are redacted before
 checksums, fingerprints, FTS or durable writes; decoded file bytes receive the

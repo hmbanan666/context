@@ -183,6 +183,8 @@ service's `environment` (or use `docker run -e`).
 | `CONTEXT_BACKUP_SFTP_HOST_KEY_SHA256` | Required trusted host-key fingerprint, 64 hex digits. |
 | `CONTEXT_AUTH` | Legacy `oauth` selector accepted; public URL now enables OAuth automatically. |
 | `CONTEXT_LOCAL_MCP` | Unset; `enabled` permits loopback-only synthetic development, forbidden in production. |
+| `CONTEXT_SEARCH_WHEN_NONE` | `keep`. `empty` returns no cards when grounding is `none`. |
+| `CONTEXT_SEARCH_CARD_FLOOR` | `0.5`. On a corpus smaller than `CONTEXT_GROUNDING_MARGIN_MIN_CORPUS` (default 6), omit source cards below this fraction of the best card. `0` disables it. Grounding thresholds are in [Search](docs/search.md#grounding). |
 
 ## Development
 

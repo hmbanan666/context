@@ -113,10 +113,14 @@ test(
           const port = await waitForPort(child);
           const health = await fetch(`http://127.0.0.1:${port}/health`);
           assert.equal(health.status, 200);
-          assert.deepEqual(await health.json(), {
-            status: "ok",
-            processor: "off",
-          });
+          const body = (await health.json()) as {
+            status: string;
+            processor: string;
+            embeddings: string;
+          };
+          assert.equal(body.status, "ok");
+          assert.equal(body.processor, "off");
+          assert.match(body.embeddings, /^(off|warming|ready)$/);
           const client = new Client({
             name: "context-process-smoke",
             version: "1.0.0",
