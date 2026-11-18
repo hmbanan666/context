@@ -173,14 +173,16 @@ whole milliseconds. Pack mode includes it too. `listProjects` does not search
 and omits it. One stderr line is written per search:
 
 ```json
-{"event":"search","tookMs":45,"embedMs":12,"retrievalMs":20,"groundingMs":8}
+{"event":"search","tookMs":45,"embedMs":12,"retrievalMs":20,"groundingMs":8,"centroidMs":1,"frequencyMs":2,"passageMs":5}
 ```
 
 `embedMs` is the query embedding, `retrievalMs` is vector and lexical
-candidate lookup, and `groundingMs` is passage scoring. The parts are a
-breakdown of server work. `tookMs` is the whole call, so a slow line can be
-separated from network latency. The line does not include the query. There is
-no separate HTTP search route. The MCP `search` tool result is the HTTP
+candidate lookup, and `groundingMs` is the centroid, document frequency, and
+passage scoring. `centroidMs`, `frequencyMs`, and `passageMs` split that last
+part. They are included in `groundingMs`, not added on top of it. The parts
+are a breakdown of server work. `tookMs` is the whole call, so a slow line can
+be separated from network latency. The line does not include the query. There
+is no separate HTTP search route. The MCP `search` tool result is the HTTP
 `/mcp` payload.
 
 ## Cross-lingual queries

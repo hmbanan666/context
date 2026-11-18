@@ -561,11 +561,14 @@ export function buildTaskPack(
   if (memory.total > 100 || journals.total > 100 || found.total > 100)
     reasons.push("candidate_limit");
   const groundingStarted = performance.now();
+  const frequencyStarted = performance.now();
   const frequency = sources.documentFrequency(
     input.scope,
     terms,
     input.projectId,
   );
+  addPhase(phases, "frequencyMs", frequencyStarted);
+  const passageStarted = performance.now();
   const passages: GroundingPassage[] = [];
   const itemPassages = [
     ...loadedMemory,
@@ -626,6 +629,7 @@ export function buildTaskPack(
       : {}),
     protectedTerms: sources.projectIdentityTerms(input.projectId),
   });
+  addPhase(phases, "passageMs", passageStarted);
   addPhase(phases, "groundingMs", groundingStarted);
 
   const render = (

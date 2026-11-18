@@ -3,10 +3,26 @@ export interface SearchPhases {
   embedMs: number;
   retrievalMs: number;
   groundingMs: number;
+  /** Part of `groundingMs`: query cosine against the cached centroid. */
+  centroidMs: number;
+  /** Part of `groundingMs`: document-frequency lookup for the query terms. */
+  frequencyMs: number;
+  /**
+   * Part of `groundingMs`: stored chunk cosines for the candidate set and
+   * passage scoring. This is not a second embedding pass.
+   */
+  passageMs: number;
 }
 
 export function emptyPhases(): SearchPhases {
-  return { embedMs: 0, retrievalMs: 0, groundingMs: 0 };
+  return {
+    embedMs: 0,
+    retrievalMs: 0,
+    groundingMs: 0,
+    centroidMs: 0,
+    frequencyMs: 0,
+    passageMs: 0,
+  };
 }
 
 export function addPhase(
@@ -31,6 +47,9 @@ export function writeSearchLog(tookMs: number, phases: SearchPhases): void {
       embedMs: Math.round(phases.embedMs),
       retrievalMs: Math.round(phases.retrievalMs),
       groundingMs: Math.round(phases.groundingMs),
+      centroidMs: Math.round(phases.centroidMs),
+      frequencyMs: Math.round(phases.frequencyMs),
+      passageMs: Math.round(phases.passageMs),
     }),
   );
 }

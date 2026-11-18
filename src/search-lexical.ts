@@ -5,6 +5,10 @@ import { visibleSourceText } from "./source-text.js";
 
 const english = newStemmer("english");
 const russian = newStemmer("russian");
+// Passage scoring stems the same surface once per window. Remember short
+// tokens only; a full document must not stay pinned in this map.
+const stemmedWords = new Map<string, string>();
+const stemmedWordLimit = 100_000;
 const VECTOR_RRF_WEIGHT = 5;
 // Below either original lexical list (weight 1). See lexicalCandidates.
 export const EXPANSION_RRF_WEIGHT = 0.35;
@@ -16,7 +20,7 @@ export interface ExpandedTerm {
   term: string;
   from: readonly number[];
 }
-export function stemText(text: string): string {
+function stemWords(text: string): string {
   return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
     .map((word) =>
       /^[а-яё]+$/u.test(word)
@@ -26,6 +30,15 @@ export function stemText(text: string): string {
           : word,
     )
     .join(" ");
+}
+
+export function stemText(text: string): string {
+  if (text.length > 64 || /\s/u.test(text)) return stemWords(text);
+  const cached = stemmedWords.get(text);
+  if (cached !== undefined) return cached;
+  const stem = stemWords(text);
+  if (stemmedWords.size < stemmedWordLimit) stemmedWords.set(text, stem);
+  return stem;
 }
 export type SearchTable = "sources" | "knowledge_items";
 export interface VectorHit {
