@@ -929,6 +929,9 @@ test("search reports integer tookMs and logs phases without the query", async ()
             embedMs?: unknown;
             retrievalMs?: unknown;
             groundingMs?: unknown;
+            centroidMs?: unknown;
+            frequencyMs?: unknown;
+            passageMs?: unknown;
           };
         } catch {
           return undefined;
@@ -937,7 +940,14 @@ test("search reports integer tookMs and logs phases without the query", async ()
       .find((entry) => entry?.event === "search");
     assert.ok(logged);
     assert.equal(logged.tookMs, body.tookMs);
-    for (const key of ["embedMs", "retrievalMs", "groundingMs"] as const)
+    for (const key of [
+      "embedMs",
+      "retrievalMs",
+      "groundingMs",
+      "centroidMs",
+      "frequencyMs",
+      "passageMs",
+    ] as const)
       assert.equal(Number.isInteger(logged[key]), true);
     assert.equal(
       lines.some((line) => line.includes(query)),

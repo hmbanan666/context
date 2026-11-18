@@ -441,6 +441,7 @@ export class EmbeddingIndex {
       const groundStarted = performance.now();
       const background = await this.#backgroundCosine(input, query);
       addPhase(phases, "groundingMs", groundStarted);
+      addPhase(phases, "centroidMs", groundStarted);
       const retrievalStarted = performance.now();
       const sources = await this.#nearest("sources", input, query);
       const items = await this.#nearest("knowledge_items", input, query);
@@ -594,6 +595,9 @@ export class EmbeddingIndex {
 
   // Point lookups on the chunk primary key. Cheap next to the full scan above,
   // and the only way to score a lexical passage the 0.80 floor dropped.
+  // Scope and model are filtered on the rows. Putting them in the WHERE makes
+  // SQLite pick embedding_chunks_area and read every chunk in the area once
+  // per candidate.
   #storedCosines(
     scope: string,
     query: ArrayLike<number>,
@@ -601,10 +605,11 @@ export class EmbeddingIndex {
   ): VectorHit[] {
     if (!records.length) return [];
     const statement = this.#db.prepare(
-      "SELECT offset, vector FROM embedding_chunks WHERE kind=? AND record_id=? AND scope=? AND model=?",
+      "SELECT offset, vector, scope, model FROM embedding_chunks WHERE kind=? AND record_id=?",
     );
     const hits: VectorHit[] = [];
     const seen = new Set<string>();
+    const model = this.#embedder.version;
     for (const record of records) {
       if (record.kind !== "sources" && record.kind !== "knowledge_items")
         continue;
@@ -612,13 +617,9 @@ export class EmbeddingIndex {
       const key = `${record.kind}\0${record.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const rows = statement.all(
-        record.kind,
-        record.id,
-        scope,
-        this.#embedder.version,
-      );
+      const rows = statement.all(record.kind, record.id);
       for (const row of rows) {
+        if (row.scope !== scope || row.model !== model) continue;
         if (
           !(row.vector instanceof Uint8Array) ||
           row.vector.byteLength !== query.length * 4 ||

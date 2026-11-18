@@ -510,10 +510,13 @@ export function buildContextPackage(
   );
   addPhase(phases, "retrievalMs", retrievalStarted);
   const groundingStarted = performance.now();
+  const frequencyStarted = performance.now();
   const frequency =
     request.mode === "search"
       ? sources.documentFrequency(request.scope, terms, projectId, documents)
       : undefined;
+  addPhase(phases, "frequencyMs", frequencyStarted);
+  const passageStarted = performance.now();
   const passages: GroundingPassage[] = [];
   if (frequency) {
     const stored = semantic?.storedCosines?.([
@@ -570,6 +573,7 @@ export function buildContextPackage(
           : {}),
       })
     : undefined;
+  addPhase(phases, "passageMs", passageStarted);
   addPhase(phases, "groundingMs", groundingStarted);
   const grounding = explained?.label;
   const state = knowledge.retrievalRelations(request.scope);
