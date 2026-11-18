@@ -156,7 +156,10 @@ counts by reason; a few redacted samples go to stderr and not to tidy history.
 Search indexes and excerpts omit a Cursor pull-request footer and keep prose
 before and after it; the stored source text is unchanged. Knowledge-item
 excerpts start at a sentence or item boundary and are trimmed at the end, on
-a whole sentence when one fits. A visible-text version
+a whole sentence when one fits. A bilingual source excerpt prefers a
+paragraph, line or sentence in the question's script when the note contains
+both Cyrillic and Latin. `search` returns `tookMs` and logs one stderr timing
+line. A visible-text version
 bump rebuilds the derived source index once. Repository
 mappings match a normalized `owner/repo`, including GitHub URL forms already
 stored on a source. Proposed sentences are readable by id.

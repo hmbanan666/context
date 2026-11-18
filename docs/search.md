@@ -168,6 +168,21 @@ the text `Items are empty because the processor is off.` Sources are still
 returned. The hint is not an error and is not charged against the evidence
 byte budget.
 
+`search` also returns `tookMs`, the server wall-clock time for that call in
+whole milliseconds. Pack mode includes it too. `listProjects` does not search
+and omits it. One stderr line is written per search:
+
+```json
+{"event":"search","tookMs":45,"embedMs":12,"retrievalMs":20,"groundingMs":8}
+```
+
+`embedMs` is the query embedding, `retrievalMs` is vector and lexical
+candidate lookup, and `groundingMs` is passage scoring. The parts are a
+breakdown of server work. `tookMs` is the whole call, so a slow line can be
+separated from network latency. The line does not include the query. There is
+no separate HTTP search route. The MCP `search` tool result is the HTTP
+`/mcp` payload.
+
 ## Cross-lingual queries
 
 ADR 0014 keeps `Xenova/multilingual-e5-small` (q8 ONNX **118,308,185 bytes**,
@@ -503,7 +518,12 @@ summary in complete sentences for weeks that overlap the requested dates.
 `citedIds` lists the item ids. Area-wide search omits journals. A decision
 or fact excerpt starts at a sentence boundary and is trimmed only at the end,
 on a whole sentence when one fits, so a card after a journal does not open
-mid-sentence. Source excerpts stay anchored on the match.
+mid-sentence. Source excerpts stay anchored on the match. When a note
+contains both Cyrillic and Latin text and the question is predominantly one
+of those scripts, the source excerpt window is taken from a paragraph, line
+or sentence in that script. A note in one script keeps the match anchor.
+Word and sentence trimming is unchanged. Grounding still scores the same
+passages.
 The owner sets that status with `context project review`; distillation does
 not. `search` with `mode: "pack"` returns one task pack for a project and a
 task query (ADR 0013, amended by ADR 0015). Decisions and facts, proposed and

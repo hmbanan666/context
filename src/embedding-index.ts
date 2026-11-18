@@ -7,6 +7,7 @@ import { linkedProjectSql } from "./projects.js";
 import { retirementFilter } from "./retirement.js";
 import { latestReviewStatusSql } from "./review-status.js";
 import { questionTerms } from "./package-query.js";
+import { addPhase, type SearchPhases } from "./search-timing.js";
 import {
   ensureVisibleSourceIndex,
   registerSearchFunctions,
@@ -404,7 +405,10 @@ export class EmbeddingIndex {
     if (!this.#stopping) this.#timer = setTimeout(tick, 0).unref();
   }
 
-  async search(input: SemanticSelection): Promise<SemanticHits> {
+  async search(
+    input: SemanticSelection,
+    phases?: SearchPhases,
+  ): Promise<SemanticHits> {
     const empty: SemanticHits = {
       sources: [],
       items: [],
@@ -420,6 +424,8 @@ export class EmbeddingIndex {
     // Do not load the model when this authorized area has no current vectors.
     if (!this.hasVectors(input.scope)) return empty;
     let timeout: NodeJS.Timeout | undefined;
+    const embedStarted = performance.now();
+    let embedded = false;
     try {
       const query = await Promise.race([
         this.#embed(input.question, "query"),
@@ -430,9 +436,15 @@ export class EmbeddingIndex {
           );
         }),
       ]);
+      embedded = true;
+      addPhase(phases, "embedMs", embedStarted);
+      const groundStarted = performance.now();
       const background = await this.#backgroundCosine(input, query);
+      addPhase(phases, "groundingMs", groundStarted);
+      const retrievalStarted = performance.now();
       const sources = await this.#nearest("sources", input, query);
       const items = await this.#nearest("knowledge_items", input, query);
+      addPhase(phases, "retrievalMs", retrievalStarted);
       return {
         available: true,
         background,
@@ -445,6 +457,7 @@ export class EmbeddingIndex {
           this.#storedCosines(input.scope, query, records),
       };
     } catch {
+      if (!embedded) addPhase(phases, "embedMs", embedStarted);
       return { ...empty, reasons: ["embeddings_unavailable"] };
     } finally {
       clearTimeout(timeout);
