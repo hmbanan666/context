@@ -787,3 +787,164 @@ for (const [question, prefix, fact] of [
     }
   });
 }
+
+const russianParagraph =
+  "В длинном русском абзаце говорится о погоде на набережной и о том, как фонари отражались в тёмной воде до самого утра, пока город ещё спал.";
+const englishParagraph =
+  "The cobalt lantern was packed in a cedar box before the rain started over the harbor.";
+
+test("bilingual excerpts follow the question script and a monolingual note stays put", () => {
+  const text = `${russianParagraph}\n\n${englishParagraph}`;
+  const middle = Math.floor(russianParagraph.length / 2);
+  const english = excerpt(
+    text,
+    middle,
+    360,
+    "Where was the cobalt lantern packed?",
+  );
+  assert.match(english.text, /cobalt lantern/);
+  assert.equal(/\p{Script=Cyrillic}/u.test(english.text), false);
+  assert.equal(english.text, text.slice(english.start, english.end));
+  assert.equal(english.text.startsWith("The cobalt lantern"), true);
+  const russian = excerpt(
+    text,
+    text.indexOf("cedar"),
+    360,
+    "Как фонари отражались на набережной?",
+  );
+  assert.match(russian.text, /фонари/);
+  assert.equal(/\p{Script=Latin}/u.test(russian.text), false);
+  assert.equal(russian.text, text.slice(russian.start, russian.end));
+  const mono = `${"Alpha prefix stays behind. ".repeat(8)}The cobalt lantern sits on the brass desk and the rest of this sentence should not be cut.`;
+  const offset = mono.indexOf("lantern");
+  assert.deepEqual(
+    excerpt(mono, offset, 360, "Where is the cobalt lantern?"),
+    excerpt(mono, offset, 360),
+  );
+  assert.deepEqual(
+    knowledgeExcerpt(mono, offset, 120, "Where is the cobalt lantern?"),
+    knowledgeExcerpt(mono, offset, 120),
+  );
+});
+
+test("search excerpts a bilingual note in the question language", async () => {
+  const f = await setup();
+  try {
+    const text = `${russianParagraph}\n\n${englishParagraph}`;
+    const source = f.store.captureMaterial({
+      version: 1,
+      scope,
+      text,
+      origin: "fixture:bilingual-excerpt",
+      idempotencyKey: "bilingual",
+    }).material.source;
+    const mono = `${"Filler sentence about weather. ".repeat(12)}The lanternquartz sits on the brass desk.`;
+    const monoSource = f.store.captureMaterial({
+      version: 1,
+      scope,
+      text: mono,
+      origin: "fixture:bilingual-excerpt",
+      idempotencyKey: "monolingual",
+    }).material.source;
+    const client = await f.connect();
+    const cards = async (query: string) => {
+      const response = await client.callTool({
+        name: "search",
+        arguments: { query },
+      });
+      assert.equal(response.isError, false, JSON.stringify(response));
+      const body = response.structuredContent as {
+        sources?: {
+          id: string;
+          excerpt: { text: string; start: number; end: number };
+        }[];
+      };
+      return body.sources ?? [];
+    };
+    const english = (await cards("Where was the cobalt lantern packed?")).find(
+      (card) => card.id === source.id,
+    );
+    assert.ok(english);
+    assert.match(english.excerpt.text, /cobalt lantern/);
+    assert.equal(/\p{Script=Cyrillic}/u.test(english.excerpt.text), false);
+    assert.equal(
+      english.excerpt.text,
+      text.slice(english.excerpt.start, english.excerpt.end),
+    );
+    const russian = (await cards("Как фонари отражались на набережной?")).find(
+      (card) => card.id === source.id,
+    );
+    assert.ok(russian);
+    assert.match(russian.excerpt.text, /фонари/);
+    assert.equal(/\p{Script=Latin}/u.test(russian.excerpt.text), false);
+    assert.equal(
+      russian.excerpt.text,
+      text.slice(russian.excerpt.start, russian.excerpt.end),
+    );
+    const unchanged = (await cards("Where does lanternquartz sit?")).find(
+      (card) => card.id === monoSource.id,
+    );
+    assert.ok(unchanged);
+    assert.equal(
+      unchanged.excerpt.text,
+      excerpt(mono, mono.indexOf("lanternquartz")).text,
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("search reports integer tookMs and logs phases without the query", async () => {
+  const f = await setup();
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  };
+  const query = "lanternquartz timingprobe";
+  try {
+    f.store.captureMaterial({
+      version: 1,
+      scope,
+      text: "The lanternquartz timingprobe sits on the brass desk.",
+      origin: "fixture:search-timing",
+      idempotencyKey: "timing",
+    });
+    const client = await f.connect();
+    const response = await client.callTool({
+      name: "search",
+      arguments: { query },
+    });
+    assert.equal(response.isError, false, JSON.stringify(response));
+    const body = response.structuredContent as { tookMs?: unknown };
+    assert.equal(typeof body.tookMs, "number");
+    assert.equal(Number.isInteger(body.tookMs), true);
+    assert.ok((body.tookMs as number) >= 0);
+    const logged = lines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as {
+            event?: string;
+            tookMs?: unknown;
+            embedMs?: unknown;
+            retrievalMs?: unknown;
+            groundingMs?: unknown;
+          };
+        } catch {
+          return undefined;
+        }
+      })
+      .find((entry) => entry?.event === "search");
+    assert.ok(logged);
+    assert.equal(logged.tookMs, body.tookMs);
+    for (const key of ["embedMs", "retrievalMs", "groundingMs"] as const)
+      assert.equal(Number.isInteger(logged[key]), true);
+    assert.equal(
+      lines.some((line) => line.includes(query)),
+      false,
+    );
+  } finally {
+    console.error = original;
+    await f.cleanup();
+  }
+});

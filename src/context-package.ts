@@ -29,6 +29,7 @@ import {
   idsWithinCardFloor,
   readCardFloor,
 } from "./search-when-none.js";
+import { addPhase, type SearchPhases } from "./search-timing.js";
 import { visibleSourceText } from "./source-text.js";
 import type { SourceStore } from "./store.js";
 
@@ -83,19 +84,172 @@ function endOnSentence(
   return end;
 }
 
+interface TextSpan {
+  start: number;
+  end: number;
+}
+
+function scriptCounts(text: string): { cyr: number; lat: number } {
+  let cyr = 0;
+  let lat = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0x0400 && code <= 0x04ff) cyr++;
+    else if (
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      (code >= 0x00c0 && code <= 0x024f)
+    )
+      lat++;
+  }
+  return { cyr, lat };
+}
+
+function questionScript(question: string): "cyr" | "lat" | undefined {
+  const { cyr, lat } = scriptCounts(question);
+  if (cyr === lat) return undefined;
+  return cyr > lat ? "cyr" : "lat";
+}
+
+function pushSpan(
+  spans: TextSpan[],
+  text: string,
+  start: number,
+  end: number,
+): void {
+  let from = start;
+  let to = end;
+  while (from < to && (text.charCodeAt(from) ?? 0) <= 32) from++;
+  while (to > from && (text.charCodeAt(to - 1) ?? 0) <= 32) to--;
+  if (to - from >= 16) spans.push({ start: from, end: to });
+}
+
+/** Paragraphs, lines and sentences, so a language switch can be either. */
+function languageSpans(text: string): TextSpan[] {
+  const spans: TextSpan[] = [];
+  const emit = (start: number, end: number) => {
+    pushSpan(spans, text, start, end);
+    let line = start;
+    for (let i = start; i <= end; i++) {
+      if (i === end || text[i] === "\n") {
+        pushSpan(spans, text, line, i);
+        line = i + 1;
+      }
+    }
+    let sentence = start;
+    for (let i = start; i < end; i++) {
+      const ch = text[i] ?? "";
+      if (
+        ch !== "\n" &&
+        ch !== "." &&
+        ch !== "!" &&
+        ch !== "?" &&
+        ch !== "…" &&
+        ch !== "。" &&
+        ch !== "！" &&
+        ch !== "？"
+      )
+        continue;
+      let stop = i + 1;
+      while (stop < end && (text[stop] === " " || text[stop] === "\t")) stop++;
+      pushSpan(spans, text, sentence, stop);
+      sentence = stop;
+      i = stop - 1;
+    }
+    pushSpan(spans, text, sentence, end);
+  };
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "\n" || text[i + 1] !== "\n") continue;
+    emit(start, i);
+    let next = i + 2;
+    while (
+      next < text.length &&
+      (text[next] === "\n" ||
+        text[next] === " " ||
+        text[next] === "\t" ||
+        text[next] === "\r")
+    )
+      next++;
+    start = next;
+    i = next - 1;
+  }
+  emit(start, text.length);
+  return spans;
+}
+
+/**
+ * When the question is mostly one script and the note has a real run of that
+ * script plus the other, prefer that run. A one-script note returns undefined
+ * so the match anchor stays.
+ */
+function languageRegion(
+  text: string,
+  question: string | undefined,
+  matchOffset: number,
+): TextSpan | undefined {
+  if (!question) return undefined;
+  const script = questionScript(question);
+  if (!script) return undefined;
+  const whole = scriptCounts(text);
+  const wanted = script === "cyr" ? whole.cyr : whole.lat;
+  const other = script === "cyr" ? whole.lat : whole.cyr;
+  if (wanted < 12 || other < 12) return undefined;
+  const letters = wanted + other;
+  if (wanted / letters < 0.15 || other / letters < 0.15) return undefined;
+  let containing: TextSpan | undefined;
+  let containingLength = -1;
+  let richest: TextSpan | undefined;
+  let richestLetters = -1;
+  for (const span of languageSpans(text)) {
+    const counts = scriptCounts(text.slice(span.start, span.end));
+    const spanWanted = script === "cyr" ? counts.cyr : counts.lat;
+    const spanOther = script === "cyr" ? counts.lat : counts.cyr;
+    const spanLetters = spanWanted + spanOther;
+    if (spanWanted < 12 || spanLetters === 0) continue;
+    if (spanWanted <= spanOther || spanWanted / spanLetters < 0.6) continue;
+    if (
+      matchOffset >= span.start &&
+      matchOffset < span.end &&
+      span.end - span.start > containingLength
+    ) {
+      containing = span;
+      containingLength = span.end - span.start;
+    }
+    if (
+      !richest ||
+      spanWanted > richestLetters ||
+      (spanWanted === richestLetters && span.start < richest.start)
+    ) {
+      richest = span;
+      richestLetters = spanWanted;
+    }
+  }
+  return containing ?? richest;
+}
+
 /**
  * Knowledge cards open on a sentence or item boundary and lose text only at
  * the end, on a whole sentence when one fits in the budget.
  */
-export function knowledgeExcerpt(text: string, matchOffset = 0, maximum = 480) {
+export function knowledgeExcerpt(
+  text: string,
+  matchOffset = 0,
+  maximum = 480,
+  question?: string,
+) {
   const visible = visibleSourceText(text);
-  const offset =
-    visible === text
-      ? Math.min(Math.max(0, matchOffset), visible.length)
-      : Math.min(Math.max(0, matchOffset), visible.length);
-  const start = boundaryAt(visible, offset);
-  const hardEnd = Math.min(visible.length, start + maximum);
-  const end = endOnSentence(visible, start, hardEnd, offset);
+  const offset = Math.min(Math.max(0, matchOffset), visible.length);
+  const region = languageRegion(visible, question, offset);
+  const anchor =
+    region && (offset < region.start || offset >= region.end)
+      ? region.start
+      : offset;
+  let start = boundaryAt(visible, anchor);
+  if (region && start < region.start) start = region.start;
+  const ceiling = region?.end ?? visible.length;
+  const hardEnd = Math.min(ceiling, start + maximum);
+  const end = endOnSentence(visible, start, hardEnd, anchor);
   return {
     text: visible.slice(start, end),
     start,
@@ -138,19 +292,34 @@ function snapWordEnd(
   return end;
 }
 
-export function excerpt(text: string, matchOffset = 0, maximum = 360) {
+export function excerpt(
+  text: string,
+  matchOffset = 0,
+  maximum = 360,
+  question?: string,
+) {
   const visible = visibleSourceText(text);
   const offset =
     visible === text
       ? matchOffset
       : Math.min(Math.max(0, matchOffset), visible.length);
-  let start = Math.max(0, offset - 80);
-  if (start > 0 && /[\uDC00-\uDFFF]/u.test(visible[start] ?? "")) start--;
-  start = snapWordStart(visible, start, Math.min(offset, visible.length));
-  let end = Math.min(visible.length, start + maximum);
-  if (end < visible.length && /[\uDC00-\uDFFF]/u.test(visible[end] ?? ""))
-    end--;
-  end = snapWordEnd(visible, start, end, Math.min(offset, visible.length));
+  const bounded = Math.min(Math.max(0, offset), visible.length);
+  const region = languageRegion(visible, question, bounded);
+  const anchor =
+    region && (bounded < region.start || bounded >= region.end)
+      ? region.start
+      : offset;
+  const floor = region?.start ?? 0;
+  const ceiling = region?.end ?? visible.length;
+  let start = Math.max(floor, anchor - 80);
+  if (start > floor && /[\uDC00-\uDFFF]/u.test(visible[start] ?? "")) start--;
+  if (start < floor) start = floor;
+  start = snapWordStart(visible, start, Math.min(anchor, visible.length));
+  if (start < floor) start = floor;
+  let end = Math.min(ceiling, start + maximum);
+  if (end < ceiling && /[\uDC00-\uDFFF]/u.test(visible[end] ?? "")) end--;
+  end = snapWordEnd(visible, start, end, Math.min(anchor, visible.length));
+  if (end > ceiling) end = ceiling;
   return {
     text: visible.slice(start, end),
     start,
@@ -158,7 +327,12 @@ export function excerpt(text: string, matchOffset = 0, maximum = 360) {
     truncated: start > 0 || end < visible.length,
   };
 }
-function sourceCard(m: Material, matchOffset = 0, supersededBy?: string) {
+function sourceCard(
+  m: Material,
+  matchOffset = 0,
+  supersededBy?: string,
+  question?: string,
+) {
   return {
     id: m.source.id,
     ...(supersededBy ? { supersededBy } : {}),
@@ -167,7 +341,7 @@ function sourceCard(m: Material, matchOffset = 0, supersededBy?: string) {
     status: m.source.status,
     capturedAt: m.source.capturedAt,
     sourceDate: m.metadata.createdAt ?? m.source.capturedAt,
-    excerpt: excerpt(m.source.text, matchOffset),
+    excerpt: excerpt(m.source.text, matchOffset, 360, question),
     ...(m.doc
       ? {
           doc: {
@@ -303,6 +477,7 @@ export function buildContextPackage(
   semantic?: SemanticHits,
   projectId?: string,
   documents?: { readonly type?: DocType },
+  phases?: SearchPhases,
 ): ContextPackage {
   const request = contextPackageSchema.parse(input);
   const dated = request.from !== undefined || request.until !== undefined;
@@ -324,6 +499,7 @@ export function buildContextPackage(
         }
       : {}),
   };
+  const retrievalStarted = performance.now();
   const original = sources.packageCandidates({
     ...selection,
     ...(semantic ? { vectors: semantic.sources } : {}),
@@ -332,6 +508,8 @@ export function buildContextPackage(
     { ...selection, ...(semantic ? { vectors: semantic.items } : {}) },
     original.materials.slice(0, 100).map((m) => m.source.id),
   );
+  addPhase(phases, "retrievalMs", retrievalStarted);
+  const groundingStarted = performance.now();
   const frequency =
     request.mode === "search"
       ? sources.documentFrequency(request.scope, terms, projectId, documents)
@@ -392,6 +570,7 @@ export function buildContextPackage(
           : {}),
       })
     : undefined;
+  addPhase(phases, "groundingMs", groundingStarted);
   const grounding = explained?.label;
   const state = knowledge.retrievalRelations(request.scope);
   let result: ContextPackage = {
@@ -544,6 +723,7 @@ export function buildContextPackage(
             m,
             original.matchOffsets.get(m.source.id),
             state.superseded.get(m.source.id),
+            request.question,
           ),
         ),
       ],

@@ -12,6 +12,7 @@ import type { GlossaryEntry } from "./glossary.js";
 import type { KnowledgeItem, KnowledgeStore } from "./knowledge.js";
 import type { Material } from "./materials.js";
 import { questionTerms } from "./package-query.js";
+import { addPhase, type SearchPhases } from "./search-timing.js";
 import { profileId, type ProjectProfile } from "./projects.js";
 import type { TermHit } from "./search-lexical.js";
 import { visibleSourceText } from "./source-text.js";
@@ -332,11 +333,15 @@ function sourceDate(material: Material): string {
   return material.metadata.createdAt ?? material.source.capturedAt;
 }
 
-function sourceCard(material: Material, offset = 0): PackSource {
+function sourceCard(
+  material: Material,
+  offset = 0,
+  question?: string,
+): PackSource {
   return {
     id: material.source.id,
     sourceDate: sourceDate(material),
-    excerpt: knowledgeExcerpt(material.source.text, offset),
+    excerpt: knowledgeExcerpt(material.source.text, offset, 480, question),
     ...(material.doc
       ? {
           doc: {
@@ -389,6 +394,7 @@ export function buildTaskPack(
   sources: SourceStore,
   knowledge: KnowledgeStore,
   input: PackInput,
+  phases?: SearchPhases,
 ): TaskPack {
   if (
     !Number.isInteger(input.budgetBytes) ||
@@ -424,6 +430,7 @@ export function buildTaskPack(
     projectId: input.projectId,
     ...(expansion.length ? { expansion } : {}),
   };
+  const retrievalStarted = performance.now();
   const memory = knowledge.projectHybrid(
     {
       ...hybrid,
@@ -448,6 +455,7 @@ export function buildTaskPack(
       ? { vectors: input.semantic.sources }
       : {}),
   });
+  addPhase(phases, "retrievalMs", retrievalStarted);
   const load = (id: string) => knowledge.find(id, input.scope);
   const eligible = (item: KnowledgeItem | undefined): item is KnowledgeItem =>
     !!item && item.status !== "rejected" && !superseded.has(item.id);
@@ -552,6 +560,7 @@ export function buildTaskPack(
   const reasons = [...new Set(input.semantic?.reasons ?? [])];
   if (memory.total > 100 || journals.total > 100 || found.total > 100)
     reasons.push("candidate_limit");
+  const groundingStarted = performance.now();
   const frequency = sources.documentFrequency(
     input.scope,
     terms,
@@ -617,6 +626,7 @@ export function buildTaskPack(
       : {}),
     protectedTerms: sources.projectIdentityTerms(input.projectId),
   });
+  addPhase(phases, "groundingMs", groundingStarted);
 
   const render = (
     flags: Flags,
@@ -808,6 +818,7 @@ export function buildTaskPack(
       const card = sourceCard(
         material,
         found.matchOffsets.get(material.source.id) ?? 0,
+        input.question,
       );
       sourceCards.push(card);
       const size = bytes(packOf(true, "byte_limit"));
