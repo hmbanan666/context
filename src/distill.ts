@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { installClientWrites } from "./client-knowledge.js";
 import { nonblankText } from "./contracts.js";
 import {
   type DistilledKnowledgeInput,
@@ -298,11 +299,13 @@ function scheduled(
          AND NOT EXISTS (
            SELECT 1 FROM knowledge_items k, json_each(k.source_refs) ref
            WHERE k.kind IN ('fact', 'decision')
-             AND json_extract(k.creator, '$.name') = ?
              AND json_extract(ref.value, '$.sourceId') = s.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM client_writes w WHERE w.source_id = s.id
          )`,
     )
-    .all(...areas, DISTILL_CREATOR)
+    .all(...areas)
     .map((row) => ({
       row: Number(row.row),
       id: String(row.id),
@@ -564,6 +567,7 @@ export async function distillSources(input: {
     result.frontiers = input.frontiers;
     return result;
   }
+  installClientWrites(input.db);
   const frontiers: Record<string, DistillFrontier> = {
     ...input.frontiers,
   };

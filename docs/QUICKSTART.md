@@ -133,6 +133,19 @@ Ask the client to remember the decision as a document. The call is still
 revision and records the token's name on that status. It does not approve a
 distilled fact or decision. That remains `context project review`.
 
+A fact or a decision can be written on the same `remember` call. Set
+`metadata.kind` to `fact` or `decision`. The text is one statement of at most
+400 characters. Context stores the source and the knowledge item immediately,
+so `search` with `mode: "pack"` can return it before nightly distillation.
+`metadata.supersedes` lists item ids in that project to mark them superseded.
+`metadata.status: "approved"` is accepted only from a token created with
+`--may-approve`. Any other token gets an error and nothing is stored.
+
+The same flag can set the project profile. `doc.type` is `profile`, `doc.title`
+is the purpose, `text` is the rules, and `doc.pins` lists up to eight decision
+ids in that project. The joined profile stays within 2048 UTF-8 bytes. It
+overwrites the one profile. Local owner mode can do this without a token.
+
 Read the current text with `doc:<project>:<adr|spec|note>:<key>`. Add `@1`
 for the first revision. The reply lists every revision. Search returns the
 current revision only. `kind: "doc"` limits the results to documents, and

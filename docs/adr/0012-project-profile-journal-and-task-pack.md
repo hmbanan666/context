@@ -91,6 +91,12 @@ at most 20% of the budget as profile text. The stored profile is unchanged.
 
 ## Consequences
 
+Amended by [ADR 0020](0020-client-written-knowledge.md): a token with
+`mayApprove`, or local owner mode, may overwrite the profile through
+`remember`. The processor still never writes it. A client-written fact or
+decision is included by the existing journal pass, which still does not call
+the processor.
+
 A pack does not write prose answers and does not grant rights. Callers convert
 a token budget to bytes themselves. Existing clients that omit `mode` and
 `project` keep current results. A missing journal is not evidence that the week

@@ -2,6 +2,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  type ClientProfileWrite,
+  type ClientStatement,
+  assertStatementText,
+  findClientStatement,
+  installClientWrites,
+  noteProfileSource,
+  statementCreatedAt,
+  writeClientStatement,
+  ClientKnowledgeError,
+} from "./client-knowledge.js";
 import { type CaptureInput, captureSchema } from "./contracts.js";
 import {
   adjustDocumentScore,
@@ -24,6 +35,7 @@ import {
 } from "./glossary.js";
 import type { ImportProvenance } from "./import-format.js";
 import {
+  type KnowledgeItem,
   KnowledgeNotFound,
   KnowledgeStore,
   knowledgeCreatorSchema,
@@ -142,6 +154,11 @@ function materialMetadata(
   return {
     type,
     ...(input?.title !== undefined ? { title: input.title } : {}),
+    ...(input?.kind !== undefined ? { kind: input.kind } : {}),
+    ...(input?.status !== undefined ? { status: input.status } : {}),
+    ...(input?.supersedes !== undefined
+      ? { supersedes: input.supersedes }
+      : {}),
     ...(input?.createdAt !== undefined ? { createdAt: input.createdAt } : {}),
     ...(input?.sourceUri !== undefined ? { sourceUri: input.sourceUri } : {}),
   };
@@ -257,6 +274,7 @@ export class SourceStore {
       `);
       installProjects(this.#database);
       installDocuments(this.#database);
+      installClientWrites(this.#database);
       this.#installRetirement();
       installSearchIndex(this.#database, "sources");
       ensureVisibleSourceIndex(this.#database);
@@ -289,10 +307,14 @@ export class SourceStore {
     projectIds?: readonly string[],
     createProjects = false,
     projectName?: string,
+    actor?: { setBy: string; mayApprove: boolean; tokenId?: string },
+    profile?: Omit<ClientProfileWrite, "rules" | "setBy">,
   ): {
     material: Material;
     duplicate: boolean;
     projectCreated?: boolean;
+    item?: KnowledgeItem;
+    profile?: ProjectProfile;
   } {
     const request = captureMaterialSchema.parse(
       redactFields(captureMaterialSchema.parse(input)),
@@ -301,11 +323,42 @@ export class SourceStore {
       request.metadata,
       request.metadata?.type ?? "note",
     );
+    if ((metadata.status || metadata.supersedes) && !metadata.kind)
+      throw new ClientKnowledgeError(
+        "metadata.status and metadata.supersedes require metadata.kind fact or decision",
+      );
+    if (metadata.kind && profile)
+      throw new ClientKnowledgeError("A fact or decision does not use doc");
+    if (metadata.kind) {
+      assertStatementText(request.text);
+      if (metadata.status === "approved" && !actor?.mayApprove)
+        throw new ClientKnowledgeError(
+          "This token cannot set status approved",
+          "forbidden",
+        );
+    }
+    if (profile && !actor?.mayApprove)
+      throw new ClientKnowledgeError(
+        "This token cannot set a project profile",
+        "forbidden",
+      );
     const fingerprint = this.#materialFingerprint(
       "material",
       request,
       metadata,
     );
+    const statement: ClientStatement | undefined = metadata.kind
+      ? {
+          kind: metadata.kind,
+          approve: metadata.status === "approved",
+          setBy: actor?.setBy ?? "local",
+          ...(actor?.tokenId ? { tokenId: actor.tokenId } : {}),
+          supersedes: metadata.supersedes ?? [],
+        }
+      : undefined;
+    const purpose = profile ? redact(profile.purpose).trim() : undefined;
+    if (profile && !purpose)
+      throw new ClientKnowledgeError("Invalid profile purpose");
     const saved = this.#capture(
       request,
       fingerprint,
@@ -316,10 +369,29 @@ export class SourceStore {
       undefined,
       createProjects,
       projectName,
+      statement || profile
+        ? {
+            ...(statement ? { statement } : {}),
+            ...(profile
+              ? {
+                  profile: {
+                    ...profile,
+                    purpose: purpose ?? profile.purpose,
+                    rules: request.text,
+                    setBy: actor?.setBy ?? "local",
+                  },
+                }
+              : {}),
+          }
+        : undefined,
     );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
-    return capturedMaterial(saved, material);
+    return {
+      ...capturedMaterial(saved, material),
+      ...(saved.item ? { item: saved.item } : {}),
+      ...(saved.profile ? { profile: saved.profile } : {}),
+    };
   }
 
   captureDocument(
@@ -508,6 +580,10 @@ export class SourceStore {
           metadata.createdAt ?? null,
           metadata.sourceUri ?? null,
           ...file,
+          // Only client statements add these, so an ordinary note keeps its hash.
+          ...(metadata.kind ? [metadata.kind] : []),
+          ...(metadata.status ? [metadata.status] : []),
+          ...(metadata.supersedes ? [[...metadata.supersedes].sort()] : []),
         ]),
       )
       .digest("hex");
@@ -523,11 +599,17 @@ export class SourceStore {
     document?: DocumentWrite,
     createProjects = false,
     projectName?: string,
+    client?: {
+      statement?: ClientStatement;
+      profile?: ClientProfileWrite;
+    },
   ): {
     source: Source;
     duplicate: boolean;
     changed?: boolean;
     projectCreated?: boolean;
+    item?: KnowledgeItem;
+    profile?: ProjectProfile;
   } {
     // Omit projects from the hash unless the client sent them, so older retries match.
     const sortedProjects = projectIds
@@ -548,11 +630,25 @@ export class SourceStore {
         }
       : undefined;
     // Preserve old fingerprints when no supersession was requested.
-    const fingerprint = replacing
+    const withReplacement = replacing
       ? createHash("sha256")
           .update(JSON.stringify([projectFingerprint, replacing]))
           .digest("hex")
       : projectFingerprint;
+    const profileWrite = client?.profile;
+    const fingerprint = profileWrite
+      ? createHash("sha256")
+          .update(
+            JSON.stringify([
+              withReplacement,
+              profileWrite.projectId,
+              profileWrite.purpose,
+              [...profileWrite.pinned].sort(),
+              profileWrite.setBy,
+            ]),
+          )
+          .digest("hex")
+      : withReplacement;
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       const knowledge = replacing
@@ -584,6 +680,12 @@ export class SourceStore {
         });
         if (!source)
           throw new IdempotencyConflict("Source no longer in requested area");
+        const item = client?.statement
+          ? findClientStatement(this.#database, source.id, request.scope)
+          : undefined;
+        const profile = profileWrite
+          ? getProjectProfile(this.#database, profileWrite.projectId)
+          : undefined;
         this.#database.exec("COMMIT");
         return {
           source,
@@ -591,6 +693,8 @@ export class SourceStore {
           ...(createProjects && sortedProjects
             ? { projectCreated: false }
             : {}),
+          ...(item ? { item } : {}),
+          ...(profile ? { profile } : {}),
         };
       }
       const changed = imported
@@ -711,12 +815,31 @@ export class SourceStore {
             creator: replacing.creator,
           });
         }
+      const item = client?.statement
+        ? writeClientStatement(this.#database, {
+            ...client.statement,
+            sourceId: source.id,
+            scope: request.scope,
+            text: request.text,
+            createdAt: statementCreatedAt(
+              material?.metadata.createdAt,
+              source.capturedAt,
+            ),
+            projectIds: sortedProjects ?? [],
+          })
+        : undefined;
+      const profile = profileWrite
+        ? setProjectProfile(this.#database, profileWrite)
+        : undefined;
+      if (profileWrite) noteProfileSource(this.#database, source.id);
       this.#database.exec("COMMIT");
       return {
         source,
         duplicate: false,
         ...(imported ? { changed } : {}),
         ...(createProjects && sortedProjects ? { projectCreated } : {}),
+        ...(item ? { item } : {}),
+        ...(profile ? { profile } : {}),
       };
     } catch (error) {
       this.#database.exec("ROLLBACK");

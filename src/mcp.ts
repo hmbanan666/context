@@ -193,6 +193,7 @@ export function createContextMcp(
           (credential?.kind === "cli" &&
             credential.createProjects === true &&
             grants?.project === undefined),
+        !protectedMode || credential?.mayApprove === true,
       );
       return server;
     },

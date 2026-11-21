@@ -118,6 +118,7 @@ context init --project notes --name "Notes"
 context token create coding-agent --read projects --write projects --default-write projects
 context token create coding-agent --read projects --write projects --default-write projects --create-projects
 context token create one-project --read projects --write projects --default-write projects --project observatory
+context token create trusted --read projects --write projects --default-write projects --may-approve
 context client list
 context token list
 context token revoke TOKEN_ID
@@ -131,10 +132,10 @@ Tokens print once and expire in 90 days by default; `--expires` accepts bounded
 `m`, `h`, `d` durations up to one year. Optional `--project <id>` binds that
 token to one existing project; the area flags are still required. Optional
 `--create-projects` is stored on that area token and defaults to off. It
-cannot be combined with `--project`. `context token --help` prints token
-usage. A token name cannot start with `-`. `context
-token list` includes the token name, `used`, `lastUsed`, and
-`createProjects`. `used` becomes
+cannot be combined with `--project`. `--may-approve` is a separate boolean and
+defaults to off. `context token --help` prints token usage. A token name
+cannot start with `-`. `context token list` includes the token name, `used`,
+`lastUsed`, `createProjects`, and `mayApprove`. `used` becomes
 true and `lastUsed` is the unix time when that access or CLI token is
 accepted, including a successful `remember`. `context token revoke --name
 <name>` revokes every token issued for that client name. `context remember`

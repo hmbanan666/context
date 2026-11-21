@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   captureSchema,
+  identifierSchema,
   nonblankText as nonblank,
   scopeSchema,
 } from "./contracts.js";
@@ -11,6 +12,15 @@ import type { Source } from "./store.js";
 export const materialMetadataSchema = z.strictObject({
   type: z.enum(["note", "document"]).optional(),
   title: nonblank(256).optional(),
+  // A client-written fact or decision. Absent on ordinary notes.
+  kind: z.enum(["fact", "decision"]).optional(),
+  status: z.enum(["proposed", "approved"]).optional(),
+  supersedes: z
+    .array(identifierSchema)
+    .min(1)
+    .max(8)
+    .refine((ids) => new Set(ids).size === ids.length)
+    .optional(),
   createdAt: z.iso.datetime({ offset: true }).optional(),
   sourceUri: z
     .url()
@@ -115,6 +125,9 @@ export const materialLookupSchema = z.strictObject({
 export interface MaterialMetadata {
   readonly type: "note" | "document";
   readonly title?: string;
+  readonly kind?: "fact" | "decision";
+  readonly status?: "proposed" | "approved";
+  readonly supersedes?: readonly string[];
   readonly createdAt?: string;
   readonly sourceUri?: string;
 }

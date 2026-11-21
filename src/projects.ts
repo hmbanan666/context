@@ -173,6 +173,7 @@ export function installProjects(db: DatabaseSync): void {
       rules TEXT NOT NULL CHECK(length(rules) BETWEEN 1 AND 2048),
       pinned TEXT NOT NULL CHECK(length(pinned) BETWEEN 2 AND 2048),
       updated_at TEXT NOT NULL,
+      set_by TEXT,
       FOREIGN KEY (project_id) REFERENCES projects(id)
     ) STRICT;
     CREATE TABLE IF NOT EXISTS project_glossary (
@@ -185,7 +186,17 @@ export function installProjects(db: DatabaseSync): void {
     ) STRICT;
   `);
   migrateProjectTables(db);
+  ensureProfileSetBy(db);
   installJournalMeta(db);
+}
+
+function ensureProfileSetBy(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(project_profiles)").all() as {
+    name: string;
+  }[];
+  if (!columns.length || columns.some((column) => column.name === "set_by"))
+    return;
+  db.exec("ALTER TABLE project_profiles ADD COLUMN set_by TEXT");
 }
 
 function tableColumns(
@@ -822,6 +833,7 @@ export interface ProjectProfile {
   readonly purpose: string;
   readonly rules: string;
   readonly pinned: readonly string[];
+  readonly setBy?: string;
   readonly inForce: readonly { readonly id: string; readonly text: string }[];
 }
 export class ProfileTooLarge extends Error {
@@ -911,7 +923,8 @@ function readProfileRow(
 ): ProjectProfile | undefined {
   const row = db
     .prepare(
-      `SELECT p.home_area AS homeArea, f.purpose, f.rules, f.pinned
+      `SELECT p.home_area AS homeArea, f.purpose, f.rules, f.pinned,
+         f.set_by AS setBy
        FROM project_profiles f JOIN projects p ON p.id = f.project_id
        WHERE f.project_id = ?`,
     )
@@ -921,6 +934,7 @@ function readProfileRow(
         purpose: string;
         rules: string;
         pinned: string;
+        setBy: string | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -932,6 +946,7 @@ function readProfileRow(
     purpose: row.purpose,
     rules: row.rules,
     pinned,
+    ...(row.setBy ? { setBy: row.setBy } : {}),
     inForce: decisionsInForce(db, row.homeArea, pinned),
   };
 }
@@ -942,6 +957,7 @@ export function setProjectProfile(
     purpose: string;
     rules: string;
     pinned?: readonly string[];
+    setBy?: string;
   },
 ): ProjectProfile {
   const projectId = projectIdSchema.parse(input.projectId);
@@ -958,20 +974,24 @@ export function setProjectProfile(
     if (!home) throw new UnknownProject([projectId]);
     const homeArea = String(home.homeArea);
     assertPinned(db, projectId, homeArea, pinned);
+    ensureProfileSetBy(db);
     db.prepare(
-      `INSERT INTO project_profiles (project_id, purpose, rules, pinned, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO project_profiles
+        (project_id, purpose, rules, pinned, updated_at, set_by)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_id) DO UPDATE SET
         purpose = excluded.purpose,
         rules = excluded.rules,
         pinned = excluded.pinned,
-        updated_at = excluded.updated_at`,
+        updated_at = excluded.updated_at,
+        set_by = excluded.set_by`,
     ).run(
       projectId,
       purpose,
       rules,
       JSON.stringify(pinned),
       new Date().toISOString(),
+      input.setBy ?? null,
     );
     const profile = readProfileRow(db, projectId);
     if (!profile) throw new Error("Missing project profile");

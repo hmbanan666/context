@@ -70,6 +70,11 @@ export interface TokenRecord {
   lastUsed?: number | null;
   /** Area CLI tokens only. Absent means the token cannot create projects. */
   createProjects?: boolean;
+  /**
+   * Owner CLI capability. Absent or false on older credentials and on OAuth
+   * tokens. Separate from createProjects.
+   */
+  mayApprove?: boolean;
   revoked: boolean;
   redirect?: string;
   challenge?: string;
@@ -232,6 +237,7 @@ export class AuthStore {
     lifetime: number,
     resource: string,
     createProjects = false,
+    mayApprove = false,
   ) {
     if (
       !/^[A-Za-z0-9._][A-Za-z0-9._-]{0,79}$/.test(name) ||
@@ -289,6 +295,7 @@ export class AuthStore {
         family: secret(),
         familyExpires: this.now() + lifetime,
         ...(createProjects ? { createProjects: true } : {}),
+        ...(mayApprove ? { mayApprove: true } : {}),
       });
     });
   }
@@ -404,6 +411,7 @@ export class AuthStore {
           used: t.used,
           lastUsed: t.lastUsed ?? null,
           createProjects: t.createProjects === true,
+          mayApprove: t.mayApprove === true,
         };
       });
   }
