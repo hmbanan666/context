@@ -322,11 +322,13 @@ missing id for local no-auth mode or an area CLI token with
 OAuth tokens and tokens without the capability still reject an unknown id
 and save nothing. The CLI still requires an existing id. See the MCP tools.
 
-`context project profile set` replaces the one owner-written profile: purpose,
+`context project profile set` replaces the one profile: purpose,
 then rules, then up to eight pinned decision ids. The stored document is those
 fields joined by newlines and must be at most 2048 UTF-8 bytes. A pinned id
 must already be a decision linked to that project in the home area. The
-processor cannot write this document. `show` prints the profile, or
+processor cannot write this document. A token created with `--may-approve`, or
+local owner mode, can overwrite the same profile through `remember` with
+`doc.type` `profile`. `show` prints the profile, or
 `{"profile":null}` when none is stored. `clear` removes it. `read` on MCP
 uses the id `profile:<project id>` and returns it only in the home area.
 Decisions in force are the pinned decisions that are already approved and not

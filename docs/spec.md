@@ -228,14 +228,26 @@ implemented and not deployed.
   `fr`, or `es` for distillation and journals. A sentence in another language
   is requested once more; if it is still wrong, the source stays pending and
   is not stored. One stderr line records the expected and detected language
-  and does not include source text.
-- Supersession stays explicit: `remember` with `supersedes`. Distillation must
+  and does not include source text. A fact or decision written on `remember`
+  is stored as given. That language check does not apply to it, and the
+  journal keeps that sentence.
+- Supersession stays explicit: `remember` with `supersedes`, or
+  `metadata.supersedes` on a client-written fact or decision. Distillation must
   not write a supersedes link or set `approved`. A claimed `approved` status
-  stays `proposed`. A journal cannot supersede a decision.
-- Each project has one owner-written profile in its home area: purpose, then
+  from the processor stays `proposed`. A token created with `--may-approve` may
+  pass `metadata.status: "approved"` on a statement it writes; any other token
+  is rejected. A journal cannot supersede a decision.
+- `remember` with `metadata.kind` `fact` or `decision` stores the source and
+  immediately writes one statement of at most 400 characters. The item inherits
+  the project, uses the source time, and links the source. The processor skips
+  that source. Search, pack and timeline show it without waiting for nightly
+  distillation. The existing weekly journal includes it on its next pass.
+- Each project has one profile in its home area: purpose, then
   rules, then up to eight pinned decision ids. The stored document is those
   fields joined by newlines and is at most 2048 UTF-8 bytes. `context project
-  profile set`, `show` and `clear` are the only writers. The processor cannot
+  profile set`, `show` and `clear` write it, and so does `remember` with
+  `doc.type` `profile` from a `--may-approve` token or local owner mode. That
+  write overwrites the profile and records who set it. The processor cannot
   write it, and no fifth MCP tool is added. `read` with id `profile:<project id>`
   returns it only when `scope` is the home area. A pinned id must already be a
   decision linked to that project in the home area. The read result's `inForce`

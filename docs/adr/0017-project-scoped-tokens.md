@@ -59,6 +59,10 @@ not run. `tools/list` is unchanged.
 
 ## Consequences
 
+Amended by [ADR 0020](0020-client-written-knowledge.md): `mayApprove` is a
+separate boolean on the credential, default off, and is not part of OAuth
+consent. A project binding still limits which project the token can write.
+
 A project-bound token cannot see or write another project's records through
 MCP. An area token can still see every project that lives in, or has linked
 records in, its read areas. OAuth clients stay area-scoped until a later

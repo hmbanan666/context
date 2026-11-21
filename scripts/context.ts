@@ -19,12 +19,12 @@ import { runMarkdownImport } from "./import-markdown.js";
 
 const tokenUsage = `Usage: context token <command>
 
-  token create <name> --read a,b --write a --default-write a [--project <id>] [--create-projects] [--expires 90d]
+  token create <name> --read a,b --write a --default-write a [--project <id>] [--create-projects] [--may-approve] [--expires 90d]
   token list
   token revoke <id>
   token revoke --name <name>
 
-The token name cannot start with -. --create-projects lets that area token create a missing project on remember. It cannot be combined with --project.`;
+The token name cannot start with -. --create-projects lets that area token create a missing project on remember. It cannot be combined with --project. --may-approve is a separate capability and defaults to off.`;
 
 const usage = `Usage: context <command>
 
@@ -32,7 +32,7 @@ const usage = `Usage: context <command>
   owner init
   client list
   client revoke <id>
-  token create <name> --read a,b --write a --default-write a [--project <id>] [--create-projects] [--expires 90d]
+  token create <name> --read a,b --write a --default-write a [--project <id>] [--create-projects] [--may-approve] [--expires 90d]
   token list
   token revoke <id>
   token revoke --name <name>
@@ -229,30 +229,28 @@ async function main() {
       return;
     }
     if (kind === "token" && action === "create" && name) {
-      const options = new Map<string, string>();
-      let createProjects = false;
-      const valued = [
+      // Capabilities are separate flags and separate booleans on the credential.
+      const booleanFlags = new Set(["--create-projects", "--may-approve"]);
+      const valued = new Set([
         "--read",
         "--write",
         "--process",
         "--default-write",
         "--expires",
         "--project",
-      ];
+      ]);
+      const options = new Map<string, string>();
+      const flags = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const key = args[i];
-        if (key === "--create-projects") {
-          if (createProjects) throw new Error("Invalid token options");
-          createProjects = true;
+        if (!key?.startsWith("--")) throw new Error("Invalid token options");
+        if (booleanFlags.has(key)) {
+          if (flags.has(key)) throw new Error("Invalid token options");
+          flags.add(key);
           continue;
         }
         const value = args[++i];
-        if (
-          !key ||
-          value === undefined ||
-          !valued.includes(key) ||
-          options.has(key)
-        )
+        if (value === undefined || !valued.has(key) || options.has(key))
           throw new Error("Invalid token options");
         options.set(key, value);
       }
@@ -267,6 +265,7 @@ async function main() {
       const project = options.get("--project");
       if (project !== undefined && !projectIdSchema.safeParse(project).success)
         throw new Error("Invalid token options");
+      const createProjects = flags.has("--create-projects");
       if (createProjects && project)
         throw new Error("--create-projects cannot be combined with --project");
       if (project) {
@@ -295,6 +294,7 @@ async function main() {
         seconds,
         config.oauth.resource,
         createProjects,
+        flags.has("--may-approve"),
       );
       process.stdout.write(`${result.token}\n`);
       return;

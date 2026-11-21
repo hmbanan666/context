@@ -118,8 +118,12 @@ results retain only a per-question boolean, not matching text.
 then optional model-driven confident inbox sorting, then distillation.
 Automatic supersession was removed after owner-reported live precision of 3/12
 proposals: record-level replacement can hide still-valid claims in multi-claim
-notes. Clients supersede explicitly via `remember` with `supersedes`; search
-demotion is unchanged. Distillation never writes a supersedes link.
+notes. Clients supersede explicitly via `remember` with `supersedes`, or with
+`metadata.supersedes` on a fact or decision written in that call. Search
+demotion is unchanged. Distillation never writes a supersedes link and never
+approves. A source that already has a client-written fact or decision is not
+distilled again. A `--may-approve` token may approve that statement and may
+overwrite a project profile through `remember`.
 `knowledge_relations` accepts source or knowledge endpoints, with `duplicates`
 added by a transactional
 CHECK/FK table migration preserving historical rows and retry keys. Both endpoints

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { nonblankText } from "./contracts.js";
+import { identifierSchema, nonblankText } from "./contracts.js";
 import { projectIdSchema } from "./projects.js";
 import { notRetired } from "./retirement.js";
 
@@ -80,6 +80,25 @@ export interface DocumentRevisionSummary {
 }
 
 export type DocumentInput = z.input<typeof documentInputSchema>;
+
+// Same object shape as a document. title is the purpose; pins are optional.
+// The key is accepted and does not create a second profile.
+export const profileDocSchema = z
+  .strictObject({
+    type: z.literal("profile"),
+    key: docKeySchema,
+    title: nonblankText(2048),
+    status: z.string().min(1).max(32).optional(),
+    pins: z.array(identifierSchema).max(8).optional(),
+  })
+  .superRefine((doc, context) => {
+    if (doc.pins && new Set(doc.pins).size !== doc.pins.length)
+      context.addIssue({
+        code: "custom",
+        path: ["pins"],
+        message: "Duplicate pinned decision",
+      });
+  });
 
 export function parseDocument(
   input: z.input<typeof documentInputSchema>,

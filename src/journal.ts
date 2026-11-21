@@ -48,6 +48,7 @@ interface WeekItem {
   text: string;
   createdAt: string;
   sourceRefs: string;
+  clientWritten: number;
 }
 
 export function installJournalMeta(db: DatabaseSync): void {
@@ -258,20 +259,27 @@ export function journalInstruction(
   return "Write in the dominant language of the cited items. Pick the majority by item count. A tie goes to Russian. Do not translate.";
 }
 
-function citedProse(
-  items: readonly { id: string; text: string }[],
+function clientWritten(item: WeekItem): boolean {
+  return Number(item.clientWritten) === 1;
+}
+
+/** Distilled sentences only. A client-written statement is kept as stored. */
+function distilledProse(
+  items: readonly WeekItem[],
   citedIds: readonly string[],
 ): string {
   const cited = new Set(citedIds);
   return items
-    .filter((item) => cited.has(item.id))
+    .filter((item) => cited.has(item.id) && !clientWritten(item))
     .map((item) => item.text)
     .join(" ");
 }
 
 /**
- * First try uses every item. A wrong language retries once, keeping only the
- * items already in the expected language. A second miss is not stored.
+ * First try uses every item. A wrong distilled language retries once, keeping
+ * client-written statements and distilled items already in the expected
+ * language. A second miss of a distilled sentence is not stored. Client-written
+ * text is never the reason to drop the paragraph.
  */
 function journalParagraphForWeek(
   projectId: string,
@@ -287,18 +295,20 @@ function journalParagraphForWeek(
   const first = journalParagraph(projectId, weekId, items);
   if (!first.citedIds.length) return first;
   const expected = majorityLanguage(
-    items.map((item) => item.text),
+    items.filter((item) => !clientWritten(item)).map((item) => item.text),
     env,
   );
-  if (outputLanguageMatches(citedProse(items, first.citedIds), expected))
+  const firstDistilled = distilledProse(items, first.citedIds);
+  if (!firstDistilled || outputLanguageMatches(firstDistilled, expected))
     return first;
-  const matching = items.filter((item) =>
-    outputLanguageMatches(item.text, expected),
+  const matching = items.filter(
+    (item) => clientWritten(item) || outputLanguageMatches(item.text, expected),
   );
   const second = journalParagraph(projectId, weekId, matching);
+  const secondDistilled = distilledProse(matching, second.citedIds);
   if (
     second.citedIds.length > 0 &&
-    outputLanguageMatches(citedProse(matching, second.citedIds), expected)
+    (!secondDistilled || outputLanguageMatches(secondDistilled, expected))
   )
     return second;
   console.error(
@@ -307,7 +317,7 @@ function journalParagraphForWeek(
       projectId,
       week: weekId,
       expected,
-      detected: detectOutputLanguage(citedProse(items, first.citedIds)),
+      detected: detectOutputLanguage(firstDistilled),
     }),
   );
   return undefined;
@@ -421,7 +431,9 @@ function weekItems(
   return db
     .prepare(
       `SELECT k.id, k.kind, k.text, k.created_at AS createdAt,
-         k.source_refs AS sourceRefs
+         k.source_refs AS sourceRefs,
+         CASE WHEN json_extract(k.creator, '$.version') = 'client-v1'
+           THEN 1 ELSE 0 END AS clientWritten
        FROM knowledge_items k
        WHERE k.scope = ?
          AND k.kind IN ('fact', 'decision')

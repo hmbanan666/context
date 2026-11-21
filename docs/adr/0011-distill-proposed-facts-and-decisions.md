@@ -72,3 +72,7 @@ exists, retrieval still sees the raw source. A distilled sentence is not owner
 approval and is not a substitute for the source. People extraction, hard delete
 and any automatic supersede stay out of this decision. Live precision is
 unmeasured until the synthetic and private evals for this work have been run.
+
+Amended by [ADR 0020](0020-client-written-knowledge.md): `remember` may write
+the fact or decision itself. The processor skips that source and still never
+approves or supersedes.
