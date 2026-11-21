@@ -117,10 +117,13 @@ on, see [LLM providers](llm-providers.md).
 
 ## Store an ADR or a spec
 
-An architect token can write the current ADR or spec for a project. Create
-the project first (`context init --project` or `context project create`).
-The token needs write access to the project's area. `--project` binds the
-token so `remember` does not have to repeat the id.
+An architect token can write the current ADR or spec for a project. An area
+token created with `--create-projects` creates the project on the first
+`remember` that names a new id. A token bound with `--project`, and every
+OAuth client, still needs that project to exist (`context init --project`
+or `context project create`). The token needs write access to the project's
+area. `--project` binds the token so `remember` does not have to repeat the
+id.
 
 Ask the client to remember the decision as a document. The call is still
 `remember`. `doc.type` is `adr`, `spec` or `note`. `doc.key` is stable

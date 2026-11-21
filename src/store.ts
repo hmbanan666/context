@@ -47,6 +47,7 @@ import {
   associationsFor,
   backfillProjects,
   clearProjectProfile,
+  createMissingProjects,
   createProject,
   listProjectGlossary,
   setProjectGlossaryTerm,
@@ -143,6 +144,19 @@ function materialMetadata(
     ...(input?.title !== undefined ? { title: input.title } : {}),
     ...(input?.createdAt !== undefined ? { createdAt: input.createdAt } : {}),
     ...(input?.sourceUri !== undefined ? { sourceUri: input.sourceUri } : {}),
+  };
+}
+
+function capturedMaterial(
+  saved: { duplicate: boolean; projectCreated?: boolean },
+  material: Material,
+): { material: Material; duplicate: boolean; projectCreated?: boolean } {
+  if (saved.projectCreated === undefined)
+    return { material, duplicate: saved.duplicate };
+  return {
+    material,
+    duplicate: saved.duplicate,
+    projectCreated: saved.projectCreated,
   };
 }
 
@@ -273,9 +287,12 @@ export class SourceStore {
     input: CaptureMaterialInput,
     supersession?: CaptureSupersession,
     projectIds?: readonly string[],
+    createProjects = false,
+    projectName?: string,
   ): {
     material: Material;
     duplicate: boolean;
+    projectCreated?: boolean;
   } {
     const request = captureMaterialSchema.parse(
       redactFields(captureMaterialSchema.parse(input)),
@@ -296,10 +313,13 @@ export class SourceStore {
       undefined,
       supersession,
       projectIds,
+      undefined,
+      createProjects,
+      projectName,
     );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
-    return { material, duplicate: saved.duplicate };
+    return capturedMaterial(saved, material);
   }
 
   captureDocument(
@@ -307,7 +327,13 @@ export class SourceStore {
     document: DocumentInput,
     setBy: string,
     projectId: string,
-  ): { material: Material; duplicate: boolean } {
+    createProjects = false,
+    projectName?: string,
+  ): {
+    material: Material;
+    duplicate: boolean;
+    projectCreated?: boolean;
+  } {
     const request = captureMaterialSchema.parse(
       redactFields(captureMaterialSchema.parse(input)),
     );
@@ -362,10 +388,12 @@ export class SourceStore {
       undefined,
       [projectId],
       written,
+      createProjects,
+      projectName,
     );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material?.doc) throw new Error("Missing saved document");
-    return { material, duplicate: saved.duplicate };
+    return capturedMaterial(saved, material);
   }
 
   // Only the validated, redacted import boundary calls this owner-local writer.
@@ -415,9 +443,12 @@ export class SourceStore {
     input: CaptureFileInput,
     supersession?: CaptureSupersession,
     projectIds?: readonly string[],
+    createProjects = false,
+    projectName?: string,
   ): {
     material: Material;
     duplicate: boolean;
+    projectCreated?: boolean;
   } {
     const original = captureFileSchema.parse(input);
     const request = captureFileSchema.parse({
@@ -449,10 +480,13 @@ export class SourceStore {
       undefined,
       supersession,
       projectIds,
+      undefined,
+      createProjects,
+      projectName,
     );
     const material = this.findMaterial(saved.source.id, request.scope);
     if (!material) throw new Error("Missing saved material");
-    return { material, duplicate: saved.duplicate };
+    return capturedMaterial(saved, material);
   }
 
   #materialFingerprint(
@@ -487,7 +521,14 @@ export class SourceStore {
     supersession?: CaptureSupersession,
     projectIds?: readonly string[],
     document?: DocumentWrite,
-  ): { source: Source; duplicate: boolean; changed?: boolean } {
+    createProjects = false,
+    projectName?: string,
+  ): {
+    source: Source;
+    duplicate: boolean;
+    changed?: boolean;
+    projectCreated?: boolean;
+  } {
     // Omit projects from the hash unless the client sent them, so older retries match.
     const sortedProjects = projectIds
       ? [...rememberProjectsSchema.parse(projectIds)].sort()
@@ -544,7 +585,13 @@ export class SourceStore {
         if (!source)
           throw new IdempotencyConflict("Source no longer in requested area");
         this.#database.exec("COMMIT");
-        return { source, duplicate: true };
+        return {
+          source,
+          duplicate: true,
+          ...(createProjects && sortedProjects
+            ? { projectCreated: false }
+            : {}),
+        };
       }
       const changed = imported
         ? !!this.#database
@@ -638,8 +685,17 @@ export class SourceStore {
           .run(request.scope, request.idempotencyKey, fingerprint, source.id);
       if (imported)
         linkConfiguredImport(this.#database, source.id, imported.metadata);
-      if (sortedProjects)
+      let projectCreated = false;
+      if (sortedProjects) {
+        if (createProjects)
+          projectCreated = createMissingProjects(
+            this.#database,
+            sortedProjects,
+            request.scope,
+            projectName,
+          );
         linkClientProjects(this.#database, source.id, sortedProjects);
+      }
       if (replacing && knowledge)
         for (const id of replacing.ids) {
           knowledge.relate({
@@ -656,7 +712,12 @@ export class SourceStore {
           });
         }
       this.#database.exec("COMMIT");
-      return { source, duplicate: false, ...(imported ? { changed } : {}) };
+      return {
+        source,
+        duplicate: false,
+        ...(imported ? { changed } : {}),
+        ...(createProjects && sortedProjects ? { projectCreated } : {}),
+      };
     } catch (error) {
       this.#database.exec("ROLLBACK");
       throw error;

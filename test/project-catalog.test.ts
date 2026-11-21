@@ -281,11 +281,13 @@ test("two imported repositories in one area filter by project and stay area-wide
     const missing = await mcp.call("remember", {
       text: "This fictional marker must not be stored.",
       idempotencyKey: "missing",
-      project: ["missing-project"],
+      project: ["Missing Project"],
     });
-    assert.equal(body(missing).error, "unknown_project");
+    assert.equal(missing.isError, true);
     assert.equal(
-      JSON.stringify(body(missing)).includes("must not be stored"),
+      JSON.stringify(missing.structuredContent ?? {}).includes(
+        "must not be stored",
+      ),
       false,
     );
     const recovered = await mcp.call("remember", {
@@ -434,16 +436,13 @@ test("two imported repositories in one area filter by project and stay area-wide
       project: proposalId,
     });
     assert.equal(body(rejected).error, "unknown_project");
-    assert.equal(
-      (
-        await mcp.call("remember", {
-          text: "Cannot use a proposal id.",
-          idempotencyKey: "proposal-id",
-          project: [proposalId],
-        })
-      ).isError,
-      true,
-    );
+    const badProject = await mcp.call("remember", {
+      text: "This invalid project id must not be stored.",
+      idempotencyKey: "proposal-id",
+      project: ["Not A Project"],
+    });
+    assert.equal(badProject.isError, true);
+    assert.equal(mcp.sources.hasProject(proposalId), false);
     const before = mcp.sources.listProjects().projects.length;
     mcp.sources.proposeProjectLink({
       recordKind: "source",
@@ -478,7 +477,7 @@ test("two imported repositories in one area filter by project and stay area-wide
       : undefined;
     assert.equal(
       rememberFields?.project?.description,
-      "1–8 existing project ids",
+      "1–8 project ids. An area token with create-projects can create a missing id",
     );
     assert.deepEqual(network, []);
 

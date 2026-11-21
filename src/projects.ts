@@ -334,6 +334,40 @@ export function createProject(
     return { id, name, homeArea };
   });
 }
+
+// ADR 0019. Inserts missing ids inside the caller's transaction. The name is
+// projectName when this call names one id, otherwise the id. An existing row
+// is left unchanged, including when a concurrent insert wins the primary key.
+export function createMissingProjects(
+  db: DatabaseSync,
+  ids: readonly string[],
+  homeArea: string,
+  projectName?: string,
+): boolean {
+  const area = scopeSchema.parse(homeArea);
+  const projectIds = [...rememberProjectsSchema.parse(ids)].sort();
+  const named =
+    projectIds.length === 1 && projectName !== undefined
+      ? projectNameSchema.parse(projectName)
+      : undefined;
+  const insert = db.prepare(
+    "INSERT INTO projects (id, name, home_area, created_at) VALUES (?, ?, ?, ?)",
+  );
+  const now = new Date().toISOString();
+  let created = false;
+  for (const id of projectIds) {
+    if (projectRow(db, id)) continue;
+    const name = projectNameSchema.parse(named ?? id);
+    try {
+      insert.run(id, name, area, now);
+    } catch (error) {
+      if (projectRow(db, id)) continue;
+      throw error;
+    }
+    created = true;
+  }
+  return created;
+}
 export function renameProject(
   db: DatabaseSync,
   id: string,

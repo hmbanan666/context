@@ -21,6 +21,7 @@ import { contextPackageSchema, type PackageRequest } from "./package-query.js";
 import {
   maxListedProjects,
   projectIdSchema,
+  projectNameSchema,
   rememberProjectsSchema,
 } from "./projects.js";
 import { elapsedMs, emptyPhases, writeSearchLog } from "./search-timing.js";
@@ -50,6 +51,7 @@ export function registerSurfaceTools(
   readAreas?: readonly string[],
   tokenLabel = "local",
   tokenId?: string,
+  allowCreateProjects = false,
 ) {
   const options = (write = false) => ({
     ...oauthMetadata(protectedMode, [write ? "context:write" : "context:read"]),
@@ -346,7 +348,7 @@ export function registerSurfaceTools(
 
   const remember = {
     description:
-      "Remember decisions and notes as text or a UTF-8 .txt/.md file (16 KiB maximum) in an area. Secrets are redacted. Reuse idempotencyKey for identical retries; confirm only after success. Saving is not action approval. Optional doc stores an ADR, spec or note for one project. Each write adds a revision. Any write token may set status, and the token name is stored as setBy. ADR status is proposed, accepted, superseded or rejected. Spec status is draft, active or obsolete. A note's status is active.",
+      "Remember decisions and notes as text or a UTF-8 .txt/.md file (16 KiB maximum) in an area. Secrets are redacted. Reuse idempotencyKey for identical retries; confirm only after success. Saving is not action approval. Optional doc stores an ADR, spec or note for one project. Each write adds a revision. Any write token may set status, and the token name is stored as setBy. ADR status is proposed, accepted, superseded or rejected. Spec status is draft, active or obsolete. A note's status is active. An area token created with --create-projects, and local no-auth mode, create a missing project when they can write the area. The name is projectName or the id. The home area is the area of this write. The result sets projectCreated. projectName is ignored when that project already exists. An invalid id is rejected and nothing is stored. OAuth tokens and tokens without that capability still reject an unknown id. A project-bound token still rejects any other id.",
     inputSchema: captureMaterialSchema
       .omit({ scope: true, origin: true })
       .extend({
@@ -360,7 +362,12 @@ export function registerSurfaceTools(
           .describe("Pass ids of facts this note replaces."),
         project: rememberProjectsSchema
           .optional()
-          .describe("1–8 existing project ids"),
+          .describe(
+            "1–8 project ids. An area token with create-projects can create a missing id",
+          ),
+        projectName: projectNameSchema
+          .optional()
+          .describe("Name used only when this call creates that one project"),
         file: z
           .strictObject({
             filename: captureFileSchema.shape.filename,
@@ -389,12 +396,21 @@ export function registerSurfaceTools(
         text,
         supersedes,
         project: requested,
+        projectName,
         doc,
         ...rest
       } = input;
       if (boundProject && requested?.some((id) => id !== boundProject))
         return projectDenied;
       const project = boundProject ? [boundProject] : requested;
+      if (projectName !== undefined && project?.length !== 1)
+        return toolResult(
+          {
+            error: "invalid_input",
+            message: "projectName needs one project",
+          },
+          true,
+        );
       const supersession = supersedes
         ? { ids: supersedes, clientId }
         : undefined;
@@ -428,6 +444,8 @@ export function registerSurfaceTools(
             doc,
             tokenLabel,
             projectId,
+            allowCreateProjects,
+            projectName,
           ),
         );
         if (!saved.isError && tokenId && stores.auth)
@@ -436,11 +454,19 @@ export function registerSurfaceTools(
       }
       const saved = toolResult(
         file
-          ? sources.captureFile({ ...base, ...file }, supersession, project)
+          ? sources.captureFile(
+              { ...base, ...file },
+              supersession,
+              project,
+              allowCreateProjects,
+              projectName,
+            )
           : sources.captureMaterial(
               captureMaterialSchema.parse({ ...base, text }),
               supersession,
               project,
+              allowCreateProjects,
+              projectName,
             ),
       );
       if (!saved.isError && tokenId && stores.auth)

@@ -315,8 +315,12 @@ text or stored provenance. Client and proposed associations stay as stored.
 Run it again after changing a mapping. It prints
 `{"sources":N,"derived":N,"changed":N}`.
 
-`remember` can also attach one to eight existing project ids. That path is
-documented with the MCP tools. Unknown ids are rejected and nothing is saved.
+`remember` can attach one to eight project ids. MCP `remember` creates a
+missing id for local no-auth mode or an area CLI token with
+`--create-projects` and write access on that area, and reports
+`projectCreated`. Optional `projectName` is used only for that creation.
+OAuth tokens and tokens without the capability still reject an unknown id
+and save nothing. The CLI still requires an existing id. See the MCP tools.
 
 `context project profile set` replaces the one owner-written profile: purpose,
 then rules, then up to eight pinned decision ids. The stored document is those

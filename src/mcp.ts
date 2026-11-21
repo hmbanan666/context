@@ -189,6 +189,10 @@ export function createContextMcp(
         grants?.read,
         tokenLabel,
         credential?.id,
+        !protectedMode ||
+          (credential?.kind === "cli" &&
+            credential.createProjects === true &&
+            grants?.project === undefined),
       );
       return server;
     },

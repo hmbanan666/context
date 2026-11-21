@@ -51,6 +51,43 @@ test("CLI initializes exactly one owner, prints credentials once, lists grants a
     assert.equal(records[0].name, "fictional-worker");
     assert.equal(records[0].used, false);
     assert.equal(records[0].lastUsed, null);
+    assert.equal(records[0].createProjects, false);
+    const maker = run([
+      "token",
+      "create",
+      "fictional-maker",
+      "--read",
+      "garden",
+      "--write",
+      "garden",
+      "--default-write",
+      "garden",
+      "--create-projects",
+    ]);
+    assert.equal(maker.status, 0, maker.stderr);
+    const makerRow = JSON.parse(run(["token", "list"]).stdout).find(
+      (row: { name?: string }) => row.name === "fictional-maker",
+    );
+    assert.equal(makerRow.createProjects, true);
+    const both = run([
+      "token",
+      "create",
+      "fictional-both",
+      "--read",
+      "garden",
+      "--write",
+      "garden",
+      "--default-write",
+      "garden",
+      "--project",
+      "alpha",
+      "--create-projects",
+    ]);
+    assert.equal(both.status, 1);
+    assert.match(
+      both.stderr,
+      /--create-projects cannot be combined with --project/,
+    );
     const clients = JSON.parse(run(["client", "list"]).stdout);
     const worker = clients.find(
       (client: { name?: string }) => client.name === "fictional-worker",
@@ -65,6 +102,11 @@ test("CLI initializes exactly one owner, prints credentials once, lists grants a
       assert.equal(
         store.access(token, env.CONTEXT_PUBLIC_URL).grants.project,
         undefined,
+      );
+      assert.equal(
+        store.access(maker.stdout.trim(), env.CONTEXT_PUBLIC_URL)
+          .createProjects,
+        true,
       );
       const project = run([
         "project",
@@ -136,5 +178,46 @@ test("CLI initializes exactly one owner, prints credentials once, lists grants a
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("token --help and -h print usage and a leading dash is not a token name", () => {
+  const env = { ...process.env };
+  delete env.CONTEXT_PUBLIC_URL;
+  delete env.CONTEXT_AUTH;
+  delete env.CONTEXT_DB_PATH;
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, ["dist/scripts/context.js", ...args], {
+      encoding: "utf8",
+      env,
+    });
+  for (const args of [
+    ["token", "--help"],
+    ["token", "-h"],
+    ["token", "create", "--help"],
+    ["token", "create", "-h"],
+    ["token", "list", "--help"],
+    ["token", "revoke", "-h"],
+  ]) {
+    const result = run(args);
+    assert.equal(result.status, 0, `${args.join(" ")} ${result.stderr}`);
+    assert.match(result.stdout, /token create <name>/);
+    assert.match(result.stdout, /--create-projects/);
+    assert.equal(result.stdout.includes("Bearer"), false);
+  }
+  for (const name of ["--not-a-name", "-maker"]) {
+    const dashed = run([
+      "token",
+      "create",
+      name,
+      "--read",
+      "garden",
+      "--write",
+      "garden",
+      "--default-write",
+      "garden",
+    ]);
+    assert.equal(dashed.status, 1, name);
+    assert.match(dashed.stderr, /Invalid token name/);
   }
 });
