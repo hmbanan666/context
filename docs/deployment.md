@@ -116,6 +116,7 @@ Inside the container (or `pnpm run context ...` in a built checkout):
 context init
 context init --project notes --name "Notes"
 context token create coding-agent --read projects --write projects --default-write projects
+context token create coding-agent --read projects --write projects --default-write projects --create-projects
 context token create one-project --read projects --write projects --default-write projects --project observatory
 context client list
 context token list
@@ -128,12 +129,20 @@ context status
 
 Tokens print once and expire in 90 days by default; `--expires` accepts bounded
 `m`, `h`, `d` durations up to one year. Optional `--project <id>` binds that
-token to one existing project; the area flags are still required. `context
-token list` includes the token name, `used`, and `lastUsed`. `used` becomes
+token to one existing project; the area flags are still required. Optional
+`--create-projects` is stored on that area token and defaults to off. It
+cannot be combined with `--project`. `context token --help` prints token
+usage. A token name cannot start with `-`. `context
+token list` includes the token name, `used`, `lastUsed`, and
+`createProjects`. `used` becomes
 true and `lastUsed` is the unix time when that access or CLI token is
 accepted, including a successful `remember`. `context token revoke --name
 <name>` revokes every token issued for that client name. `context remember`
-stores a note through the same validation and write path as MCP `remember`.
+stores a note through the same validation and write path as MCP `remember`,
+except it still requires an existing project id. MCP `remember` creates a
+missing id only for local no-auth mode or an area token with
+`createProjects` and write access on that area
+([ADR 0019](adr/0019-remember-creates-project.md)).
 Text is the remaining arguments or stdin. `--area` selects the area, repeat
 `--project` for one to eight existing ids, and `--kind` is `note`. `context
 status` prints source counts (active and retired), documents, knowledge

@@ -68,6 +68,8 @@ export interface TokenRecord {
   used: boolean;
   /** Unix seconds of the last accepted use. Absent on tokens issued before this field. */
   lastUsed?: number | null;
+  /** Area CLI tokens only. Absent means the token cannot create projects. */
+  createProjects?: boolean;
   revoked: boolean;
   redirect?: string;
   challenge?: string;
@@ -229,13 +231,16 @@ export class AuthStore {
     defaultWrite: string | null,
     lifetime: number,
     resource: string,
+    createProjects = false,
   ) {
     if (
-      !/^[a-zA-Z0-9._-]{1,80}$/.test(name) ||
+      !/^[A-Za-z0-9._][A-Za-z0-9._-]{0,79}$/.test(name) ||
       !Number.isInteger(lifetime) ||
       lifetime < 60 ||
       lifetime > 365 * 86400
     )
+      throw new Error("Invalid token options");
+    if (createProjects && input.project)
       throw new Error("Invalid token options");
     const grants = this.validateGrants(input, defaultWrite);
     // The client registry is the area ceiling. Project binding stays on the
@@ -283,6 +288,7 @@ export class AuthStore {
         expires: this.now() + lifetime,
         family: secret(),
         familyExpires: this.now() + lifetime,
+        ...(createProjects ? { createProjects: true } : {}),
       });
     });
   }
@@ -342,7 +348,8 @@ export class AuthStore {
     this.revokeFamily((JSON.parse(row.data as string) as TokenRecord).family);
   }
   revokeTokensByName(name: string) {
-    if (!/^[a-zA-Z0-9._-]{1,80}$/.test(name)) throw new Error("Unknown token");
+    if (!/^[A-Za-z0-9._][A-Za-z0-9._-]{0,79}$/.test(name))
+      throw new Error("Unknown token");
     const names = new Map(
       this.listClients().map((client) => [client.id, client.name]),
     );
@@ -396,6 +403,7 @@ export class AuthStore {
           revoked: t.revoked,
           used: t.used,
           lastUsed: t.lastUsed ?? null,
+          createProjects: t.createProjects === true,
         };
       });
   }

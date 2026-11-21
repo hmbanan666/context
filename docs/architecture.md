@@ -137,6 +137,8 @@ time, processor, model, counts (including LLM calls) and duration. Old supersess
 history fields are ignored. Project catalog, repository mappings and
 associations are implemented (ADR 0010 slice 4a): import and `context project
 backfill` write configured links, `remember` can attach client links, and
+MCP `remember` can create a missing project for local no-auth mode or an
+area CLI token with `createProjects` (ADR 0019). OAuth never creates one.
 `search` / `timeline` can filter by project. Processor proposals are stored
 without a usable id until `context project review` approves one and assigns
 it. Distillation (ADR 0011) writes

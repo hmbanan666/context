@@ -17,13 +17,22 @@ import { statusCommand } from "../src/status-cli.js";
 import { runImport } from "./import-jsonl.js";
 import { runMarkdownImport } from "./import-markdown.js";
 
+const tokenUsage = `Usage: context token <command>
+
+  token create <name> --read a,b --write a --default-write a [--project <id>] [--create-projects] [--expires 90d]
+  token list
+  token revoke <id>
+  token revoke --name <name>
+
+The token name cannot start with -. --create-projects lets that area token create a missing project on remember. It cannot be combined with --project.`;
+
 const usage = `Usage: context <command>
 
   init [--project <id> --name <name>]
   owner init
   client list
   client revoke <id>
-  token create <name> --read a,b --write a --default-write a [--project <id>] [--expires 90d]
+  token create <name> --read a,b --write a --default-write a [--project <id>] [--create-projects] [--expires 90d]
   token list
   token revoke <id>
   token revoke --name <name>
@@ -136,6 +145,18 @@ async function main() {
     return;
   }
   const [kind, action, name, ...args] = process.argv.slice(2);
+  if (
+    kind === "token" &&
+    (action === "--help" ||
+      action === "-h" ||
+      name === "--help" ||
+      name === "-h")
+  ) {
+    process.stdout.write(`${tokenUsage}\n`);
+    return;
+  }
+  if (kind === "token" && action === "create" && name?.startsWith("-"))
+    throw new Error("Invalid token name");
   if (kind === "import" && action === "jsonl") {
     await runImport(process.argv.slice(4));
     return;
@@ -209,20 +230,27 @@ async function main() {
     }
     if (kind === "token" && action === "create" && name) {
       const options = new Map<string, string>();
-      for (let i = 0; i < args.length; i += 2) {
-        const key = args[i],
-          value = args[i + 1];
+      let createProjects = false;
+      const valued = [
+        "--read",
+        "--write",
+        "--process",
+        "--default-write",
+        "--expires",
+        "--project",
+      ];
+      for (let i = 0; i < args.length; i++) {
+        const key = args[i];
+        if (key === "--create-projects") {
+          if (createProjects) throw new Error("Invalid token options");
+          createProjects = true;
+          continue;
+        }
+        const value = args[++i];
         if (
           !key ||
           value === undefined ||
-          ![
-            "--read",
-            "--write",
-            "--process",
-            "--default-write",
-            "--expires",
-            "--project",
-          ].includes(key) ||
+          !valued.includes(key) ||
           options.has(key)
         )
           throw new Error("Invalid token options");
@@ -239,6 +267,8 @@ async function main() {
       const project = options.get("--project");
       if (project !== undefined && !projectIdSchema.safeParse(project).success)
         throw new Error("Invalid token options");
+      if (createProjects && project)
+        throw new Error("--create-projects cannot be combined with --project");
       if (project) {
         const sources = new SourceStore(config.databasePath);
         let known = false;
@@ -264,6 +294,7 @@ async function main() {
         options.get("--default-write") ?? null,
         seconds,
         config.oauth.resource,
+        createProjects,
       );
       process.stdout.write(`${result.token}\n`);
       return;

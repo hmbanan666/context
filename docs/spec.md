@@ -44,7 +44,9 @@ are also possible through authorized agents via MCP.
 2. As the owner, I want to connect a headless agent, so that it can work without
    a browser login. `context token create <client> --read <areas> --write <areas>`
    issues a bearer token with bounded area rights. `--project <id>` optionally
-   binds that token to one existing project; OAuth consent stays area-only.
+   binds that token to one existing project. `--create-projects` optionally
+   lets that area token create a missing project on `remember`. OAuth consent
+   stays area-only and never creates a project.
    The client appears in the same revocable client list. A token issued before
    project binding has no project field and stays area-scoped.
 3. As the owner, I want to say "remember this", so that capture needs no technical
@@ -154,7 +156,13 @@ implemented and not deployed.
   including already stored provenance, and does not rewrite source text.
   Association also comes from an optional `project` field on `remember`,
   or from a processor proposal stored with no usable id until the owner
-  approves it and assigns one. Unknown ids on `remember` are rejected.
+  approves it and assigns one. MCP `remember` creates a missing id only for
+  local no-auth mode or an area CLI token with `createProjects` and write
+  access on that area ([ADR 0019](adr/0019-remember-creates-project.md)).
+  The name is `projectName` or the id, and the result sets `projectCreated`.
+  OAuth tokens, project-bound tokens and tokens without that capability
+  still reject an unknown id. `search` and the CLI still require an existing
+  id.
   Proposals do not affect retrieval until that approval. Association is not
   permission.
 - `search` and `timeline` take an optional `project` filter and otherwise stay
