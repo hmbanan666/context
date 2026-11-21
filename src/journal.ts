@@ -1,4 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
+import {
+  detectOutputLanguage,
+  distillLanguageName,
+  distillLanguageOverride,
+  majorityLanguage,
+  outputLanguageMatches,
+} from "./output-language.js";
 import { latestReviewStatusSql } from "./review-status.js";
 
 // ADR 0012. One replaceable paragraph per project and ISO week. Tidy writes a
@@ -239,6 +246,71 @@ export function journalParagraph(
     citedIds.push(item.id);
   }
   return { text: header + body, citedIds };
+}
+
+/** Prompt for a journal paragraph. Tidy follows it without a second model call. */
+export function journalInstruction(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = distillLanguageOverride(env);
+  if (override)
+    return `Write in ${distillLanguageName(override)} (${override}). CONTEXT_DISTILL_LANGUAGE overrides the dominant language of the cited items. Do not translate.`;
+  return "Write in the dominant language of the cited items. Pick the majority by item count. A tie goes to Russian. Do not translate.";
+}
+
+function citedProse(
+  items: readonly { id: string; text: string }[],
+  citedIds: readonly string[],
+): string {
+  const cited = new Set(citedIds);
+  return items
+    .filter((item) => cited.has(item.id))
+    .map((item) => item.text)
+    .join(" ");
+}
+
+/**
+ * First try uses every item. A wrong language retries once, keeping only the
+ * items already in the expected language. A second miss is not stored.
+ */
+function journalParagraphForWeek(
+  projectId: string,
+  weekId: string,
+  items: readonly WeekItem[],
+  env: NodeJS.ProcessEnv,
+): { text: string; citedIds: string[] } | undefined {
+  const instruction = journalInstruction(env);
+  const override = distillLanguageOverride(env);
+  const marker = override ? `(${override})` : "majority by item count";
+  if (!instruction.includes("Write in") || !instruction.includes(marker))
+    throw new Error("Invalid journal instruction");
+  const first = journalParagraph(projectId, weekId, items);
+  if (!first.citedIds.length) return first;
+  const expected = majorityLanguage(
+    items.map((item) => item.text),
+    env,
+  );
+  if (outputLanguageMatches(citedProse(items, first.citedIds), expected))
+    return first;
+  const matching = items.filter((item) =>
+    outputLanguageMatches(item.text, expected),
+  );
+  const second = journalParagraph(projectId, weekId, matching);
+  if (
+    second.citedIds.length > 0 &&
+    outputLanguageMatches(citedProse(matching, second.citedIds), expected)
+  )
+    return second;
+  console.error(
+    JSON.stringify({
+      event: "journal_language_mismatch",
+      projectId,
+      week: weekId,
+      expected,
+      detected: detectOutputLanguage(citedProse(items, first.citedIds)),
+    }),
+  );
+  return undefined;
 }
 
 export interface JournalCitations {
@@ -489,9 +561,11 @@ export function refreshProjectJournals(
     timeZone: string;
     dryRun: boolean;
     backfillLimit?: number;
+    env?: NodeJS.ProcessEnv;
   },
 ): JournalRefresh {
   if (!input.areas.length) return { written: 0, removed: 0, unchanged: 0 };
+  const env = input.env ?? process.env;
   if (!input.dryRun) installJournalMeta(db);
   else if (!journalMetaReady(db))
     return { written: 0, removed: 0, unchanged: 0 };
@@ -541,7 +615,13 @@ export function refreshProjectJournals(
           continue;
         }
         if (capped) continue;
-        const paragraph = journalParagraph(project.id, week.id, items);
+        const paragraph = journalParagraphForWeek(
+          project.id,
+          week.id,
+          items,
+          env,
+        );
+        if (!paragraph) continue;
         if (!paragraph.citedIds.length) {
           if (input.dryRun) continue;
           if (deleteJournal(db, id, project.homeArea)) {

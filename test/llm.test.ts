@@ -23,6 +23,8 @@ test("OpenAI-compatible client requires key and model, validates JSON and never 
       );
       const body = JSON.parse(String(init?.body));
       assert.equal(body.model, "fixture");
+      assert.match(body.messages[0].content, /language of the source/);
+      assert.match(body.messages[0].content, /Do not translate/);
       assert.ok(!JSON.stringify(body).includes(`sk-${"a".repeat(40)}`));
       return Response.json({
         choices: [
@@ -61,6 +63,8 @@ assert.equal(process.env.OPENAI_API_KEY, undefined);
 assert.equal(process.env.CONTEXT_LLM_API_KEY, undefined);
 assert.equal(process.env.CODEX_API_KEY, undefined);
 assert.ok(!prompt.includes('sk-' + 'a'.repeat(40)));
+assert.ok(prompt.includes('language of the source'));
+assert.ok(prompt.includes('Do not translate'));
 respond({items: []});
 `);
   try {

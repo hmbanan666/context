@@ -13,6 +13,7 @@ import {
   journalCharacterLimit,
   journalExcerpt,
   journalId,
+  journalInstruction,
   journalParagraph,
 } from "../src/journal.js";
 import { KnowledgeStore } from "../src/knowledge.js";
@@ -1006,6 +1007,113 @@ test("journal backfill finishes without distilling and the next pass picks up ne
     assert.equal(done.journals, 0);
     assert.equal(asks, 1);
   } finally {
+    await f.close();
+  }
+});
+
+test("the journal prompt names the majority language and the override", () => {
+  const instruction = journalInstruction();
+  assert.match(instruction, /dominant language of the cited items/);
+  assert.match(instruction, /majority by item count/);
+  assert.match(instruction, /tie goes to Russian/);
+  assert.match(instruction, /Do not translate/);
+  const forced = journalInstruction({ CONTEXT_DISTILL_LANGUAGE: "en" });
+  assert.match(forced, /English \(en\)/);
+  assert.match(forced, /overrides the dominant language of the cited items/);
+});
+
+test("a journal keeps the English majority and drops the German sentence", async () => {
+  const f = await open("journal-majority");
+  try {
+    const add = (key: string, text: string, createdAt: string) => {
+      const source = capture(f.sources, key, text, createdAt);
+      f.knowledge.addDistilled({
+        scope,
+        sourceId: source.id,
+        kind: "fact",
+        text,
+        createdAt,
+      });
+    };
+    add(
+      "en-lantern",
+      "The observatory logged the lantern.",
+      "2026-11-11T00:00:00.000Z",
+    );
+    add(
+      "en-mirror",
+      "The observatory logged the mirror.",
+      "2026-11-11T01:00:00.000Z",
+    );
+    add(
+      "de-archive",
+      "Das Observatorium speichert die Quelle und der Spiegel bleibt in dem Archiv dokumentiert.",
+      "2026-11-11T02:00:00.000Z",
+    );
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+    });
+    assert.equal(run.journals, 1);
+    const week = f.knowledge.find(journalId("observatory", "2026-W46"), scope);
+    assert.equal(week?.text.includes("lantern"), true);
+    assert.equal(week?.text.includes("mirror"), true);
+    assert.equal(week?.text.includes("speichert"), false);
+    assert.equal(week?.text.includes("Quelle"), false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("CONTEXT_DISTILL_LANGUAGE leaves an English journal unwritten", async () => {
+  const f = await open("journal-language-override");
+  const lines: string[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  try {
+    const source = capture(
+      f.sources,
+      "english-only",
+      "The observatory logged the lantern-token.",
+      "2026-11-11T00:00:00.000Z",
+    );
+    f.knowledge.addDistilled({
+      scope,
+      sourceId: source.id,
+      kind: "fact",
+      text: "The observatory logged the lantern-token.",
+      createdAt: "2026-11-11T00:00:00.000Z",
+    });
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: [scope],
+      now,
+      timeZone: "UTC",
+      env: { CONTEXT_DISTILL_LANGUAGE: "ru" },
+    });
+    assert.equal(run.journals, 0);
+    assert.equal(
+      f.knowledge.find(journalId("observatory", "2026-W46"), scope),
+      undefined,
+    );
+    const logged = lines.filter((line) =>
+      line.includes("journal_language_mismatch"),
+    );
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0]?.includes("lantern-token"), false);
+    assert.equal(logged[0]?.includes("observatory logged"), false);
+    const parsed = JSON.parse(logged[0] ?? "") as {
+      expected: string;
+      detected: string;
+    };
+    assert.equal(parsed.expected, "ru");
+    assert.equal(parsed.detected, "en");
+  } finally {
+    console.error = error;
     await f.close();
   }
 });

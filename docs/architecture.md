@@ -147,10 +147,15 @@ sentence. A source date with a numeric offset is stored on the item as UTC.
 Calls are capped separately from inbox sorting.
 Each run spreads the cap across projects (round-robin, newest revision first
 inside a project, unlinked sources last) and resumes that pass from a cursor.
-The prompt asks for one self-contained sentence in the source's dominant
-language, naming the change and its impact when the source states it, and
-keeping product terms. Sentences that copy 80 contiguous characters of stored
-prose are rejected and stay pending. Code spans, identifiers, ADR titles, URLs
+The prompt asks for one self-contained sentence in the language of the source.
+An English source stays English and a Russian source stays Russian.
+`CONTEXT_DISTILL_LANGUAGE` (`ru`, `en`, `de`, `fr`, or `es`) overrides that
+language for distillation and for journals. A sentence in another language is
+requested once more and, if it is still wrong, left pending and unstored. One
+stderr line records the expected and detected language and does not include
+source text. The prompt also names the change and its impact when the source
+states it, and keeps product terms. Sentences that copy 80 contiguous
+characters of stored prose are rejected and stay pending. Code spans, identifiers, ADR titles, URLs
 and markdown marks do not count toward that span. Tidy JSON reports rejection
 counts by reason; a few redacted samples go to stderr and not to tidy history.
 Search indexes and excerpts omit a Cursor pull-request footer and keep prose
@@ -172,7 +177,10 @@ profile (purpose, rules and up to eight pinned decision ids, at most 2048
 UTF-8 bytes) edited only by `context project profile`, and a deterministic
 weekly journal. The paragraph names the project and week, then up to eight
 complete sentences, decisions before facts, within 800 characters in the
-source language. Item ids stay in metadata (`citations` on read, `citedIds`
+majority language of the cited items. A tie goes to Russian.
+`CONTEXT_DISTILL_LANGUAGE` overrides that. A paragraph in another language is
+rebuilt once from the items already in the expected language and otherwise
+left unwritten. Item ids stay in metadata (`citations` on read, `citedIds`
 on a search card). Nightly tidy refreshes the current and previous ISO weeks
 in `TZ` from that project's distilled items in the home area, without a
 processor call. `context tidy --journal-backfill` does not distill or sort

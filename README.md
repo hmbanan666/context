@@ -166,6 +166,7 @@ service's `environment` (or use `docker run -e`).
 | `CONTEXT_AREAS` | `personal`; comma-separated owner areas, at most eight. |
 | `CONTEXT_PROCESSOR` | Unset. The processor stays off until `CONTEXT_LLM_API_KEY` and `CONTEXT_LLM_MODEL` are both set. `openai` selects an OpenAI-compatible endpoint; `codex` is the personal device-login path. [Providers](docs/llm-providers.md). |
 | `CONTEXT_LLM_API_KEY`, `CONTEXT_LLM_MODEL` | Both required for the default API processor; unset means dedup only. Local endpoints may use a placeholder key. Codex needs no API key; its model defaults to `gpt-6-luna`. |
+| `CONTEXT_DISTILL_LANGUAGE` | Unset. `ru`, `en`, `de`, `fr`, or `es` forces distillation and journals into that language. Unset follows the source. A journal uses the majority of its items, and a tie goes to Russian. |
 | `CONTEXT_CODEX_BIN`, `CONTEXT_CODEX_HOME` | Required only by the [Codex overlay](docs/deployment.md#optional-codex-subscription-processor): absolute host paths to a static binary and dedicated login directory. |
 | `CODEX_HOME` | CLI-owned login directory; the overlay sets `/app/codex`. Context never reads auth files. |
 | `CONTEXT_LLM_BASE_URL` | `https://api.openai.com/v1`; any OpenAI-compatible chat-completions endpoint, including local. |

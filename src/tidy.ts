@@ -60,6 +60,7 @@ export interface TidyOptions {
   journalBackfill?: boolean;
   journalBackfillLimit?: number;
   retryBackoffMs?: readonly number[];
+  env?: NodeJS.ProcessEnv;
 }
 export interface TidyRun {
   timestamp: string;
@@ -496,6 +497,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
         resumeAfter: run.distillAfter,
         frontiers: run.distillFrontiers,
         onLlmFailure: recordLlmFailure,
+        env: options.env ?? process.env,
         ...(backoffMs ? { backoffMs } : {}),
       });
       run.distillCalls = distilled.calls;
@@ -513,6 +515,7 @@ export async function runTidy(options: TidyOptions): Promise<TidyRun> {
       now: options.now ?? new Date(),
       timeZone: options.timeZone ?? (process.env.TZ || "UTC"),
       dryRun: !!options.dryRun,
+      env: options.env ?? process.env,
       ...backfill,
     });
     run.journals = journals.written;

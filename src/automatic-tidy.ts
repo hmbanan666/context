@@ -5,7 +5,7 @@ import { runTidy } from "./tidy.js";
 export function tidyOptions(databasePath: string, env: NodeJS.ProcessEnv) {
   const { areas } = evalConfig({ ...env, CONTEXT_DB_PATH: databasePath });
   const llm = createLlm(env);
-  return { databasePath, areas, ...(llm ? { llm } : {}) };
+  return { databasePath, areas, env, ...(llm ? { llm } : {}) };
 }
 // Shares the backup schedule; failures must not prevent the subsequent eval.
 export async function runTidyAfterBackup(
