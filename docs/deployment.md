@@ -353,8 +353,14 @@ does not spend distillation calls; a capped distill cursor is left in place
 for the next normal tidy. `llm: "not_configured"` or `llm: "unavailable"`
 (including an expired Codex login) skips distillation; dedup and inbox sorting
 still run. Repeat `context tidy` to continue a capped backlog. Distillation
-never approves an item and never writes a supersedes link. There is no new
-environment variable; the batch and call maxima are fixed.
+never approves an item and never writes a supersedes link. Batch and call
+maxima stay fixed. Optional `CONTEXT_DISTILL_LANGUAGE` (`ru`, `en`, `de`,
+`fr`, or `es`) forces each sentence and each journal into that language.
+Unset, a sentence follows its source, and a journal follows the majority of
+its items by count, with a tie going to Russian. A reply in another language
+is requested once more. If it is still wrong, the source stays pending and is
+not stored. Stderr gets one line with the expected and detected language and
+no source text.
 
 ### Weekly journal
 
@@ -362,7 +368,11 @@ After distillation, the same tidy run refreshes each project's journal for the
 current ISO week and the previous ISO week in `TZ` (ADR 0012). The paragraph
 is a deterministic summary: it names the project id and the week, then up to
 eight complete sentences, decisions before facts, within 800 characters in
-the source language. A sentence that does not fit is omitted whole. Item ids
+the majority language of the cited items. A tie goes to Russian.
+`CONTEXT_DISTILL_LANGUAGE` overrides that choice. If the paragraph is in
+another language, tidy rebuilds it once from the items already in the expected
+language and otherwise leaves that week unwritten. A sentence that does not
+fit is omitted whole. Item ids
 are not written into the paragraph; `read` returns them as `citations` and
 search returns them as `citedIds`. The summary does not call the processor
 and does not spend the distillation or inbox call caps, so it still runs when

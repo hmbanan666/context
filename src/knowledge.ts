@@ -841,6 +841,7 @@ export class KnowledgeStore {
     timeZone: string;
     dryRun: boolean;
     backfillLimit?: number;
+    env?: NodeJS.ProcessEnv;
   }): JournalRefresh {
     return refreshProjectJournals(this.#database, input);
   }

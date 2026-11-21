@@ -10,6 +10,14 @@ import type { Llm } from "./llm.js";
 import { retirementFilter } from "./retirement.js";
 import { askLlm, LlmCallError } from "./llm-call.js";
 import {
+  detectOutputLanguage,
+  distillLanguageName,
+  distillLanguageOverride,
+  type DistillLanguage,
+  outputLanguageMatches,
+  sourceLanguage,
+} from "./output-language.js";
+import {
   hasProject,
   projectIdSchema,
   projectNameSchema,
@@ -25,20 +33,28 @@ export const DISTILL_CALL_MAX = 12;
 export const DISTILL_BODY_LIMIT = 1500;
 export const DISTILL_CREATOR = "context-tidy";
 export const DISTILL_UNLINKED = "*";
-export const distillInstruction = [
-  "Distill each indexed source into one proposed sentence.",
-  'Return a JSON array of {"index":number,"kind":"fact"|"decision","text":string,"project":string|null}.',
-  "Each text is one self-contained sentence of at most 400 characters.",
-  "State what changed, and state why or the impact when the source says so.",
-  "Keep product and project terms as the source writes them; do not replace them with generic words.",
-  "Write in the dominant language of the source: a Russian source yields a Russian sentence.",
-  "When projects lists ids, the item inherits those links and the sentence does not have to spell the id.",
-  "When projects is empty and project is set, the sentence must name that project.",
-  "project is an existing project id that is not already linked, a suggested name for a new project, or null.",
-  "Do not copy 80 or more contiguous characters from body.",
-  "You cannot approve an item, write supersedes, or write a project profile.",
-  "Extra fields are ignored.",
-].join(" ");
+export function distillInstruction(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = distillLanguageOverride(env);
+  const language = override
+    ? `Write in ${distillLanguageName(override)} (${override}). CONTEXT_DISTILL_LANGUAGE overrides the language of the source. Do not translate.`
+    : "Write in the language of the source. An English source stays English. A Russian source stays Russian. Do not translate.";
+  return [
+    "Distill each indexed source into one proposed sentence.",
+    'Return a JSON array of {"index":number,"kind":"fact"|"decision","text":string,"project":string|null}.',
+    "Each text is one self-contained sentence of at most 400 characters.",
+    "State what changed, and state why or the impact when the source says so.",
+    "Keep product and project terms as the source writes them; do not replace them with generic words.",
+    language,
+    "When projects lists ids, the item inherits those links and the sentence does not have to spell the id.",
+    "When projects is empty and project is set, the sentence must name that project.",
+    "project is an existing project id that is not already linked, a suggested name for a new project, or null.",
+    "Do not copy 80 or more contiguous characters from body.",
+    "You cannot approve an item, write supersedes, or write a project profile.",
+    "Extra fields are ignored.",
+  ].join(" ");
+}
 
 export type DistillStatus =
   | "completed"
@@ -443,6 +459,58 @@ function rejectionReason(input: {
   return undefined;
 }
 
+function promptBody(source: DistillSource): string {
+  return clipText(
+    visibleSourceText(sourceBody(source.text, source.title)),
+    DISTILL_BODY_LIMIT,
+  );
+}
+function languageSample(source: DistillSource): string {
+  return [source.title, promptBody(source)]
+    .filter((part): part is string => !!part)
+    .join("\n");
+}
+function distillPayload(db: DatabaseSync, batch: readonly DistillSource[]) {
+  return redactFields(
+    batch.map((source, index) => ({
+      index,
+      title: source.title,
+      projects: linkedIds(db, source.id),
+      url: source.url,
+      date: source.date,
+      kind: source.kind,
+      body: promptBody(source),
+    })),
+  );
+}
+function languageRetryInstruction(
+  expected: readonly DistillLanguage[],
+  env: NodeJS.ProcessEnv,
+): string {
+  const forced = expected
+    .map(
+      (language, index) =>
+        `Index ${index} must be ${distillLanguageName(language)} (${language}).`,
+    )
+    .join(" ");
+  return `${distillInstruction(env)} The previous output used the wrong language. ${forced}`;
+}
+function logLanguageMismatch(
+  sourceId: string,
+  expected: DistillLanguage,
+  text: string,
+) {
+  // One line, no source or sentence text. The source stays without an item.
+  console.error(
+    JSON.stringify({
+      event: "distill_language_mismatch",
+      sourceId,
+      expected,
+      detected: detectOutputLanguage(text),
+    }),
+  );
+}
+
 export async function distillSources(input: {
   db: DatabaseSync;
   knowledge: KnowledgeStore;
@@ -454,6 +522,7 @@ export async function distillSources(input: {
   callCap: number;
   resumeAfter: number | null;
   frontiers: DistillFrontiers | null;
+  env?: NodeJS.ProcessEnv;
   onLlmFailure?: (
     failure: LlmCallError,
     attempt: number,
@@ -498,6 +567,7 @@ export async function distillSources(input: {
   const frontiers: Record<string, DistillFrontier> = {
     ...input.frontiers,
   };
+  const env = input.env ?? process.env;
   const blocked = new Set<string>();
   const deferred: DistillSource[] = [];
   const sentence = nonblankText(400);
@@ -527,35 +597,27 @@ export async function distillSources(input: {
       blocked,
     );
     if (!batch.length) break;
+    const askOptions = {
+      canAttempt: () => result.calls < input.callCap,
+      onAttempt: () => {
+        result.calls++;
+      },
+      onFailure: (
+        failure: LlmCallError,
+        attempt: number,
+        abandoned: boolean,
+      ) => {
+        input.onLlmFailure?.(failure, attempt, abandoned);
+      },
+      ...(input.backoffMs ? { backoffMs: input.backoffMs } : {}),
+    };
     let raw: unknown;
     try {
       raw = await askLlm(
         input.llm,
-        distillInstruction,
-        redactFields(
-          batch.map((source, index) => ({
-            index,
-            title: source.title,
-            projects: linkedIds(input.db, source.id),
-            url: source.url,
-            date: source.date,
-            kind: source.kind,
-            body: clipText(
-              visibleSourceText(sourceBody(source.text, source.title)),
-              DISTILL_BODY_LIMIT,
-            ),
-          })),
-        ),
-        {
-          canAttempt: () => result.calls < input.callCap,
-          onAttempt: () => {
-            result.calls++;
-          },
-          onFailure: (failure, attempt, abandoned) => {
-            input.onLlmFailure?.(failure, attempt, abandoned);
-          },
-          ...(input.backoffMs ? { backoffMs: input.backoffMs } : {}),
-        },
+        distillInstruction(env),
+        distillPayload(input.db, batch),
+        askOptions,
       );
     } catch (error) {
       if (!(error instanceof LlmCallError)) throw error;
@@ -567,11 +629,53 @@ export async function distillSources(input: {
       }
       continue;
     }
-    const answers = groupedAnswers(raw, batch.length);
+    let answers = groupedAnswers(raw, batch.length);
+    const retry: { source: DistillSource; expected: DistillLanguage }[] = [];
+    for (const [index, source] of batch.entries()) {
+      const answer = answers?.get(index);
+      const text = answer?.text.trim() ?? "";
+      const expected = sourceLanguage(languageSample(source), env);
+      if (answer && text && !outputLanguageMatches(text, expected))
+        retry.push({ source, expected });
+    }
+    if (retry.length && result.calls < input.callCap) {
+      try {
+        const retryRaw = await askLlm(
+          input.llm,
+          languageRetryInstruction(
+            retry.map((item) => item.expected),
+            env,
+          ),
+          distillPayload(
+            input.db,
+            retry.map((item) => item.source),
+          ),
+          askOptions,
+        );
+        const retried = groupedAnswers(retryRaw, retry.length);
+        if (answers && retried) {
+          for (const [retryIndex, item] of retry.entries()) {
+            const next = retried.get(retryIndex);
+            const text = next?.text.trim() ?? "";
+            if (!next || !outputLanguageMatches(text, item.expected)) continue;
+            const original = batch.indexOf(item.source);
+            answers.set(original, { ...next, index: original });
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof LlmCallError)) throw error;
+        if (error.reason === "unavailable") return publish(true);
+      }
+    }
     for (const [index, source] of batch.entries()) {
       const answer = answers?.get(index);
       const projects = linkedIds(input.db, source.id);
       const text = answer?.text.trim() ?? "";
+      const expected = sourceLanguage(languageSample(source), env);
+      if (answer && text && !outputLanguageMatches(text, expected)) {
+        logLanguageMismatch(source.id, expected, text);
+        continue;
+      }
       const parsed = sentence.safeParse(text);
       const createdAt = distillCreatedAt(source.date);
       const proposal = answer

@@ -222,7 +222,13 @@ implemented and not deployed.
   `parse-error`, and the other checks). A few redacted samples are written to
   stderr and are not stored in tidy history. An 80-character copy is measured
   on prose: code spans, identifiers, ADR titles, URLs and markdown marks do not
-  by themselves reject a short sentence.
+  by themselves reject a short sentence. The sentence is written in the
+  language of the source. An English source stays English and a Russian source
+  stays Russian. Optional `CONTEXT_DISTILL_LANGUAGE` forces `ru`, `en`, `de`,
+  `fr`, or `es` for distillation and journals. A sentence in another language
+  is requested once more; if it is still wrong, the source stays pending and
+  is not stored. One stderr line records the expected and detected language
+  and does not include source text.
 - Supersession stays explicit: `remember` with `supersedes`. Distillation must
   not write a supersedes link or set `approved`. A claimed `approved` status
   stays `proposed`. A journal cannot supersede a decision.
@@ -261,8 +267,11 @@ implemented and not deployed.
   then up to eight complete sentences, decisions before facts. A sentence that
   does not fit the 800 characters is omitted whole. Item ids stay in journal
   metadata: `read` returns them as `citations`, and a project search card
-  returns them as `citedIds`. The paragraph keeps the source language and does
-  not embed those ids. Tidy refreshes the current week and the previous week,
+  returns them as `citedIds`. The paragraph uses the majority language of the
+  cited items, counted by item. A tie goes to Russian. `CONTEXT_DISTILL_LANGUAGE`
+  overrides that. A paragraph in another language is rebuilt once from the
+  items already in the expected language and otherwise is not stored. The
+  paragraph does not embed item ids. Tidy refreshes the current week and the previous week,
   and rewrites a paragraph only when that week's item set or summary changes.
   The same items on the next run do not write. A week with no such items has
   no journal entry. A missing journal is not an empty week of sources. Nightly

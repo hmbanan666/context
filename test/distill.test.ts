@@ -1331,14 +1331,16 @@ test("the fake processor receives a self-contained multilingual prompt and not t
         },
       },
     });
-    assert.equal(instruction, distillInstruction);
+    assert.equal(instruction, distillInstruction());
     for (const required of [
       "self-contained",
       "what changed",
       "why or the impact",
       "product and project terms",
-      "dominant language",
-      "Russian source",
+      "language of the source",
+      "English source stays English",
+      "Russian source stays Russian",
+      "Do not translate",
       "400 characters",
       "80 or more contiguous",
       "inherits those links",
@@ -1630,6 +1632,223 @@ test("mapped sources inherit their project and offset dates are stored as UTC", 
     assert.deepEqual(f.sources.associationsFor("knowledge", desk?.id ?? ""), [
       { origin: "proposed", status: "proposed", suggestedName: "Lantern Desk" },
     ]);
+  } finally {
+    await f.close();
+  }
+});
+
+const germanSentence =
+  "Das Projekt speichert die Quelle und der Satz bleibt auf Deutsch.";
+
+test("a German sentence for an English or Russian source is not stored", async () => {
+  const f = await open("distill-language-reject");
+  const english =
+    "The observatory kept the bench-token-en lantern and stored the English note.";
+  const russian =
+    "Обсерватория хранит фонарь-токен и записывает русский источник недели.";
+  const lines: string[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  let calls = 0;
+  const llm = {
+    model: "fake",
+    async ask(instruction: string) {
+      calls++;
+      assert.match(instruction, /language of the source/);
+      assert.match(instruction, /Do not translate/);
+      if (calls % 2 === 0) {
+        assert.match(instruction, /wrong language/);
+        assert.match(instruction, /must be English/);
+        assert.match(instruction, /must be Russian/);
+      }
+      return [
+        {
+          index: 0,
+          kind: "fact" as const,
+          text: germanSentence,
+          project: null,
+        },
+        {
+          index: 1,
+          kind: "fact" as const,
+          text: germanSentence,
+          project: null,
+        },
+      ];
+    },
+  };
+  try {
+    f.sources.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "fixture",
+      idempotencyKey: "english-source",
+      text: english,
+      metadata: {
+        title: "title-token-en",
+        createdAt: "2026-11-11T00:00:00.000Z",
+      },
+    });
+    f.sources.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "fixture",
+      idempotencyKey: "russian-source",
+      text: russian,
+      metadata: {
+        title: "title-token-ru",
+        createdAt: "2026-11-11T00:00:00.000Z",
+      },
+    });
+    const first = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      llm,
+    });
+    assert.equal(calls, 2);
+    assert.equal(first.distilled, 0);
+    assert.equal(first.distillRejected, 0);
+    assert.equal(f.knowledge.list("personal", 10).length, 0);
+    const logged = lines.filter((line) =>
+      line.includes("distill_language_mismatch"),
+    );
+    assert.equal(logged.length, 2);
+    const blob = lines.join("\n");
+    for (const secret of [
+      english,
+      russian,
+      germanSentence,
+      "bench-token-en",
+      "фонарь-токен",
+      "title-token-en",
+      "title-token-ru",
+      "speichert",
+      "Deutsch",
+    ])
+      assert.equal(blob.includes(secret), false, secret);
+    const again = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      llm,
+    });
+    assert.equal(calls, 4);
+    assert.equal(again.distilled, 0);
+    assert.equal(f.knowledge.list("personal", 10).length, 0);
+    const history = await readFile(
+      join(f.directory, "tidy/history.jsonl"),
+      "utf8",
+    );
+    assert.equal(history.includes("bench-token-en"), false);
+    assert.equal(history.includes("фонарь-токен"), false);
+    assert.equal(history.includes(germanSentence), false);
+  } finally {
+    console.error = error;
+    await f.close();
+  }
+});
+
+test("a language retry stores the English and Russian sentences", async () => {
+  const f = await open("distill-language-retry");
+  let calls = 0;
+  try {
+    f.sources.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "fixture",
+      idempotencyKey: "english-retry",
+      text: "The observatory kept the lantern and stored the English note.",
+      metadata: { title: "English", createdAt: "2026-11-11T00:00:00.000Z" },
+    });
+    f.sources.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "fixture",
+      idempotencyKey: "russian-retry",
+      text: "Обсерватория хранит фонарь и записывает русский источник недели.",
+      metadata: { title: "Русский", createdAt: "2026-11-11T00:00:00.000Z" },
+    });
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      llm: {
+        model: "fake",
+        async ask(_instruction: string, data: unknown) {
+          calls++;
+          return (data as { index: number; body: string }[]).map((source) => ({
+            index: source.index,
+            kind: "fact" as const,
+            text:
+              calls === 1
+                ? germanSentence
+                : /[а-яё]/iu.test(source.body)
+                  ? "Обсерватория оставляет фонарь в журнале на русском языке."
+                  : "The observatory kept the lantern in the English log.",
+            project: null,
+          }));
+        },
+      },
+    });
+    assert.equal(calls, 2);
+    assert.equal(run.distilled, 2);
+    const texts = f.knowledge.list("personal", 10).map((item) => item.text);
+    assert.equal(
+      texts.some((text) => text.includes("English log")),
+      true,
+    );
+    assert.equal(
+      texts.some((text) => text.includes("русском языке")),
+      true,
+    );
+    assert.equal(
+      texts.some((text) => text.includes("speichert")),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("CONTEXT_DISTILL_LANGUAGE forces the sentence language", async () => {
+  const f = await open("distill-language-override");
+  let instruction = "";
+  try {
+    f.sources.captureMaterial({
+      version: 1,
+      scope: "personal",
+      origin: "fixture",
+      idempotencyKey: "override-english",
+      text: "The observatory kept the lantern and stored the English note.",
+      metadata: { title: "English", createdAt: "2026-11-11T00:00:00.000Z" },
+    });
+    const run = await runTidy({
+      databasePath: f.path,
+      areas: ["personal"],
+      env: { CONTEXT_DISTILL_LANGUAGE: "ru" },
+      llm: {
+        model: "fake",
+        async ask(prompt: string, data: unknown) {
+          instruction = prompt;
+          return (data as { index: number }[]).map((source) => ({
+            index: source.index,
+            kind: "fact" as const,
+            text: instruction.includes("wrong language")
+              ? "Обсерватория хранит фонарь и записывает источник на русском языке."
+              : germanSentence,
+            project: null,
+          }));
+        },
+      },
+    });
+    assert.match(instruction, /Russian \(ru\)/);
+    assert.match(instruction, /overrides the language of the source/);
+    assert.match(instruction, /wrong language/);
+    assert.equal(run.distilled, 1);
+    assert.equal(
+      f.knowledge.list("personal", 5)[0]?.text.includes("русском языке"),
+      true,
+    );
   } finally {
     await f.close();
   }
